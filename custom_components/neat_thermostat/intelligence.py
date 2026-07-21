@@ -27,6 +27,13 @@ DEFAULT_AWAY_DELAY_MINUTES = 20
 LEARNING_WINDOW_MINUTES = 30
 INITIAL_LEARNING_DAYS = 7
 
+# Nest Leaf (heating hard floor ≈ 62°F)
+LEAF_HARD_FLOOR_C = 16.5
+LEAF_CHALLENGE_OFFSET_C = 0.5
+LEAF_DEFAULT_EARLY_THRESHOLD_C = 19.5
+LEAF_BASELINE_SAMPLES_NEEDED = 6
+LEAF_DAY_MEANINGFUL_MINUTES = 30
+
 
 @dataclass
 class WarmupModel:
@@ -77,6 +84,45 @@ class ManualAdjustment:
 
 
 @dataclass
+class LeafState:
+    """Accumulate-only Leaf coaching state (never decrements totals)."""
+
+    comfort_samples: list[float] = field(default_factory=list)
+    baseline: float | None = None
+    minutes_total: float = 0.0
+    minutes_by_day: dict[str, float] = field(default_factory=dict)
+    coaching_started_at: str | None = None
+    last_sample_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "comfort_samples": self.comfort_samples[-80:],
+            "baseline": self.baseline,
+            "minutes_total": self.minutes_total,
+            "minutes_by_day": dict(list(self.minutes_by_day.items())[-60:]),
+            "coaching_started_at": self.coaching_started_at,
+            "last_sample_at": self.last_sample_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> LeafState:
+        if not data:
+            return cls()
+        return cls(
+            comfort_samples=[float(x) for x in (data.get("comfort_samples") or [])][-80:],
+            baseline=(
+                float(data["baseline"]) if data.get("baseline") is not None else None
+            ),
+            minutes_total=float(data.get("minutes_total") or 0.0),
+            minutes_by_day={
+                str(k): float(v) for k, v in (data.get("minutes_by_day") or {}).items()
+            },
+            coaching_started_at=data.get("coaching_started_at"),
+            last_sample_at=data.get("last_sample_at"),
+        )
+
+
+@dataclass
 class IntelligenceState:
     """Persisted intelligence state."""
 
@@ -85,6 +131,7 @@ class IntelligenceState:
     adjustments: list[dict[str, Any]] = field(default_factory=list)
     learning_started_at: str | None = None
     away_since: str | None = None
+    leaf: LeafState = field(default_factory=LeafState)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -93,6 +140,7 @@ class IntelligenceState:
             "adjustments": self.adjustments[-200:],
             "learning_started_at": self.learning_started_at,
             "away_since": self.away_since,
+            "leaf": self.leaf.to_dict(),
         }
 
     @classmethod
@@ -105,6 +153,7 @@ class IntelligenceState:
             adjustments=list(data.get("adjustments") or []),
             learning_started_at=data.get("learning_started_at"),
             away_since=data.get("away_since"),
+            leaf=LeafState.from_dict(data.get("leaf")),
         )
 
 
@@ -413,3 +462,133 @@ class IntelligenceStore:
 
     async def async_save(self) -> None:
         await self._store.async_save(self.state.to_dict())
+
+
+def note_comfort_setpoint(leaf: LeafState, temperature: float) -> LeafState:
+    """Record a Home comfort setpoint toward the Leaf baseline (never shrinks totals)."""
+    leaf.comfort_samples.append(float(temperature))
+    leaf.comfort_samples = leaf.comfort_samples[-80:]
+    samples = sorted(leaf.comfort_samples)
+    mid = len(samples) // 2
+    if len(samples) % 2:
+        leaf.baseline = samples[mid]
+    else:
+        leaf.baseline = (samples[mid - 1] + samples[mid]) / 2.0
+    leaf.baseline = round(float(leaf.baseline), 2)
+    return leaf
+
+
+def leaf_threshold(leaf: LeafState, now: datetime | None = None) -> float:
+    """Personalised Leaf threshold (°C). Stable ~0.5 below baseline; hard floor separate."""
+    now = now or datetime.now()
+    if leaf.baseline is not None and len(leaf.comfort_samples) >= LEAF_BASELINE_SAMPLES_NEEDED:
+        return max(LEAF_HARD_FLOOR_C, float(leaf.baseline) - LEAF_CHALLENGE_OFFSET_C)
+
+    # Early days: mild default until we know the household
+    if leaf.coaching_started_at:
+        try:
+            started = datetime.fromisoformat(leaf.coaching_started_at)
+            if (now - started).days < 3:
+                return LEAF_DEFAULT_EARLY_THRESHOLD_C
+        except ValueError:
+            pass
+    if leaf.baseline is not None:
+        return max(LEAF_HARD_FLOOR_C, float(leaf.baseline) - LEAF_CHALLENGE_OFFSET_C)
+    return LEAF_DEFAULT_EARLY_THRESHOLD_C
+
+
+def evaluate_leaf(
+    *,
+    leaf: LeafState,
+    effective_target: float,
+    eco_or_away: bool,
+    leaf_enabled: bool,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Return live Leaf awareness status (icon may hide; earned minutes never decrease)."""
+    now = now or datetime.now()
+    if leaf.coaching_started_at is None:
+        leaf.coaching_started_at = now.isoformat()
+
+    threshold = leaf_threshold(leaf, now)
+    active = False
+    if leaf_enabled:
+        if eco_or_away:
+            active = True
+        elif effective_target <= LEAF_HARD_FLOOR_C:
+            active = True
+        elif effective_target <= threshold:
+            active = True
+
+    return {
+        "active": active,
+        "threshold": round(threshold, 2),
+        "baseline": leaf.baseline,
+        "hard_floor": LEAF_HARD_FLOOR_C,
+        "enabled": leaf_enabled,
+    }
+
+
+def accrue_leaf_minutes(
+    leaf: LeafState,
+    *,
+    leaf_active: bool,
+    now: datetime | None = None,
+    default_delta_minutes: float = 0.5,
+) -> LeafState:
+    """While Leaf is active, add minutes. Totals only increase."""
+    now = now or datetime.now()
+    if not leaf_active:
+        leaf.last_sample_at = now.isoformat()
+        return leaf
+
+    delta = default_delta_minutes
+    if leaf.last_sample_at:
+        try:
+            prev = datetime.fromisoformat(leaf.last_sample_at)
+            delta = max(0.0, min(5.0, (now - prev).total_seconds() / 60.0))
+        except ValueError:
+            delta = default_delta_minutes
+
+    if delta <= 0:
+        leaf.last_sample_at = now.isoformat()
+        return leaf
+
+    day_key_str = now.date().isoformat()
+    leaf.minutes_by_day[day_key_str] = float(leaf.minutes_by_day.get(day_key_str, 0.0)) + delta
+    leaf.minutes_total = float(leaf.minutes_total) + delta
+    leaf.last_sample_at = now.isoformat()
+
+    # Cap day map size (keep last 60 days) without reducing total
+    if len(leaf.minutes_by_day) > 60:
+        for old in sorted(leaf.minutes_by_day.keys())[:-60]:
+            del leaf.minutes_by_day[old]
+    return leaf
+
+
+def leaf_week_stats(leaf: LeafState, now: datetime | None = None) -> dict[str, Any]:
+    """Rolling week display + streak of days that earned meaningful Leaf time."""
+    now = now or datetime.now()
+    week_minutes = 0.0
+    for i in range(7):
+        day = (now.date() - timedelta(days=i)).isoformat()
+        week_minutes += float(leaf.minutes_by_day.get(day, 0.0))
+
+    streak = 0
+    for i in range(60):
+        day = (now.date() - timedelta(days=i)).isoformat()
+        if float(leaf.minutes_by_day.get(day, 0.0)) >= LEAF_DAY_MEANINGFUL_MINUTES:
+            streak += 1
+        else:
+            if i == 0:
+                # Today not yet meaningful — still allow streak from yesterday
+                continue
+            break
+
+    return {
+        "minutes_week": round(week_minutes, 1),
+        "hours_week": round(week_minutes / 60.0, 2),
+        "minutes_total": round(float(leaf.minutes_total), 1),
+        "hours_total": round(float(leaf.minutes_total) / 60.0, 2),
+        "days_streak": streak,
+    }

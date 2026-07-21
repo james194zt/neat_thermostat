@@ -18,8 +18,12 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .const import DOMAIN, PRESET_AWAY, PRESET_BOOST, PRESET_ECO, PRESET_NONE
 from .intelligence import (
     IntelligenceStore,
+    accrue_leaf_minutes,
     early_off_should_idle,
+    evaluate_leaf,
+    leaf_week_stats,
     learn_schedule_from_adjustments,
+    note_comfort_setpoint,
     preheat_status,
     presence_anyone_home,
     record_manual_adjustment,
@@ -59,6 +63,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._heat_cycle_start_temp: float | None = None
         self._last_boiler_on = False
         self._dirty_intel = False
+        self._leaf: dict[str, Any] = {"active": False}
         self.data = self._snapshot()
 
     async def async_initialize_intelligence(self) -> None:
@@ -101,12 +106,14 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "window_open": self._any_window_open(self.config.window_sensors),
             "summer_mode": self.config.summer_mode,
             "preheat": self._preheat,
+            "leaf": self._leaf,
             "intelligence": {
                 "true_radiant": self.config.true_radiant,
                 "auto_schedule": self.config.auto_schedule,
                 "away_delay_minutes": self.config.away_delay_minutes,
                 "warmup_c_per_hour": self.intel.state.warmup.c_per_hour,
                 "warmup_samples": self.intel.state.warmup.samples,
+                "leaf_enabled": self.config.leaf_enabled,
             },
         }
 
@@ -394,17 +401,53 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._track_heat_cycle(want_heat)
         await self._async_set_heater(want_heat)
 
+        # Leaf awareness + accumulate-only minutes
+        target, _sched = self.effective_main_target()
+        eco_or_away = self._away_eco_active or self._main_preset in (
+            PRESET_ECO,
+            PRESET_AWAY,
+        )
+        leaf = self.intel.state.leaf
+        prev_total = leaf.minutes_total
+        prev_baseline = leaf.baseline
+        prev_samples = len(leaf.comfort_samples)
+        prev_started = leaf.coaching_started_at
+
+        # Note scheduled comfort once per distinct target (not every poll)
+        if _sched and not eco_or_away and self._main_preset == PRESET_NONE:
+            noted = float(target)
+            if getattr(self, "_last_noted_comfort", None) != noted:
+                note_comfort_setpoint(leaf, noted)
+                self._last_noted_comfort = noted
+
+        leaf_info = evaluate_leaf(
+            leaf=leaf,
+            effective_target=float(target),
+            eco_or_away=eco_or_away,
+            leaf_enabled=self.config.leaf_enabled,
+        )
+        accrue_leaf_minutes(
+            leaf,
+            leaf_active=bool(leaf_info.get("active")),
+            default_delta_minutes=UPDATE_INTERVAL.total_seconds() / 60.0,
+        )
+        self._leaf = {**leaf_info, **leaf_week_stats(leaf)}
+        if (
+            leaf.minutes_total != prev_total
+            or leaf.baseline != prev_baseline
+            or len(leaf.comfort_samples) != prev_samples
+            or leaf.coaching_started_at != prev_started
+        ):
+            self._dirty_intel = True
+
         if self._dirty_intel:
             await self.intel.async_save()
             self._dirty_intel = False
 
-        # Ensure preheat field is fresh
-        self.effective_main_target()
         self.data = self._snapshot()
         self.data["boiler_on"] = want_heat
-        target, sched = self.effective_main_target()
         self.data["main"]["effective_target"] = target
-        self.data["main"]["schedule_active"] = sched
+        self.data["main"]["schedule_active"] = _sched
         return self.data
 
     @callback
@@ -416,8 +459,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def set_main_temperature(self, temperature: float) -> None:
         self._main_target = temperature
         self._main_preset = PRESET_NONE
-        # Manual change → Auto-Schedule learning
+        # Manual change → Auto-Schedule learning + Leaf baseline
         record_manual_adjustment(self.intel.state, temperature)
+        note_comfort_setpoint(self.intel.state.leaf, temperature)
         self._dirty_intel = True
         self.hass.async_create_task(self._after_manual_setpoint())
 

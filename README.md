@@ -5,7 +5,7 @@ Home Assistant custom integration that replaces Better Thermostat-style heating 
 - **House climate** `climate.neat_home` — schedule, Eco / Boost / Away, window & summer hold
 - **Room climates** `climate.neat_<room>` — own sensors/setpoints; each room can call for heat
 - **Boiler demand** — heats when the house **or** any room needs heat
-- **Nest-like intelligence (house only)** — True Radiant preheat, Auto-Schedule learning, Home/Away Assist
+- **Nest-like intelligence (house only)** — True Radiant preheat, Auto-Schedule learning, Home/Away Assist, Leaf coaching
 - **HA sidebar** — Overview, Rooms, Schedule, Wall panels, Settings
 - **Wall panels** — configure NSPanels centrally; each screen only picks which panel it is
 
@@ -50,11 +50,11 @@ Intelligence applies to **`climate.neat_home` / the boiler**, not per-room TRV l
 | **True Radiant / Early-On** | Settings → True Radiant (default On) | Learns °C/h warm-up from heat cycles; starts heating early so the house hits the scheduled temp *at* the block start; stops slightly early to limit overshoot. No preheat while Away Eco is active. |
 | **Auto-Schedule** | Settings → Auto-Schedule (default Off) | Manual Home setpoint changes are logged; repeated similar weekday/time adjustments upsert schedule blocks. More eager for the first ~7 days, then needs stronger confirmation. |
 | **Home/Away Assist** | Presence entities + Away delay | Away Eco only when **all** listed people/trackers are not home, after the delay (default 20 min). Overrides the schedule while active. |
+| **Leaf** | Settings → Leaf coaching (default On) | Live Leaf on the dial when the house setpoint is efficient (≤ 16.5°C, Eco/Away, or ~0.5°C below your comfort baseline). Earned Leaf hours only accumulate — turning heat up hides the icon; it never withdraws earned time. |
 
 Optional: set an **outdoor temp sensor** so preheat estimates scale with cold weather.
 
-Overview shows a chip when preheating (`Preheating for 07:00`) or Away Eco, plus warm-up model stats.
-
+Overview shows a chip when Leaf is active, preheating (`Preheating for 07:00`), or Away Eco, plus warm-up model and Leaf earned stats.
 ## Migrating from Better Thermostat
 
 1. Install Neat and add rooms pointing at the same TRV climates BT used
@@ -68,7 +68,7 @@ NSPanel attributes kept compatible: `hvac_action`, `preset_mode` (`none`/`eco`/`
 | Type | Purpose |
 |------|---------|
 | `neat_thermostat/get_state` | Full config + live snapshot |
-| `neat_thermostat/update_settings` | Eco/Boost/Away, True Radiant, Auto-Schedule, presence, delays |
+| `neat_thermostat/update_settings` | Eco/Boost/Away, True Radiant, Auto-Schedule, Leaf, presence, delays |
 | `neat_thermostat/update_schedule` | 7-day schedule |
 | `neat_thermostat/update_rooms` | Room list (reloads platforms) |
 | `neat_thermostat/list_wall_panels` | List wall panels |

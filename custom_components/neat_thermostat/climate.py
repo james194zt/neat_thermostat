@@ -18,6 +18,9 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     ATTR_AWAY_MODE,
+    ATTR_LEAF,
+    ATTR_LEAF_BASELINE,
+    ATTR_LEAF_THRESHOLD,
     ATTR_PREHEAT_FOR,
     ATTR_PREHEATING,
     ATTR_SCHEDULE_ACTIVE,
@@ -122,6 +125,7 @@ class NeatHomeClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
     def extra_state_attributes(self) -> dict[str, Any]:
         _, schedule_active = self.coordinator.effective_main_target()
         preheat = self.coordinator.data.get("preheat") or {}
+        leaf = self.coordinator.data.get("leaf") or {}
         return {
             ATTR_WINDOW_OPEN: bool(self.coordinator.data.get("window_open")),
             ATTR_SUMMER_MODE: bool(self.coordinator.data.get("summer_mode")),
@@ -130,6 +134,12 @@ class NeatHomeClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
             ATTR_TRUE_RADIANT: bool(self.coordinator.config.true_radiant),
             ATTR_PREHEATING: bool(preheat.get("preheating")),
             ATTR_PREHEAT_FOR: preheat.get("block_start") if preheat.get("preheating") else None,
+            ATTR_LEAF: bool(leaf.get("active")),
+            ATTR_LEAF_THRESHOLD: leaf.get("threshold"),
+            ATTR_LEAF_BASELINE: leaf.get("baseline"),
+            "leaf_minutes_week": leaf.get("minutes_week"),
+            "leaf_minutes_total": leaf.get("minutes_total"),
+            "leaf_days_streak": leaf.get("days_streak"),
             "boiler_on": bool(self.coordinator.data.get("boiler_on")),
             "warmup_c_per_hour": self.coordinator.intel.state.warmup.c_per_hour,
         }
