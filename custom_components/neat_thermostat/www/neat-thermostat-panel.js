@@ -1,6 +1,7 @@
 /**
- * Neat Thermostat — HA sidebar panel.
- * Views: Overview, Rooms, Schedule, Wall panels, Settings
+ * Neat Thermostat — HA sidebar panel (Fox Plant–style shell).
+ * Horizontal tab nav + HA theme tokens (no custom blue scheme).
+ * @version 0.1.1
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -21,6 +22,345 @@ const DAY_LABELS = {
   sun: "Sun",
 };
 
+const PANEL_VERSION = "0.1.1";
+
+const STYLES = `
+:host {
+  display: block;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  font-family: var(--ha-font-family, Roboto, Noto Sans, sans-serif);
+  background: var(--primary-background-color);
+  color: var(--primary-text-color);
+  --nt-radius: 14px;
+  --nt-accent: #08979C;
+  --nt-accent-hi: #19D4DE;
+  --nt-green: #52C41A;
+  --nt-amber: #FA8C16;
+  --nt-red: #e53935;
+}
+.shell {
+  position: relative;
+  display: block;
+  min-height: 100%;
+  background: var(--primary-background-color);
+}
+.page-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 1px solid var(--divider-color);
+  background: var(--app-header-background-color, var(--primary-background-color));
+}
+.panel-header-top {
+  display: flex;
+  align-items: flex-start;
+}
+.panel-ha-menu-btn {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  margin: 8px 0 0 4px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--primary-text-color);
+  cursor: pointer;
+}
+.panel-ha-menu-btn:hover {
+  background: color-mix(in srgb, var(--primary-text-color) 8%, transparent);
+}
+:host(.narrow) .panel-ha-menu-btn,
+.shell.narrow .panel-ha-menu-btn {
+  display: inline-flex;
+}
+@media (max-width: 870px) {
+  .panel-ha-menu-btn { display: inline-flex; }
+  .panel-brand-row { padding: 12px 12px 4px 0; }
+}
+.panel-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  padding: 12px 16px 4px;
+}
+.panel-brand-mark {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, rgba(25,212,222,0.22), rgba(8,151,156,0.12));
+  color: var(--nt-accent-hi);
+  font-size: 20px;
+  font-weight: 700;
+}
+.panel-brand-title {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--primary-text-color);
+}
+.panel-brand-sub {
+  font-size: 12px;
+  color: var(--secondary-text-color);
+  margin-top: 2px;
+}
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  padding: 0 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.tab-bar::-webkit-scrollbar { display: none; }
+.tab {
+  flex-shrink: 0;
+  padding: 14px 20px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--secondary-text-color);
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab:hover { color: var(--primary-text-color); }
+.tab.active {
+  color: var(--primary-text-color);
+  font-weight: 600;
+  border-bottom-color: var(--primary-text-color);
+}
+.shell.narrow .tab { padding: 12px 14px 10px; font-size: 13px; }
+.main { display: block; width: 100%; }
+.main-inner {
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 20px 24px 48px;
+  box-sizing: border-box;
+}
+.shell.narrow .main-inner { padding: 16px; }
+.header { margin-bottom: 18px; }
+.header h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.header p {
+  margin: 6px 0 0;
+  color: var(--secondary-text-color);
+  font-size: 14px;
+}
+.card {
+  background: var(--card-background-color);
+  border-radius: var(--nt-radius);
+  padding: 18px 20px;
+  margin-bottom: 14px;
+  box-shadow: var(--ha-card-box-shadow, 0 1px 2px rgba(0,0,0,0.08));
+  border: 1px solid var(--divider-color, transparent);
+}
+.card-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--secondary-text-color);
+  margin: 0 0 14px;
+}
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.stat {
+  background: var(--card-background-color);
+  border-radius: var(--nt-radius);
+  padding: 16px 18px;
+  border: 1px solid var(--divider-color, transparent);
+  box-shadow: var(--ha-card-box-shadow, 0 1px 2px rgba(0,0,0,0.06));
+  position: relative;
+  overflow: hidden;
+}
+.stat::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--nt-accent-hi), var(--nt-accent));
+}
+.stat .label {
+  font-size: 12px;
+  color: var(--secondary-text-color);
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+.stat .value {
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--primary-text-color);
+}
+.stat.ok .value { color: var(--nt-green); }
+.stat.warn .value { color: var(--nt-amber); }
+.stat.heat::before {
+  background: linear-gradient(90deg, #FA8C16, #08979C);
+}
+.row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: end;
+  margin-bottom: 12px;
+}
+label.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--secondary-text-color);
+  min-width: 140px;
+  flex: 1;
+}
+input, select, textarea {
+  font-family: inherit;
+  font-size: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--divider-color);
+  background: var(--card-background-color);
+  color: var(--primary-text-color);
+  box-sizing: border-box;
+  width: 100%;
+}
+input:disabled {
+  opacity: 0.65;
+}
+button.primary, button.secondary, button.danger {
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+}
+button.primary {
+  background: linear-gradient(90deg, var(--nt-accent-hi), var(--nt-accent));
+  color: #041018;
+}
+button.primary:hover { filter: brightness(1.05); }
+button.secondary {
+  background: var(--secondary-background-color, color-mix(in srgb, var(--primary-text-color) 8%, transparent));
+  color: var(--primary-text-color);
+}
+button.danger {
+  background: color-mix(in srgb, var(--nt-red) 18%, transparent);
+  color: var(--nt-red);
+}
+button.compact { padding: 6px 10px; font-size: 12px; }
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+table.data th, table.data td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--divider-color);
+}
+table.data th {
+  color: var(--secondary-text-color);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.banner {
+  padding: 10px 14px;
+  border-radius: 10px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+.banner.err {
+  background: color-mix(in srgb, var(--nt-red) 14%, transparent);
+  color: var(--nt-red);
+}
+.banner.ok {
+  background: color-mix(in srgb, var(--nt-accent) 14%, transparent);
+  color: var(--nt-accent);
+}
+.schedule-day { margin-bottom: 8px; }
+.schedule-day h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--primary-text-color);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.block-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+.block-head {
+  font-size: 11px;
+  color: var(--secondary-text-color);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.panel-list { display: grid; gap: 10px; }
+.panel-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--divider-color);
+  background: var(--secondary-background-color, transparent);
+}
+.panel-item strong { font-size: 15px; }
+.muted { color: var(--secondary-text-color); font-size: 12px; }
+code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.92em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
+}
+.panel-build-footer {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  font-size: 9px;
+  color: var(--secondary-text-color);
+  opacity: 0.42;
+  pointer-events: none;
+}
+`;
+
 class NeatThermostatPanel extends HTMLElement {
   constructor() {
     super();
@@ -28,8 +368,9 @@ class NeatThermostatPanel extends HTMLElement {
     this._narrow = false;
     this._view = "overview";
     this._state = null;
-    this._selectedPanel = null;
-    this._msgId = 1;
+    this._selectedRoom = null;
+    this._error = "";
+    this._flash = "";
     this.attachShadow({ mode: "open" });
   }
 
@@ -41,6 +382,7 @@ class NeatThermostatPanel extends HTMLElement {
 
   set narrow(n) {
     this._narrow = Boolean(n);
+    this.classList.toggle("narrow", this._narrow);
     this._render();
   }
 
@@ -65,7 +407,8 @@ class NeatThermostatPanel extends HTMLElement {
   async _loadState() {
     try {
       this._state = await this._ws("neat_thermostat/get_state");
-      if (!this._selectedPanel && this._state?.config?.rooms?.length) {
+      this._error = "";
+      if (!this._selectedRoom && this._state?.config?.rooms?.length) {
         this._selectedRoom = this._state.config.rooms[0].id;
       }
       this._render();
@@ -85,6 +428,7 @@ class NeatThermostatPanel extends HTMLElement {
 
   _setView(id) {
     this._view = id;
+    this._flash = "";
     this._render();
   }
 
@@ -96,48 +440,8 @@ class NeatThermostatPanel extends HTMLElement {
       .replaceAll('"', "&quot;");
   }
 
-  _styles() {
-    return `
-      :host { display:block; font-family: system-ui,Segoe UI,sans-serif; color:#e8eef5; background:#0f141a; min-height:100vh; }
-      .wrap { display:flex; min-height:100vh; }
-      nav { width:200px; background:#151c24; border-right:1px solid #243041; padding:16px 12px; flex-shrink:0; }
-      nav h1 { font-size:15px; margin:0 0 16px; font-weight:650; letter-spacing:.02em; color:#9edcff; }
-      nav button { display:block; width:100%; text-align:left; background:transparent; border:0; color:#c5d0dc; padding:10px 12px; border-radius:8px; cursor:pointer; margin-bottom:4px; font-size:14px; }
-      nav button.active, nav button:hover { background:#1e2a38; color:#fff; }
-      main { flex:1; padding:20px 24px 40px; overflow:auto; }
-      h2 { margin:0 0 8px; font-size:22px; font-weight:650; }
-      .lead { color:#93a4b5; margin:0 0 20px; font-size:14px; }
-      .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:20px; }
-      .card { background:#151c24; border:1px solid #243041; border-radius:12px; padding:14px 16px; }
-      .card .label { color:#93a4b5; font-size:12px; margin-bottom:6px; }
-      .card .value { font-size:22px; font-weight:650; }
-      .card.ok .value { color:#7ddea0; }
-      .card.warn .value { color:#ffb86b; }
-      .row { display:flex; gap:10px; flex-wrap:wrap; align-items:end; margin-bottom:12px; }
-      label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:#93a4b5; min-width:140px; flex:1; }
-      input, select, textarea { background:#0f141a; border:1px solid #314255; color:#e8eef5; border-radius:8px; padding:8px 10px; font-size:14px; }
-      button.primary, button.secondary { border:0; border-radius:8px; padding:9px 14px; cursor:pointer; font-size:13px; font-weight:600; }
-      button.primary { background:#25b1f6; color:#041018; }
-      button.secondary { background:#243041; color:#e8eef5; }
-      button.danger { background:#5a2430; color:#ffb4b4; border:0; border-radius:8px; padding:9px 14px; cursor:pointer; }
-      table { width:100%; border-collapse:collapse; font-size:13px; }
-      th, td { text-align:left; padding:8px 10px; border-bottom:1px solid #243041; }
-      th { color:#93a4b5; font-weight:600; }
-      .err { background:rgba(255,92,92,.12); color:#ffb4b4; padding:10px 12px; border-radius:8px; margin-bottom:12px; }
-      .okmsg { background:rgba(37,177,246,.12); color:#9edcff; padding:10px 12px; border-radius:8px; margin-bottom:12px; }
-      .schedule-day { margin-bottom:16px; }
-      .schedule-day h3 { margin:0 0 8px; font-size:14px; color:#9edcff; }
-      .block-row { display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:8px; margin-bottom:6px; align-items:center; }
-      .panel-list { display:grid; gap:10px; }
-      .panel-item { background:#151c24; border:1px solid #243041; border-radius:12px; padding:14px; display:flex; justify-content:space-between; gap:12px; align-items:center; }
-      .muted { color:#93a4b5; font-size:12px; }
-      @media (max-width:720px) {
-        .wrap { flex-direction:column; }
-        nav { width:auto; display:flex; flex-wrap:wrap; gap:4px; border-right:0; border-bottom:1px solid #243041; }
-        nav h1 { width:100%; }
-        nav button { width:auto; }
-      }
-    `;
+  _pageHeader(title, lead) {
+    return `<div class="header"><h1>${title}</h1><p>${lead}</p></div>`;
   }
 
   _renderOverview() {
@@ -146,18 +450,23 @@ class NeatThermostatPanel extends HTMLElement {
     const main = live.main || {};
     const target = main.target ?? cfg.target_temp ?? "—";
     return `
-      <h2>Overview</h2>
-      <p class="lead">House climate and boiler demand.</p>
-      <div class="cards">
-        <div class="card"><div class="label">Mode</div><div class="value">${this._escape(main.hvac_mode || "—")}</div></div>
-        <div class="card"><div class="label">Preset</div><div class="value">${this._escape(main.preset || "none")}</div></div>
-        <div class="card"><div class="label">Target</div><div class="value">${this._escape(target)}°</div></div>
-        <div class="card ${live.boiler_on ? "ok" : ""}"><div class="label">Boiler</div><div class="value">${live.boiler_on ? "On" : "Off"}</div></div>
-        <div class="card ${live.window_open ? "warn" : ""}"><div class="label">Windows</div><div class="value">${live.window_open ? "Open" : "Closed"}</div></div>
-        <div class="card ${live.summer_mode ? "warn" : ""}"><div class="label">Summer</div><div class="value">${live.summer_mode ? "On" : "Off"}</div></div>
-        <div class="card ${live.away ? "warn" : ""}"><div class="label">Away</div><div class="value">${live.away ? "Yes" : "Home"}</div></div>
+      ${this._pageHeader("Overview", "House climate and boiler demand.")}
+      <div class="stats-row">
+        <div class="stat"><div class="label">Mode</div><div class="value">${this._escape(main.hvac_mode || "—")}</div></div>
+        <div class="stat"><div class="label">Preset</div><div class="value">${this._escape(main.preset || "none")}</div></div>
+        <div class="stat"><div class="label">Target</div><div class="value">${this._escape(target)}°</div></div>
+        <div class="stat ${live.boiler_on ? "ok heat" : ""}"><div class="label">Boiler</div><div class="value">${live.boiler_on ? "On" : "Off"}</div></div>
+        <div class="stat ${live.window_open ? "warn" : ""}"><div class="label">Windows</div><div class="value">${live.window_open ? "Open" : "Closed"}</div></div>
+        <div class="stat ${live.summer_mode ? "warn" : ""}"><div class="label">Summer</div><div class="value">${live.summer_mode ? "On" : "Off"}</div></div>
+        <div class="stat ${live.away ? "warn" : ""}"><div class="label">Away</div><div class="value">${live.away ? "Yes" : "Home"}</div></div>
       </div>
-      <p class="muted">Primary entity: <code>climate.neat_home</code>. Rooms appear as <code>climate.neat_&lt;room&gt;</code>.</p>
+      <div class="card">
+        <p class="card-title">Entities</p>
+        <p class="muted" style="margin:0;line-height:1.5">
+          Primary: <code>climate.neat_home</code><br />
+          Rooms: <code>climate.neat_&lt;room&gt;</code>
+        </p>
+      </div>
     `;
   }
 
@@ -176,18 +485,20 @@ class NeatThermostatPanel extends HTMLElement {
       })
       .join("");
     return `
-      <h2>Rooms</h2>
-      <p class="lead">Each room has its own Neat climate and can call for heat independently.</p>
-      <table>
-        <thead><tr><th>Room</th><th>TRV</th><th>Target</th><th>Mode</th><th>Needs heat</th></tr></thead>
-        <tbody>${rows || `<tr><td colspan="5" class="muted">No rooms yet — add them below or in Settings.</td></tr>`}</tbody>
-      </table>
-      <div class="card" style="margin-top:16px">
-        <h3 style="margin:0 0 10px;font-size:15px">Add / update room</h3>
+      ${this._pageHeader("Rooms", "Each room has its own Neat climate and can call for heat independently.")}
+      <div class="card">
+        <p class="card-title">Configured rooms</p>
+        <table class="data">
+          <thead><tr><th>Room</th><th>TRV</th><th>Target</th><th>Mode</th><th>Needs heat</th></tr></thead>
+          <tbody>${rows || `<tr><td colspan="5" class="muted">No rooms yet — add one below.</td></tr>`}</tbody>
+        </table>
+      </div>
+      <div class="card">
+        <p class="card-title">Add / update room</p>
         <div class="row">
-          <label>Name<input id="roomName" placeholder="Kitchen" /></label>
-          <label>TRV climate<input id="roomTrv" placeholder="climate.kitchen_..." /></label>
-          <label>Temp sensor (optional)<input id="roomSensor" placeholder="sensor...." /></label>
+          <label class="field">Name<input id="roomName" placeholder="Kitchen" /></label>
+          <label class="field">TRV climate<input id="roomTrv" placeholder="climate.kitchen_..." /></label>
+          <label class="field">Temp sensor (optional)<input id="roomSensor" placeholder="sensor...." /></label>
         </div>
         <button class="primary" id="saveRoom">Save room</button>
       </div>
@@ -206,24 +517,28 @@ class NeatThermostatPanel extends HTMLElement {
           <input class="b-start" value="${this._escape(b.start || "06:30")}" />
           <input class="b-end" value="${this._escape(b.end || "08:30")}" />
           <input class="b-temp" type="number" step="0.5" value="${this._escape(b.temperature ?? 20)}" />
-          <button type="button" class="secondary b-del">✕</button>
+          <button type="button" class="secondary compact b-del">✕</button>
         </div>`
         )
         .join("");
-      return `<div class="schedule-day" data-day="${day}">
+      return `<div class="card schedule-day" data-day="${day}">
         <h3>${DAY_LABELS[day]} <button type="button" class="secondary compact b-add" data-day="${day}">+ block</button></h3>
-        <div class="block-row muted"><span>Start</span><span>End</span><span>Temp</span><span></span></div>
+        <div class="block-row block-head"><span>Start</span><span>End</span><span>Temp</span><span></span></div>
         ${blockHtml}
       </div>`;
     }).join("");
     return `
-      <h2>Schedule</h2>
-      <p class="lead">7-day comfort schedule for the house climate. Outside blocks, Eco temperature applies.</p>
-      <div class="row">
-        <label style="flex:0">Enabled
-          <select id="schedEnabled"><option value="true" ${enabled ? "selected" : ""}>On</option><option value="false" ${!enabled ? "selected" : ""}>Off</option></select>
-        </label>
-        <button class="primary" id="saveSchedule">Save schedule</button>
+      ${this._pageHeader("Schedule", "7-day comfort schedule for the house climate. Outside blocks, Eco temperature applies.")}
+      <div class="card">
+        <div class="row" style="margin:0">
+          <label class="field" style="flex:0;min-width:120px">Enabled
+            <select id="schedEnabled">
+              <option value="true" ${enabled ? "selected" : ""}>On</option>
+              <option value="false" ${!enabled ? "selected" : ""}>Off</option>
+            </select>
+          </label>
+          <button class="primary" id="saveSchedule">Save schedule</button>
+        </div>
       </div>
       ${daysHtml}
     `;
@@ -244,55 +559,61 @@ class NeatThermostatPanel extends HTMLElement {
       </div>`
       )
       .join("");
-    const roomOpts = rooms
-      .map((r) => `<option value="${this._escape(r.id)}">${this._escape(r.name)}</option>`)
-      .join("");
     return `
-      <h2>Wall panels</h2>
-      <p class="lead">Define each physical NSPanel here. On the device, only pick which panel it is — everything else comes from this list.</p>
-      <div class="panel-list">${list || `<p class="muted">No wall panels yet.</p>`}</div>
-      <div class="card" style="margin-top:16px">
-        <h3 style="margin:0 0 10px;font-size:15px">Add / update wall panel</h3>
+      ${this._pageHeader("Wall panels", "Define each physical NSPanel here. On the device, only pick which panel it is.")}
+      <div class="card">
+        <p class="card-title">Registered panels</p>
+        <div class="panel-list">${list || `<p class="muted" style="margin:0">No wall panels yet.</p>`}</div>
+      </div>
+      <div class="card">
+        <p class="card-title">Add / update wall panel</p>
         <div class="row">
-          <label>Panel ID<input id="wpId" placeholder="hallway" pattern="[a-z0-9\\-]+" /></label>
-          <label>Label<input id="wpLabel" placeholder="Hallway panel" /></label>
-          <label>Primary climate<input id="wpPrimary" placeholder="climate.neat_home" value="climate.neat_home" /></label>
+          <label class="field">Panel ID<input id="wpId" placeholder="hallway" /></label>
+          <label class="field">Label<input id="wpLabel" placeholder="Hallway panel" /></label>
+          <label class="field">Primary climate<input id="wpPrimary" placeholder="climate.neat_home" value="climate.neat_home" /></label>
         </div>
         <div class="row">
-          <label>Idle timeout (sec)<input id="wpIdle" type="number" value="30" min="5" /></label>
-          <label>Inside temp sensor<input id="wpInside" placeholder="sensor...." /></label>
-          <label>Weather entity<input id="wpWeather" placeholder="weather.home" value="weather.home" /></label>
+          <label class="field">Idle timeout (sec)<input id="wpIdle" type="number" value="30" min="5" /></label>
+          <label class="field">Inside temp sensor<input id="wpInside" placeholder="sensor...." /></label>
+          <label class="field">Weather entity<input id="wpWeather" placeholder="weather.home" value="weather.home" /></label>
         </div>
-        <p class="muted">Room chips default to all Neat rooms unless you customise later.</p>
+        <p class="muted">Room chips default to all Neat rooms (${rooms.length ? rooms.map((r) => r.name).join(", ") : "none yet"}).</p>
         <button class="primary" id="saveWallPanel">Save wall panel</button>
       </div>
-      <p class="muted" style="margin-top:12px">Seed rooms available: ${roomOpts ? rooms.map((r) => r.name).join(", ") : "none yet"}</p>
     `;
   }
 
   _renderSettings() {
     const cfg = this._cfg();
     return `
-      <h2>Settings</h2>
-      <p class="lead">House-wide temperatures and modes. Rooms & wall panels have their own tabs.</p>
-      <div class="row">
-        <label>Eco °C<input id="ecoTemp" type="number" step="0.5" value="${this._escape(cfg.eco_temp ?? 16)}" /></label>
-        <label>Boost °C<input id="boostTemp" type="number" step="0.5" value="${this._escape(cfg.boost_temp ?? 22)}" /></label>
-        <label>Away °C<input id="awayTemp" type="number" step="0.5" value="${this._escape(cfg.away_temp ?? 15)}" /></label>
+      ${this._pageHeader("Settings", "House-wide temperatures and modes.")}
+      <div class="card">
+        <p class="card-title">Temperatures</p>
+        <div class="row">
+          <label class="field">Eco °C<input id="ecoTemp" type="number" step="0.5" value="${this._escape(cfg.eco_temp ?? 16)}" /></label>
+          <label class="field">Boost °C<input id="boostTemp" type="number" step="0.5" value="${this._escape(cfg.boost_temp ?? 22)}" /></label>
+          <label class="field">Away °C<input id="awayTemp" type="number" step="0.5" value="${this._escape(cfg.away_temp ?? 15)}" /></label>
+        </div>
       </div>
-      <div class="row">
-        <label>Cold tolerance<input id="coldTol" type="number" step="0.1" value="${this._escape(cfg.cold_tolerance ?? 0.3)}" /></label>
-        <label>Hot tolerance<input id="hotTol" type="number" step="0.1" value="${this._escape(cfg.hot_tolerance ?? 0.3)}" /></label>
-        <label>Summer mode
-          <select id="summerMode"><option value="false" ${!cfg.summer_mode ? "selected" : ""}>Off</option><option value="true" ${cfg.summer_mode ? "selected" : ""}>On</option></select>
-        </label>
+      <div class="card">
+        <p class="card-title">Behaviour</p>
+        <div class="row">
+          <label class="field">Cold tolerance<input id="coldTol" type="number" step="0.1" value="${this._escape(cfg.cold_tolerance ?? 0.3)}" /></label>
+          <label class="field">Hot tolerance<input id="hotTol" type="number" step="0.1" value="${this._escape(cfg.hot_tolerance ?? 0.3)}" /></label>
+          <label class="field">Summer mode
+            <select id="summerMode">
+              <option value="false" ${!cfg.summer_mode ? "selected" : ""}>Off</option>
+              <option value="true" ${cfg.summer_mode ? "selected" : ""}>On</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <label class="field">Person (Away)<input id="personEntity" value="${this._escape(cfg.person_entity || "")}" placeholder="person.you" /></label>
+          <label class="field">Heater<input value="${this._escape(cfg.heater || "")}" disabled /></label>
+          <label class="field">House sensor<input value="${this._escape(cfg.temperature_sensor || "")}" disabled /></label>
+        </div>
+        <button class="primary" id="saveSettings">Save settings</button>
       </div>
-      <div class="row">
-        <label>Person (Away)<input id="personEntity" value="${this._escape(cfg.person_entity || "")}" placeholder="person.you" /></label>
-        <label>Heater (read-only)<input value="${this._escape(cfg.heater || "")}" disabled /></label>
-        <label>House sensor (read-only)<input value="${this._escape(cfg.temperature_sensor || "")}" disabled /></label>
-      </div>
-      <button class="primary" id="saveSettings">Save settings</button>
     `;
   }
 
@@ -308,30 +629,48 @@ class NeatThermostatPanel extends HTMLElement {
               ? this._renderSettings()
               : this._renderOverview();
 
-    const nav = NAV.map(
+    const tabs = NAV.map(
       (n) =>
-        `<button type="button" class="${this._view === n.id ? "active" : ""}" data-view="${n.id}">${n.label}</button>`
+        `<button type="button" class="tab${this._view === n.id ? " active" : ""}" data-view="${n.id}">${n.label}</button>`
     ).join("");
 
     this.shadowRoot.innerHTML = `
-      <style>${this._styles()}</style>
-      <div class="wrap">
-        <nav>
-          <h1>Neat Thermostat</h1>
-          ${nav}
-        </nav>
-        <main>
-          ${this._error ? `<div class="err">${this._escape(this._error)}</div>` : ""}
-          ${this._flash ? `<div class="okmsg">${this._escape(this._flash)}</div>` : ""}
-          ${body}
-        </main>
+      <style>${STYLES}</style>
+      <div class="shell${this._narrow ? " narrow" : ""}">
+        <header class="page-header">
+          <div class="panel-header-top">
+            <button type="button" class="panel-ha-menu-btn" id="haMenu" aria-label="Open menu">
+              <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="currentColor" d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2Z"/></svg>
+            </button>
+            <div class="panel-brand-row">
+              <div class="panel-brand-mark" aria-hidden="true">N</div>
+              <div>
+                <div class="panel-brand-title">Neat Thermostat</div>
+                <div class="panel-brand-sub">Heating · rooms · wall panels</div>
+              </div>
+            </div>
+          </div>
+          <nav class="tab-bar" aria-label="Neat sections">${tabs}</nav>
+        </header>
+        <div class="main">
+          <div class="main-inner">
+            ${this._error ? `<div class="banner err">${this._escape(this._error)}</div>` : ""}
+            ${this._flash ? `<div class="banner ok">${this._escape(this._flash)}</div>` : ""}
+            ${body}
+          </div>
+        </div>
+        <p class="panel-build-footer">neat ${PANEL_VERSION}</p>
       </div>
     `;
     this._bind();
   }
 
   _bind() {
-    this.shadowRoot.querySelectorAll("nav button[data-view]").forEach((btn) => {
+    this.shadowRoot.getElementById("haMenu")?.addEventListener("click", () => {
+      this.dispatchEvent(new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true }));
+    });
+
+    this.shadowRoot.querySelectorAll(".tab[data-view]").forEach((btn) => {
       btn.addEventListener("click", () => this._setView(btn.dataset.view));
     });
 
@@ -467,7 +806,8 @@ class NeatThermostatPanel extends HTMLElement {
               rooms,
               sensors: {
                 insideTemp: this.shadowRoot.getElementById("wpInside").value.trim(),
-                weather: this.shadowRoot.getElementById("wpWeather").value.trim() || "weather.home",
+                weather:
+                  this.shadowRoot.getElementById("wpWeather").value.trim() || "weather.home",
                 sun: "sun.sun",
               },
               display: { idleMs: idleSec * 1000, panelEntity: "" },
@@ -498,9 +838,10 @@ class NeatThermostatPanel extends HTMLElement {
   }
 }
 
-const version = "0_1_0";
-const tag = `neat-thermostat-panel-${version}`;
-if (!customElements.get(tag)) {
-  customElements.define(tag, NeatThermostatPanel);
+const versionTag = `neat-thermostat-panel-${PANEL_VERSION.replaceAll(".", "_")}`;
+if (!customElements.get(versionTag)) {
+  customElements.define(versionTag, NeatThermostatPanel);
 }
-customElements.define("neat-thermostat-panel", NeatThermostatPanel);
+if (!customElements.get("neat-thermostat-panel")) {
+  customElements.define("neat-thermostat-panel", NeatThermostatPanel);
+}
