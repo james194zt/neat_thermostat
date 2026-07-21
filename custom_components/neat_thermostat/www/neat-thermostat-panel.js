@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.3.0
+ * @version 0.3.1
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.3.0";
+const PANEL_VERSION = "0.3.1";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 
@@ -460,6 +460,14 @@ code {
   margin-top: 4px; font-size: 11px; font-weight: 600;
   letter-spacing: 0.04em; color: rgba(255,255,255,0.72);
 }
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  padding: 12px 20px; border-radius: 10px; font-size: 14px; font-weight: 500;
+  z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,0.25); max-width: 90%;
+  pointer-events: none;
+}
+.toast.ok { background: var(--nt-green); color: #fff; }
+.toast.err { background: var(--nt-red); color: #fff; }
 
 @media (max-width: 720px) {
   .nest-dial { width: 140px; height: 140px; }
@@ -524,24 +532,78 @@ class NeatThermostatPanel extends HTMLElement {
     this._error = "";
     this._flash = "";
     this._energy = null;
+    this._liveTimer = null;
+    this._refreshingLive = false;
+    this._toastTimer = null;
     this.attachShadow({ mode: "open" });
   }
 
   set hass(hass) {
     this._hass = hass;
+    // Do not full-render on every HA hass update — that wipes Settings/Rooms form edits.
     if (!this._state) this._loadState();
-    else this._render();
   }
 
   set narrow(n) {
     this._narrow = Boolean(n);
     this.classList.toggle("narrow", this._narrow);
-    this._render();
+    const shell = this.shadowRoot?.querySelector(".shell");
+    if (shell) {
+      shell.classList.toggle("narrow", this._narrow);
+    } else {
+      this._render();
+    }
   }
 
   connectedCallback() {
     this._render();
     this._loadState();
+    this._liveTimer = window.setInterval(() => this._softRefreshLive(), 5000);
+  }
+
+  disconnectedCallback() {
+    if (this._liveTimer) {
+      window.clearInterval(this._liveTimer);
+      this._liveTimer = null;
+    }
+    if (this._toastTimer) {
+      window.clearTimeout(this._toastTimer);
+      this._toastTimer = null;
+    }
+  }
+
+  _showToast(msg, type = "ok") {
+    const root = this.shadowRoot;
+    if (!root) return;
+    const old = root.querySelector(".toast");
+    if (old) old.remove();
+    if (this._toastTimer) window.clearTimeout(this._toastTimer);
+    const el = document.createElement("div");
+    el.className = `toast ${type === "err" ? "err" : "ok"}`;
+    el.textContent = msg;
+    root.appendChild(el);
+    this._toastTimer = window.setTimeout(() => el.remove(), 3500);
+  }
+
+  _formViews() {
+    return new Set(["settings", "rooms", "wall_panels", "schedule"]);
+  }
+
+  async _softRefreshLive() {
+    if (!this._hass || !this._state || this._refreshingLive) return;
+    // Never rebuild form pages while the user may be editing.
+    if (this._formViews().has(this._view)) return;
+    this._refreshingLive = true;
+    try {
+      const next = await this._ws("neat_thermostat/get_state");
+      this._state = next;
+      if (this._view === "energy") await this._loadEnergy();
+      if (this._view === "overview" || this._view === "energy") this._render();
+    } catch {
+      // Ignore background refresh errors
+    } finally {
+      this._refreshingLive = false;
+    }
   }
 
   _ws(type, payload = {}) {
@@ -1223,10 +1285,11 @@ class NeatThermostatPanel extends HTMLElement {
     this.shadowRoot.getElementById("stopSeasonal")?.addEventListener("click", async () => {
       try {
         await this._ws("neat_thermostat/stop_seasonal_savings");
-        this._flash = "Seasonal Savings stopped";
         await this._loadState();
+        this._showToast("Seasonal Savings stopped");
       } catch (e) {
         this._error = String(e.message || e);
+        this._showToast(this._error, "err");
         this._render();
       }
     });
@@ -1313,10 +1376,11 @@ class NeatThermostatPanel extends HTMLElement {
             schedule: this._cfg().schedule || {},
             schedule_enabled: this.shadowRoot.getElementById("schedEnabled").value === "true",
           });
-          this._flash = "Schedule saved";
           await this._loadState();
+          this._showToast("Schedule saved");
         } catch (e) {
           this._error = String(e.message || e);
+          this._showToast(this._error, "err");
           this._render();
         }
       });
@@ -1350,10 +1414,11 @@ class NeatThermostatPanel extends HTMLElement {
               .map((s) => s.trim())
               .filter(Boolean),
           });
-          this._flash = "Settings saved";
           await this._loadState();
+          this._showToast("Settings saved");
         } catch (e) {
           this._error = String(e.message || e);
+          this._showToast(this._error, "err");
           this._render();
         }
       });
@@ -1372,6 +1437,7 @@ class NeatThermostatPanel extends HTMLElement {
           .filter(Boolean);
         if (!name || !trv) {
           this._error = "Room name and TRV required";
+          this._showToast(this._error, "err");
           this._render();
           return;
         }
@@ -1387,10 +1453,11 @@ class NeatThermostatPanel extends HTMLElement {
         });
         try {
           await this._ws("neat_thermostat/update_rooms", { rooms });
-          this._flash = `Room ${name} saved (integration may reload)`;
           await this._loadState();
+          this._showToast(`Room ${name} saved`);
         } catch (e) {
           this._error = String(e.message || e);
+          this._showToast(this._error, "err");
           this._render();
         }
       });
@@ -1403,6 +1470,7 @@ class NeatThermostatPanel extends HTMLElement {
         const label = this.shadowRoot.getElementById("wpLabel").value.trim() || id;
         if (!id) {
           this._error = "Panel ID required";
+          this._showToast(this._error, "err");
           this._render();
           return;
         }
@@ -1429,10 +1497,11 @@ class NeatThermostatPanel extends HTMLElement {
               temperature_lock: this.shadowRoot.getElementById("wpLock")?.value === "true",
             },
           });
-          this._flash = `Wall panel ${label} saved`;
           await this._loadState();
+          this._showToast(`Wall panel ${label} saved`);
         } catch (e) {
           this._error = String(e.message || e);
+          this._showToast(this._error, "err");
           this._render();
         }
       });
@@ -1440,10 +1509,11 @@ class NeatThermostatPanel extends HTMLElement {
         btn.addEventListener("click", async () => {
           try {
             await this._ws("neat_thermostat/delete_wall_panel", { panel_id: btn.dataset.id });
-            this._flash = "Wall panel deleted";
             await this._loadState();
+            this._showToast("Wall panel deleted");
           } catch (e) {
             this._error = String(e.message || e);
+            this._showToast(this._error, "err");
             this._render();
           }
         });
