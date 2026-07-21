@@ -17,7 +17,7 @@ export const LEGACY_STORAGE_KEYS = [
 ];
 export const LOCAL_SECRETS_KEY = "nspanel-thermostat-local-secrets";
 export const DEFAULT_HA_URL = "http://192.168.0.6:8123";
-export const CONFIG_VERSION = 9;
+export const CONFIG_VERSION = 10;
 
 export const DEFAULT_CONFIG = {
   haUrl: DEFAULT_HA_URL,
@@ -42,6 +42,9 @@ export const DEFAULT_CONFIG = {
   screensaverIdleMs: 30000,
   deviceId: "",
   deviceLabel: "",
+  temperatureLock: false,
+  pinConfigured: false,
+  time_to_temp_minutes: null,
 };
 
 export function mergeConfig(base, override = {}) {

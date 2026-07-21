@@ -48,6 +48,10 @@ const ui = {
   statusRow: document.getElementById("statusRow"),
   summerPill: document.getElementById("summerPill"),
   screensaver: document.getElementById("screensaver"),
+  pinOverlay: document.getElementById("pinOverlay"),
+  pinDisplay: document.getElementById("pinDisplay"),
+  pinPad: document.getElementById("pinPad"),
+  pinError: document.getElementById("pinError"),
 };
 
 let config = await loadConfig();
@@ -58,6 +62,9 @@ let activeEntity = config.primary.entity;
 let activeLabel = config.primary.name;
 let activeStep = config.primary.step ?? 0.5;
 let embeddedMode = false;
+let panelUnlocked = false;
+let pinBuffer = "";
+let pendingUnlockAction = null;
 let configPollTimer = null;
 
 function getDisplayLabel() {
@@ -160,15 +167,79 @@ function renderActiveClimate() {
   const state = getActiveState();
   const current = getCurrentTemperature(state);
   const target = getTargetTemperature(state);
+  const etaMins =
+    state?.attributes?.time_to_temp_minutes ?? config.time_to_temp_minutes ?? null;
+  let etaText = "";
+  if (etaMins != null && Number.isFinite(Number(etaMins))) {
+    const m = Math.round(Number(etaMins));
+    etaText =
+      m < 60
+        ? ` · ~${m} min`
+        : ` · ~${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}`;
+  }
 
   ui.heroLabel.textContent = getDisplayLabel();
   ui.currentTemp.textContent = formatTemp(current, "");
   ui.targetTemp.textContent = formatTemp(target, "");
-  ui.heroSubtitle.textContent = `Target ${formatTemp(target)} · ${state?.state ?? "unknown"}`;
+  ui.heroSubtitle.textContent = `Target ${formatTemp(target)} · ${state?.state ?? "unknown"}${etaText}`;
 
   applyTheme(state);
   updateModeButtons(state);
   renderBetterThermostatStatus();
+}
+
+function lockRequired() {
+  return Boolean(config.temperatureLock) && Boolean(config.pinConfigured !== false);
+}
+
+function updatePinDisplay() {
+  if (!ui.pinDisplay) return;
+  const shown = pinBuffer.padEnd(4, "•").slice(0, 4).split("").join(" ");
+  ui.pinDisplay.textContent = shown || "• • • •";
+}
+
+function showPinOverlay(action) {
+  pendingUnlockAction = action;
+  pinBuffer = "";
+  ui.pinError?.classList.add("hidden");
+  updatePinDisplay();
+  ui.pinOverlay?.classList.remove("hidden");
+}
+
+function hidePinOverlay() {
+  ui.pinOverlay?.classList.add("hidden");
+  pendingUnlockAction = null;
+  pinBuffer = "";
+}
+
+async function ensureUnlocked(action) {
+  if (!lockRequired() || panelUnlocked) {
+    await action();
+    return;
+  }
+  showPinOverlay(action);
+}
+
+async function submitPin() {
+  if (!client?.request || pinBuffer.length !== 4) return;
+  try {
+    const result = await client.request("neat_thermostat/verify_wall_pin", {
+      pin: pinBuffer,
+      panel_id: config.deviceId,
+    });
+    if (result?.ok) {
+      panelUnlocked = true;
+      const action = pendingUnlockAction;
+      hidePinOverlay();
+      if (action) await action();
+      return;
+    }
+  } catch {
+    // fall through
+  }
+  ui.pinError?.classList.remove("hidden");
+  pinBuffer = "";
+  updatePinDisplay();
 }
 
 function renderSensors() {
@@ -436,13 +507,15 @@ function handleStateChange(entityId) {
 }
 
 async function adjustTemperature(delta) {
-  const state = getActiveState();
-  const currentTarget = getTargetTemperature(state);
-  if (currentTarget === null) return;
+  await ensureUnlocked(async () => {
+    const state = getActiveState();
+    const currentTarget = getTargetTemperature(state);
+    if (currentTarget === null) return;
 
-  const next = Number((currentTarget + delta).toFixed(1));
-  ui.targetTemp.textContent = formatTemp(next, "");
-  await client.setTemperature(activeEntity, next);
+    const next = Number((currentTarget + delta).toFixed(1));
+    ui.targetTemp.textContent = formatTemp(next, "");
+    await client.setTemperature(activeEntity, next);
+  });
 }
 
 async function connect() {
@@ -495,6 +568,9 @@ async function connect() {
       overlay: ui.screensaver,
       idleMs,
       useHardwareSleep: Boolean(config.display?.panelEntity),
+      onShow: () => {
+        panelUnlocked = false;
+      },
     });
 
     displayPower = new DisplayPower({
@@ -523,27 +599,49 @@ ui.tempDown.addEventListener("click", () => adjustTemperature(-activeStep));
 ui.tempUp.addEventListener("click", () => adjustTemperature(activeStep));
 ui.backToHome.addEventListener("click", goToPrimaryView);
 
+ui.pinPad?.addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button[data-digit]");
+  if (!btn) return;
+  const digit = btn.dataset.digit;
+  ui.pinError?.classList.add("hidden");
+  if (digit === "clear") {
+    pinBuffer = "";
+    updatePinDisplay();
+    return;
+  }
+  if (digit === "ok") {
+    await submitPin();
+    return;
+  }
+  if (pinBuffer.length >= 4) return;
+  pinBuffer += digit;
+  updatePinDisplay();
+  if (pinBuffer.length === 4) await submitPin();
+});
+
 for (const button of ui.modeButtons) {
   button.addEventListener("click", async () => {
-    if (button.dataset.preset === "eco") {
-      await client.setPresetMode(activeEntity, "eco");
-      return;
-    }
-
-    if (button.dataset.preset === "boost") {
-      const state = getActiveState();
-      const nextPreset = state?.attributes?.preset_mode === "boost" ? "none" : "boost";
-      await client.setPresetMode(activeEntity, nextPreset);
-      return;
-    }
-
-    if (button.dataset.mode) {
-      const preset = getActiveState()?.attributes?.preset_mode;
-      if (preset && preset !== "none") {
-        await client.setPresetMode(activeEntity, "none");
+    await ensureUnlocked(async () => {
+      if (button.dataset.preset === "eco") {
+        await client.setPresetMode(activeEntity, "eco");
+        return;
       }
-      await client.setHvacMode(activeEntity, button.dataset.mode);
-    }
+
+      if (button.dataset.preset === "boost") {
+        const state = getActiveState();
+        const nextPreset = state?.attributes?.preset_mode === "boost" ? "none" : "boost";
+        await client.setPresetMode(activeEntity, nextPreset);
+        return;
+      }
+
+      if (button.dataset.mode) {
+        const preset = getActiveState()?.attributes?.preset_mode;
+        if (preset && preset !== "none") {
+          await client.setPresetMode(activeEntity, "none");
+        }
+        await client.setHvacMode(activeEntity, button.dataset.mode);
+      }
+    });
   });
 }
 

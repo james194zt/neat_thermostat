@@ -7,6 +7,7 @@ from typing import Any
 
 from .const import (
     DAYS,
+    DEFAULT_ADAPTIVE_COMFORT,
     DEFAULT_AUTO_SCHEDULE,
     DEFAULT_AWAY_DELAY_MINUTES,
     DEFAULT_AWAY_TEMP,
@@ -17,8 +18,12 @@ from .const import (
     DEFAULT_LEAF_ENABLED,
     DEFAULT_MAX_TEMP,
     DEFAULT_MIN_TEMP,
+    DEFAULT_SAFETY_MIN_TEMP,
+    DEFAULT_SAFETY_TEMP_ENABLED,
+    DEFAULT_SEASONAL_SAVINGS,
     DEFAULT_TARGET_TEMP,
     DEFAULT_TRUE_RADIANT,
+    DEFAULT_WALL_PIN,
 )
 
 
@@ -30,6 +35,7 @@ class RoomConfig:
     name: str
     trv_entity: str
     temperature_sensor: str = ""
+    extra_temperature_sensors: list[str] = field(default_factory=list)
     window_sensors: list[str] = field(default_factory=list)
     target_temp: float = DEFAULT_TARGET_TEMP
     eco_temp: float = DEFAULT_ECO_TEMP
@@ -41,11 +47,13 @@ class RoomConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RoomConfig:
+        extras = list(data.get("extra_temperature_sensors") or [])
         return cls(
             id=str(data.get("id") or data.get("name", "room")).lower().replace(" ", "_"),
             name=str(data.get("name") or "Room"),
             trv_entity=str(data.get("trv_entity") or data.get("entity") or ""),
             temperature_sensor=str(data.get("temperature_sensor") or ""),
+            extra_temperature_sensors=[str(x) for x in extras if x],
             window_sensors=list(data.get("window_sensors") or []),
             target_temp=float(data.get("target_temp", DEFAULT_TARGET_TEMP)),
             eco_temp=float(data.get("eco_temp", DEFAULT_ECO_TEMP)),
@@ -97,6 +105,7 @@ class WallPanelConfig:
     rooms: list[dict[str, str]] = field(default_factory=list)
     sensors: dict[str, str] = field(default_factory=dict)
     display: dict[str, Any] = field(default_factory=dict)
+    temperature_lock: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -110,6 +119,7 @@ class WallPanelConfig:
             rooms=list(data.get("rooms") or []),
             sensors=dict(data.get("sensors") or {}),
             display=dict(data.get("display") or {"idleMs": 30000, "panelEntity": ""}),
+            temperature_lock=bool(data.get("temperature_lock", False)),
         )
 
 
@@ -140,6 +150,11 @@ class NeatConfig:
     away_delay_minutes: int = DEFAULT_AWAY_DELAY_MINUTES
     outdoor_temp_sensor: str = ""
     leaf_enabled: bool = DEFAULT_LEAF_ENABLED
+    safety_temp_enabled: bool = DEFAULT_SAFETY_TEMP_ENABLED
+    safety_min_temp: float = DEFAULT_SAFETY_MIN_TEMP
+    seasonal_savings: bool = DEFAULT_SEASONAL_SAVINGS
+    adaptive_comfort: bool = DEFAULT_ADAPTIVE_COMFORT
+    wall_pin: str = DEFAULT_WALL_PIN
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -166,6 +181,12 @@ class NeatConfig:
             "away_delay_minutes": self.away_delay_minutes,
             "outdoor_temp_sensor": self.outdoor_temp_sensor,
             "leaf_enabled": self.leaf_enabled,
+            "safety_temp_enabled": self.safety_temp_enabled,
+            "safety_min_temp": self.safety_min_temp,
+            "seasonal_savings": self.seasonal_savings,
+            "adaptive_comfort": self.adaptive_comfort,
+            "wall_pin": self.wall_pin,
+            "wall_pin_configured": bool(str(self.wall_pin or "").strip()),
         }
 
     @classmethod
@@ -177,6 +198,9 @@ class NeatConfig:
         person = str(data.get("person_entity") or "")
         if person and person not in presence:
             presence = [person, *presence]
+        pin = str(data.get("wall_pin") or DEFAULT_WALL_PIN).strip()
+        if pin and (not pin.isdigit() or len(pin) != 4):
+            pin = DEFAULT_WALL_PIN
         return cls(
             heater=str(data.get("heater") or ""),
             temperature_sensor=str(data.get("temperature_sensor") or ""),
@@ -203,4 +227,17 @@ class NeatConfig:
             ),
             outdoor_temp_sensor=str(data.get("outdoor_temp_sensor") or ""),
             leaf_enabled=bool(data.get("leaf_enabled", DEFAULT_LEAF_ENABLED)),
+            safety_temp_enabled=bool(
+                data.get("safety_temp_enabled", DEFAULT_SAFETY_TEMP_ENABLED)
+            ),
+            safety_min_temp=float(
+                data.get("safety_min_temp", DEFAULT_SAFETY_MIN_TEMP)
+            ),
+            seasonal_savings=bool(
+                data.get("seasonal_savings", DEFAULT_SEASONAL_SAVINGS)
+            ),
+            adaptive_comfort=bool(
+                data.get("adaptive_comfort", DEFAULT_ADAPTIVE_COMFORT)
+            ),
+            wall_pin=pin,
         )

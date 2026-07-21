@@ -1,10 +1,11 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.2.1
+ * @version 0.3.0
  */
 const NAV = [
   { id: "overview", label: "Overview" },
+  { id: "energy", label: "Energy" },
   { id: "rooms", label: "Rooms" },
   { id: "schedule", label: "Schedule" },
   { id: "wall_panels", label: "Wall panels" },
@@ -30,8 +31,22 @@ const DAY_SHORT = {
   sat: "Sat",
   sun: "Sun",
 };
+const MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
 
-const PANEL_VERSION = "0.2.1";
+const PANEL_VERSION = "0.3.0";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 
@@ -398,6 +413,53 @@ code {
   background: color-mix(in srgb, var(--nt-green) 16%, transparent);
   color: var(--nt-green);
 }
+.eh-banner {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin: 0 0 16px; padding: 14px 16px; border-radius: var(--nt-radius);
+  background: color-mix(in srgb, var(--nt-heat) 12%, var(--card-background-color, #fff));
+  border: 1px solid color-mix(in srgb, var(--nt-heat) 25%, transparent);
+}
+.eh-banner .eh-copy { flex: 1; min-width: 160px; }
+.eh-banner strong { display: block; font-size: 15px; margin-bottom: 2px; }
+.eh-month {
+  margin: 18px 0 8px; padding: 8px 12px; border-radius: 8px;
+  background: color-mix(in srgb, var(--primary-text-color) 10%, transparent);
+  font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-align: center;
+}
+.eh-day {
+  display: grid; grid-template-columns: 72px 22px 1fr; gap: 8px; align-items: center;
+  padding: 10px 0; border-bottom: 1px solid var(--divider-color);
+}
+.eh-day-label { font-size: 13px; font-weight: 600; }
+.eh-leaf { width: 18px; height: 18px; color: var(--nt-green); }
+.eh-leaf.empty { opacity: 0; }
+.eh-track-wrap { position: relative; padding-top: 18px; padding-bottom: 18px; }
+.eh-track {
+  position: relative; height: 18px; border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-text-color) 8%, transparent);
+  overflow: hidden;
+}
+.eh-seg {
+  position: absolute; top: 0; bottom: 0;
+  background: var(--nt-heat); border-radius: 4px;
+}
+.eh-bubble {
+  position: absolute; top: -2px; transform: translate(-50%, -100%);
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--nt-heat); color: #fff;
+  font-size: 10px; font-weight: 700;
+  display: grid; place-items: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  z-index: 2;
+}
+.eh-axis {
+  display: flex; justify-content: space-between;
+  margin-top: 6px; font-size: 10px; color: var(--secondary-text-color);
+}
+.nest-dial-eta {
+  margin-top: 4px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.04em; color: rgba(255,255,255,0.72);
+}
 
 @media (max-width: 720px) {
   .nest-dial { width: 140px; height: 140px; }
@@ -461,6 +523,7 @@ class NeatThermostatPanel extends HTMLElement {
     this._clipboard = null;
     this._error = "";
     this._flash = "";
+    this._energy = null;
     this.attachShadow({ mode: "open" });
   }
 
@@ -498,11 +561,30 @@ class NeatThermostatPanel extends HTMLElement {
     try {
       this._state = await this._ws("neat_thermostat/get_state");
       this._error = "";
+      if (this._view === "energy") await this._loadEnergy();
       this._render();
     } catch (err) {
       this._error = String(err?.message || err);
       this._render();
     }
+  }
+
+  async _loadEnergy() {
+    try {
+      this._energy = await this._ws("neat_thermostat/get_energy_history", { days: 31 });
+    } catch (err) {
+      this._energy = null;
+      this._error = String(err?.message || err);
+    }
+  }
+
+  _formatEta(minutes) {
+    if (minutes == null || !Number.isFinite(Number(minutes))) return null;
+    const m = Math.round(Number(minutes));
+    if (m < 60) return `~${m} min`;
+    const h = Math.floor(m / 60);
+    const rem = m % 60;
+    return rem ? `~${h}h ${rem}m` : `~${h}h`;
   }
 
   _cfg() {
@@ -516,6 +598,10 @@ class NeatThermostatPanel extends HTMLElement {
   _setView(id) {
     this._view = id;
     this._flash = "";
+    if (id === "energy") {
+      this._loadEnergy().then(() => this._render());
+      return;
+    }
     this._render();
   }
 
@@ -582,6 +668,8 @@ class NeatThermostatPanel extends HTMLElement {
     const leafBadge = leafActive
       ? `<div class="nest-leaf" title="Leaf — efficient setpoint">${leafSvg()}</div>`
       : "";
+    const eta = this._formatEta(live.time_to_temp_minutes);
+    const etaHtml = eta ? `<div class="nest-dial-eta">${this._escape(eta)}</div>` : "";
 
     const roomZones = rooms
       .map((room) => {
@@ -646,6 +734,7 @@ class NeatThermostatPanel extends HTMLElement {
                   <div class="nest-dial-caption">${this._escape(caption)}</div>
                   <div class="nest-dial-temp">${this._escape(target)}</div>
                   ${current != null ? `<div class="nest-dial-current">Now ${this._escape(current)}°</div>` : ""}
+                  ${etaHtml}
                 </div>
               </div>
             </div>
@@ -662,15 +751,19 @@ class NeatThermostatPanel extends HTMLElement {
     const preheat = live.preheat || {};
     const intel = live.intelligence || {};
     const leaf = live.leaf || {};
-    const chip = leaf.active
+    const chip = live.safety_active
+      ? `<div class="intel-chip">Safety temp · heating to protect</div>`
+      : leaf.active
       ? `<div class="intel-chip leaf">Leaf · efficient setpoint</div>`
       : preheat.preheating
         ? `<div class="intel-chip">Preheating for ${this._escape(preheat.block_start)}</div>`
         : live.away
           ? `<div class="intel-chip">Away · Eco</div>`
-          : intel.true_radiant
-            ? `<div class="intel-chip home">True Radiant · ${this._escape(intel.warmup_c_per_hour ?? "—")}°C/h</div>`
-            : "";
+          : Number(live.adaptive_offset_c)
+            ? `<div class="intel-chip home">Adaptive Comfort · ${Number(live.adaptive_offset_c) > 0 ? "+" : ""}${this._escape(live.adaptive_offset_c)}°C</div>`
+            : intel.true_radiant
+              ? `<div class="intel-chip home">True Radiant · ${this._escape(intel.warmup_c_per_hour ?? "—")}°C/h</div>`
+              : "";
     const hoursWeek = leaf.hours_week ?? (leaf.minutes_week != null ? (leaf.minutes_week / 60).toFixed(2) : "—");
     const hoursTotal = leaf.hours_total ?? (leaf.minutes_total != null ? (leaf.minutes_total / 60).toFixed(2) : "—");
     const streak = leaf.days_streak ?? 0;
@@ -712,6 +805,86 @@ class NeatThermostatPanel extends HTMLElement {
           Primary: <code>climate.neat_home</code><br />
           Rooms: <code>climate.neat_&lt;room&gt;</code>
         </p>
+      </div>
+    `;
+  }
+
+  _ehDayParts(isoDate) {
+    const d = new Date(`${isoDate}T12:00:00`);
+    const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()];
+    return {
+      label: `${weekday} ${d.getDate()}`,
+      monthKey: `${d.getFullYear()}-${d.getMonth()}`,
+      monthName: MONTHS[d.getMonth()],
+    };
+  }
+
+  _ehPct(ts, dayIso) {
+    if (!ts) return 100;
+    const t = new Date(ts);
+    const start = new Date(`${dayIso}T00:00:00`);
+    const mins = (t - start) / 60000;
+    return Math.max(0, Math.min(100, (mins / (24 * 60)) * 100));
+  }
+
+  _renderEnergyDay(day) {
+    const parts = this._ehDayParts(day.date);
+    const segs = (day.heat_intervals || [])
+      .map((iv) => {
+        const left = this._ehPct(iv.start_ts, day.date);
+        const right = this._ehPct(iv.end_ts || new Date().toISOString(), day.date);
+        const width = Math.max(0.4, right - left);
+        return `<div class="eh-seg" style="left:${left}%;width:${width}%"></div>`;
+      })
+      .join("");
+    const bubbles = (day.setpoints || [])
+      .map((sp) => {
+        const left = this._ehPct(sp.ts, day.date);
+        const temp = formatTemp(sp.temperature) ?? "—";
+        return `<div class="eh-bubble" style="left:${left}%" title="${this._escape(temp)}°">${this._escape(temp)}</div>`;
+      })
+      .join("");
+    return `
+      <div class="eh-day">
+        <div class="eh-day-label">${this._escape(parts.label)}</div>
+        <div class="eh-leaf${day.leaf ? "" : " empty"}" title="${day.leaf ? "Leaf earned" : ""}">${day.leaf ? leafSvg() : ""}</div>
+        <div class="eh-track-wrap">
+          ${bubbles}
+          <div class="eh-track">${segs}</div>
+          <div class="eh-axis"><span>12AM</span><span>4AM</span><span>8AM</span><span>12PM</span><span>4PM</span><span>8PM</span><span>12AM</span></div>
+        </div>
+      </div>`;
+  }
+
+  _renderEnergy() {
+    const hist = this._energy?.history?.days || [];
+    const seasonal = this._energy?.seasonal_savings || this._live().seasonal_savings || {};
+    const banner = seasonal.active
+      ? `<div class="eh-banner">
+          <div class="eh-copy">
+            <strong>Winter Seasonal Savings</strong>
+            <span class="muted">${this._escape(seasonal.days_remaining ?? 0)} days to go · comfort offset ${this._escape(seasonal.offset_c ?? 0)}°C</span>
+          </div>
+          <button type="button" class="secondary" id="stopSeasonal">Stop</button>
+        </div>`
+      : "";
+    let lastMonth = null;
+    const rows = hist
+      .map((day) => {
+        const parts = this._ehDayParts(day.date);
+        let month = "";
+        if (parts.monthKey !== lastMonth) {
+          lastMonth = parts.monthKey;
+          month = `<div class="eh-month">${this._escape(parts.monthName)}</div>`;
+        }
+        return `${month}${this._renderEnergyDay(day)}`;
+      })
+      .join("");
+    return `
+      ${this._pageHeader("Energy History", "When the boiler ran, setpoint changes, and Leaf days.")}
+      ${banner}
+      <div class="card" style="padding:8px 16px 16px">
+        ${rows || `<p class="muted">No history yet — heat cycles will appear here.</p>`}
       </div>
     `;
   }
@@ -826,7 +999,9 @@ class NeatThermostatPanel extends HTMLElement {
           <label class="field">Name<input id="roomName" placeholder="Kitchen" /></label>
           <label class="field">TRV climate<input id="roomTrv" placeholder="climate.kitchen_..." /></label>
           <label class="field">Temp sensor (optional)<input id="roomSensor" placeholder="sensor...." /></label>
+          <label class="field">Extra temp sensors (comma-separated)<input id="roomExtraSensors" placeholder="sensor.room_2, sensor.room_3" /></label>
         </div>
+        <p class="muted">Neat averages all available room temperature sensors.</p>
         <button class="primary" id="saveRoom">Save room</button>
       </div>
     `;
@@ -865,7 +1040,15 @@ class NeatThermostatPanel extends HTMLElement {
           <label class="field">Inside temp sensor<input id="wpInside" placeholder="sensor...." /></label>
           <label class="field">Weather entity<input id="wpWeather" placeholder="weather.home" value="weather.home" /></label>
         </div>
-        <p class="muted">Room chips default to all Neat rooms (${rooms.length ? rooms.map((r) => r.name).join(", ") : "none yet"}).</p>
+        <div class="row">
+          <label class="field">Temperature lock
+            <select id="wpLock">
+              <option value="false" selected>Off</option>
+              <option value="true">On (requires house PIN)</option>
+            </select>
+          </label>
+        </div>
+        <p class="muted">Room chips default to all Neat rooms (${rooms.length ? rooms.map((r) => r.name).join(", ") : "none yet"}). Lock only affects this wall panel.</p>
         <button class="primary" id="saveWallPanel">Save wall panel</button>
       </div>
     `;
@@ -908,6 +1091,18 @@ class NeatThermostatPanel extends HTMLElement {
               <option value="false" ${cfg.leaf_enabled === false ? "selected" : ""}>Off</option>
             </select>
           </label>
+          <label class="field">Seasonal Savings
+            <select id="seasonalSavings">
+              <option value="false" ${!cfg.seasonal_savings ? "selected" : ""}>Off</option>
+              <option value="true" ${cfg.seasonal_savings ? "selected" : ""}>On</option>
+            </select>
+          </label>
+          <label class="field">Adaptive Comfort
+            <select id="adaptiveComfort">
+              <option value="false" ${!cfg.adaptive_comfort ? "selected" : ""}>Off</option>
+              <option value="true" ${cfg.adaptive_comfort ? "selected" : ""}>On</option>
+            </select>
+          </label>
         </div>
         <div class="row">
           <label class="field">Outdoor temp sensor
@@ -916,8 +1111,26 @@ class NeatThermostatPanel extends HTMLElement {
           <label class="field">Presence entities (comma-separated)
             <input id="presenceEntities" value="${this._escape(presence || cfg.person_entity || "")}" placeholder="person.you, person.partner" />
           </label>
+          <label class="field">Wall PIN (4 digits)
+            <input id="wallPin" type="password" inputmode="numeric" maxlength="4" value="${this._escape(cfg.wall_pin || "")}" placeholder="1234" />
+          </label>
         </div>
-        <p class="muted">True Radiant preheats so the house hits the scheduled temp on time. Auto-Schedule learns from Home dial changes. Away Eco engages only after the delay when all presence entities are not home. Leaf is awareness coaching — earned Leaf time only accumulates.</p>
+        <p class="muted">True Radiant preheats on time. Auto-Schedule learns from Home dial changes. Seasonal Savings gently lowers comfort over 21 days. Adaptive Comfort nudges Eco from outdoor temp. Wall PIN unlocks locked NSPanels only.</p>
+      </div>
+      <div class="card">
+        <p class="card-title">Safety Temperatures</p>
+        <div class="row">
+          <label class="field">Enabled
+            <select id="safetyEnabled">
+              <option value="true" ${cfg.safety_temp_enabled !== false ? "selected" : ""}>On</option>
+              <option value="false" ${cfg.safety_temp_enabled === false ? "selected" : ""}>Off</option>
+            </select>
+          </label>
+          <label class="field">Min house °C
+            <input id="safetyMin" type="number" step="0.5" min="5" max="12" value="${this._escape(cfg.safety_min_temp ?? 7)}" />
+          </label>
+        </div>
+        <p class="muted">If the house sensor drops to this floor, Neat forces heat even when Away / Eco / Off would otherwise leave it cold.</p>
       </div>
       <div class="card">
         <p class="card-title">Behaviour</p>
@@ -950,15 +1163,17 @@ class NeatThermostatPanel extends HTMLElement {
 
   _render() {
     const body =
-      this._view === "rooms"
-        ? this._renderRooms()
-        : this._view === "schedule"
-          ? this._renderSchedule()
-          : this._view === "wall_panels"
-            ? this._renderWallPanels()
-            : this._view === "settings"
-              ? this._renderSettings()
-              : this._renderOverview();
+      this._view === "energy"
+        ? this._renderEnergy()
+        : this._view === "rooms"
+          ? this._renderRooms()
+          : this._view === "schedule"
+            ? this._renderSchedule()
+            : this._view === "wall_panels"
+              ? this._renderWallPanels()
+              : this._view === "settings"
+                ? this._renderSettings()
+                : this._renderOverview();
 
     const tabs = NAV.map(
       (n) =>
@@ -1003,6 +1218,17 @@ class NeatThermostatPanel extends HTMLElement {
 
     this.shadowRoot.querySelectorAll(".tab[data-view]").forEach((btn) => {
       btn.addEventListener("click", () => this._setView(btn.dataset.view));
+    });
+
+    this.shadowRoot.getElementById("stopSeasonal")?.addEventListener("click", async () => {
+      try {
+        await this._ws("neat_thermostat/stop_seasonal_savings");
+        this._flash = "Seasonal Savings stopped";
+        await this._loadState();
+      } catch (e) {
+        this._error = String(e.message || e);
+        this._render();
+      }
     });
 
     this.shadowRoot.querySelectorAll(".nest-zone[data-zone]").forEach((btn) => {
@@ -1111,6 +1337,11 @@ class NeatThermostatPanel extends HTMLElement {
             true_radiant: this.shadowRoot.getElementById("trueRadiant").value === "true",
             auto_schedule: this.shadowRoot.getElementById("autoSchedule").value === "true",
             leaf_enabled: this.shadowRoot.getElementById("leafEnabled").value === "true",
+            seasonal_savings: this.shadowRoot.getElementById("seasonalSavings").value === "true",
+            adaptive_comfort: this.shadowRoot.getElementById("adaptiveComfort").value === "true",
+            safety_temp_enabled: this.shadowRoot.getElementById("safetyEnabled").value === "true",
+            safety_min_temp: Number(this.shadowRoot.getElementById("safetyMin").value),
+            wall_pin: this.shadowRoot.getElementById("wallPin").value.trim(),
             away_delay_minutes: Number(this.shadowRoot.getElementById("awayDelay").value),
             outdoor_temp_sensor: this.shadowRoot.getElementById("outdoorSensor").value.trim(),
             presence_entities: this.shadowRoot
@@ -1134,6 +1365,11 @@ class NeatThermostatPanel extends HTMLElement {
         const name = this.shadowRoot.getElementById("roomName").value.trim();
         const trv = this.shadowRoot.getElementById("roomTrv").value.trim();
         const sensor = this.shadowRoot.getElementById("roomSensor").value.trim();
+        const extras = this.shadowRoot
+          .getElementById("roomExtraSensors")
+          .value.split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
         if (!name || !trv) {
           this._error = "Room name and TRV required";
           this._render();
@@ -1141,7 +1377,14 @@ class NeatThermostatPanel extends HTMLElement {
         }
         const id = name.toLowerCase().replace(/\s+/g, "_");
         const rooms = [...(this._cfg().rooms || [])].filter((r) => r.id !== id);
-        rooms.push({ id, name, trv_entity: trv, temperature_sensor: sensor, enabled: true });
+        rooms.push({
+          id,
+          name,
+          trv_entity: trv,
+          temperature_sensor: sensor,
+          extra_temperature_sensors: extras,
+          enabled: true,
+        });
         try {
           await this._ws("neat_thermostat/update_rooms", { rooms });
           this._flash = `Room ${name} saved (integration may reload)`;
@@ -1183,6 +1426,7 @@ class NeatThermostatPanel extends HTMLElement {
                 sun: "sun.sun",
               },
               display: { idleMs: idleSec * 1000, panelEntity: "" },
+              temperature_lock: this.shadowRoot.getElementById("wpLock")?.value === "true",
             },
           });
           this._flash = `Wall panel ${label} saved`;
