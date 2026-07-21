@@ -1,0 +1,8 @@
+node_modules/
+android/
+package.json
+package-lock.json
+capacitor.config.json
+README.md
+config.example.json
+.gitignore

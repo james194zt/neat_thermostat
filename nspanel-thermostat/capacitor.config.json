@@ -1,0 +1,23 @@
+{
+  "appId": "uk.hadashboard.nspanelthermostat",
+  "appName": "HA Thermostat",
+  "webDir": ".",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true,
+    "allowNavigation": [
+      "192.168.0.6",
+      "homeassistant.local"
+    ]
+  },
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#2b333a"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "backgroundColor": "#2b333a"
+    }
+  }
+}

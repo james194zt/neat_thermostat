@@ -1,0 +1,22 @@
+{
+  "haUrl": "http://192.168.0.6:8123",
+  "accessToken": "",
+  "primary": {
+    "entity": "climate.neat_home",
+    "name": "Heating",
+    "step": 0.5
+  },
+  "rooms": [],
+  "sensors": {
+    "insideTemp": "sensor.motion_sensor_air_temperature",
+    "insideHumidity": "sensor.home_humidity",
+    "outsideTemp": "sensor.home_temperature",
+    "weather": "weather.home",
+    "sun": "sun.sun"
+  },
+  "display": {
+    "idleMs": 30000,
+    "panelEntity": ""
+  },
+  "screensaverIdleMs": 30000
+}

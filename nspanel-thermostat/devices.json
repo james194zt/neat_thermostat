@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "updatedAt": "2026-07-17T00:00:00.000Z",
+  "shared": {
+    "haUrl": "http://192.168.0.6:8123",
+    "sensors": {
+      "outsideTemp": "sensor.home_temperature",
+      "weather": "weather.home",
+      "sun": "sun.sun"
+    }
+  },
+  "devices": {
+    "hallway": {
+      "label": "Hallway panel",
+      "primary": {
+        "entity": "climate.boiler_thermostat",
+        "name": "Heating",
+        "step": 0.5
+      },
+      "rooms": [
+        {
+          "entity": "climate.kitchen_rear_radiator_thermostat",
+          "name": "Kitchen"
+        },
+        {
+          "entity": "climate.living_room_front_window_radiator_thermostat_2",
+          "name": "Living Room"
+        },
+        {
+          "entity": "climate.hallway_radiator_thermostat_2",
+          "name": "Hallway"
+        },
+        {
+          "entity": "climate.sonoff_trvzb_thermostat",
+          "name": "Living Rear"
+        }
+      ],
+      "sensors": {
+        "insideTemp": "sensor.motion_sensor_air_temperature",
+        "insideHumidity": "sensor.home_humidity",
+        "outsideTemp": "sensor.home_temperature",
+        "weather": "weather.home",
+        "sun": "sun.sun"
+      },
+      "display": {
+        "idleMs": 30000,
+        "panelEntity": ""
+      },
+      "screensaverIdleMs": 30000
+    }
+  }
+}
