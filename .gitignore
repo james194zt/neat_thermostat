@@ -15,3 +15,4 @@ nspanel-thermostat/apk/build/
 nspanel-thermostat/apk/app/build/
 nspanel-thermostat/node_modules/
 nspanel-thermostat/dist/
+_commit_push.sh
