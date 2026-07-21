@@ -14,6 +14,7 @@ from .const import (
     DEFAULT_COLD_TOLERANCE,
     DEFAULT_ECO_TEMP,
     DEFAULT_HOT_TOLERANCE,
+    DEFAULT_LEAF_ENABLED,
     DEFAULT_MAX_TEMP,
     DEFAULT_MIN_TEMP,
     DEFAULT_TARGET_TEMP,
@@ -138,6 +139,7 @@ class NeatConfig:
     auto_schedule: bool = DEFAULT_AUTO_SCHEDULE
     away_delay_minutes: int = DEFAULT_AWAY_DELAY_MINUTES
     outdoor_temp_sensor: str = ""
+    leaf_enabled: bool = DEFAULT_LEAF_ENABLED
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -163,6 +165,7 @@ class NeatConfig:
             "auto_schedule": self.auto_schedule,
             "away_delay_minutes": self.away_delay_minutes,
             "outdoor_temp_sensor": self.outdoor_temp_sensor,
+            "leaf_enabled": self.leaf_enabled,
         }
 
     @classmethod
@@ -199,4 +202,5 @@ class NeatConfig:
                 data.get("away_delay_minutes", DEFAULT_AWAY_DELAY_MINUTES)
             ),
             outdoor_temp_sensor=str(data.get("outdoor_temp_sensor") or ""),
+            leaf_enabled=bool(data.get("leaf_enabled", DEFAULT_LEAF_ENABLED)),
         )

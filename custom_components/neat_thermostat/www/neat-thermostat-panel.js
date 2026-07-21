@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.1.2
+ * @version 0.2.1
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -31,7 +31,7 @@ const DAY_SHORT = {
   sun: "Sun",
 };
 
-const PANEL_VERSION = "0.2.0";
+const PANEL_VERSION = "0.2.1";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 
@@ -257,6 +257,25 @@ code {
     0 14px 28px rgba(0,0,0,0.28),
     inset 0 1px 0 rgba(255,255,255,0.08);
 }
+.nest-dial.leaf {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--nt-green) 50%, transparent),
+    0 14px 28px rgba(0,0,0,0.28),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+}
+.nest-dial.heating.leaf {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--nt-heat) 45%, transparent),
+    0 0 0 6px color-mix(in srgb, var(--nt-green) 35%, transparent),
+    0 14px 28px rgba(0,0,0,0.28),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+}
+.nest-leaf {
+  position: absolute; top: 14px; right: 18px; z-index: 2;
+  width: 22px; height: 22px; color: var(--nt-green);
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.35));
+}
+.nest-leaf svg { width: 100%; height: 100%; display: block; }
 .nest-ticks {
   position: absolute; inset: 10px; border-radius: 50%;
   background:
@@ -375,6 +394,10 @@ code {
   background: color-mix(in srgb, var(--nt-accent) 14%, transparent);
   color: var(--nt-accent);
 }
+.intel-chip.leaf {
+  background: color-mix(in srgb, var(--nt-green) 16%, transparent);
+  color: var(--nt-green);
+}
 
 @media (max-width: 720px) {
   .nest-dial { width: 140px; height: 140px; }
@@ -414,6 +437,14 @@ function houseSvg() {
     <rect x="30" y="42" width="20" height="28" rx="2" fill="#F5C542"/>
     <rect x="18" y="40" width="10" height="10" rx="1" fill="#8fa0b0"/>
     <rect x="52" y="40" width="10" height="10" rx="1" fill="#8fa0b0"/>
+  </svg>`;
+}
+
+function leafSvg() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true">
+    <path fill="currentColor" d="M17.5 3.5c-3.2.2-6.2 1.7-8.2 4.1C7 10.1 6 13 6.2 16c2.8-.1 5.5-1.3 7.4-3.4 2.1-2.3 3.3-5.3 3.9-9.1z"/>
+    <path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"
+      d="M7.2 17.2c1.6-2.4 3.8-4.2 6.3-5.4"/>
   </svg>`;
 }
 
@@ -542,8 +573,15 @@ class NeatThermostatPanel extends HTMLElement {
     const heating = Boolean(live.boiler_on);
     const mode = (live.main || {}).hvac_mode || "heat";
     const preheat = live.preheat || {};
+    const leaf = live.leaf || {};
+    const leafActive = Boolean(leaf.active);
     let caption = mode === "off" ? "Off" : heating ? "Heating to" : "Heat set to";
     if (preheat.preheating) caption = "Preheating to";
+
+    const dialClass = `nest-dial${heating ? " heating" : ""}${leafActive ? " leaf" : ""}`;
+    const leafBadge = leafActive
+      ? `<div class="nest-leaf" title="Leaf — efficient setpoint">${leafSvg()}</div>`
+      : "";
 
     const roomZones = rooms
       .map((room) => {
@@ -601,8 +639,9 @@ class NeatThermostatPanel extends HTMLElement {
           ${leftHtml}
           <button type="button" class="nest-zone${this._focusZone === "home" ? " selected" : ""}" data-zone="home">
             <div class="nest-dial-wrap">
-              <div class="nest-dial${heating ? " heating" : ""}">
+              <div class="${dialClass}">
                 <div class="nest-ticks" aria-hidden="true"></div>
+                ${leafBadge}
                 <div class="nest-dial-core">
                   <div class="nest-dial-caption">${this._escape(caption)}</div>
                   <div class="nest-dial-temp">${this._escape(target)}</div>
@@ -622,13 +661,19 @@ class NeatThermostatPanel extends HTMLElement {
     const live = this._live();
     const preheat = live.preheat || {};
     const intel = live.intelligence || {};
-    const chip = preheat.preheating
-      ? `<div class="intel-chip">Preheating for ${this._escape(preheat.block_start)}</div>`
-      : live.away
-        ? `<div class="intel-chip">Away · Eco</div>`
-        : intel.true_radiant
-          ? `<div class="intel-chip home">True Radiant · ${this._escape(intel.warmup_c_per_hour ?? "—")}°C/h</div>`
-          : "";
+    const leaf = live.leaf || {};
+    const chip = leaf.active
+      ? `<div class="intel-chip leaf">Leaf · efficient setpoint</div>`
+      : preheat.preheating
+        ? `<div class="intel-chip">Preheating for ${this._escape(preheat.block_start)}</div>`
+        : live.away
+          ? `<div class="intel-chip">Away · Eco</div>`
+          : intel.true_radiant
+            ? `<div class="intel-chip home">True Radiant · ${this._escape(intel.warmup_c_per_hour ?? "—")}°C/h</div>`
+            : "";
+    const hoursWeek = leaf.hours_week ?? (leaf.minutes_week != null ? (leaf.minutes_week / 60).toFixed(2) : "—");
+    const hoursTotal = leaf.hours_total ?? (leaf.minutes_total != null ? (leaf.minutes_total / 60).toFixed(2) : "—");
+    const streak = leaf.days_streak ?? 0;
     return `
       ${this._renderHero()}
       <div style="height:14px"></div>
@@ -641,10 +686,21 @@ class NeatThermostatPanel extends HTMLElement {
         <div class="stat ${live.away ? "warn" : ""}"><div class="label">Away</div><div class="value">${live.away ? "Yes" : "Home"}</div></div>
       </div>
       <div class="card">
+        <p class="card-title">Leaf (earned)</p>
+        <p class="muted" style="margin:0;line-height:1.55">
+          ${leaf.active ? "Leaf is on right now — you're at an efficient setpoint." : "Turn the heat down a little (or Eco/Away) to earn Leaf time."}<br />
+          This week: <strong>${this._escape(hoursWeek)} h</strong>
+          · All time: <strong>${this._escape(hoursTotal)} h</strong>
+          · Streak: <strong>${this._escape(streak)} day${streak === 1 ? "" : "s"}</strong><br />
+          <span style="opacity:0.85">Leaves only accumulate — turning heat up hides the icon, it never takes earned time away.</span>
+        </p>
+      </div>
+      <div class="card">
         <p class="card-title">Nest intelligence (house)</p>
         <p class="muted" style="margin:0;line-height:1.55">
           True Radiant: <strong>${intel.true_radiant ? "On" : "Off"}</strong>
           · Auto-Schedule: <strong>${intel.auto_schedule ? "On" : "Off"}</strong>
+          · Leaf coaching: <strong>${intel.leaf_enabled !== false ? "On" : "Off"}</strong>
           · Away delay: <strong>${this._escape(intel.away_delay_minutes ?? 20)} min</strong><br />
           Warm-up model: <strong>${this._escape(intel.warmup_c_per_hour ?? "—")} °C/h</strong>
           (${this._escape(intel.warmup_samples ?? 0)} samples)
@@ -846,6 +902,12 @@ class NeatThermostatPanel extends HTMLElement {
           <label class="field">Away delay (min)
             <input id="awayDelay" type="number" min="0" max="180" value="${this._escape(cfg.away_delay_minutes ?? 20)}" />
           </label>
+          <label class="field">Leaf coaching
+            <select id="leafEnabled">
+              <option value="true" ${cfg.leaf_enabled !== false ? "selected" : ""}>On</option>
+              <option value="false" ${cfg.leaf_enabled === false ? "selected" : ""}>Off</option>
+            </select>
+          </label>
         </div>
         <div class="row">
           <label class="field">Outdoor temp sensor
@@ -855,7 +917,7 @@ class NeatThermostatPanel extends HTMLElement {
             <input id="presenceEntities" value="${this._escape(presence || cfg.person_entity || "")}" placeholder="person.you, person.partner" />
           </label>
         </div>
-        <p class="muted">True Radiant preheats so the house hits the scheduled temp on time. Auto-Schedule learns from Home dial changes. Away Eco engages only after the delay when all presence entities are not home.</p>
+        <p class="muted">True Radiant preheats so the house hits the scheduled temp on time. Auto-Schedule learns from Home dial changes. Away Eco engages only after the delay when all presence entities are not home. Leaf is awareness coaching — earned Leaf time only accumulates.</p>
       </div>
       <div class="card">
         <p class="card-title">Behaviour</p>
@@ -1048,6 +1110,7 @@ class NeatThermostatPanel extends HTMLElement {
             person_entity: this.shadowRoot.getElementById("personEntity").value.trim(),
             true_radiant: this.shadowRoot.getElementById("trueRadiant").value === "true",
             auto_schedule: this.shadowRoot.getElementById("autoSchedule").value === "true",
+            leaf_enabled: this.shadowRoot.getElementById("leafEnabled").value === "true",
             away_delay_minutes: Number(this.shadowRoot.getElementById("awayDelay").value),
             outdoor_temp_sensor: this.shadowRoot.getElementById("outdoorSensor").value.trim(),
             presence_entities: this.shadowRoot

@@ -79,6 +79,7 @@ async def ws_get_state(
         vol.Optional("hot_tolerance"): vol.Coerce(float),
         vol.Optional("true_radiant"): cv.boolean,
         vol.Optional("auto_schedule"): cv.boolean,
+        vol.Optional("leaf_enabled"): cv.boolean,
         vol.Optional("away_delay_minutes"): vol.All(vol.Coerce(int), vol.Range(min=0, max=180)),
         vol.Optional("outdoor_temp_sensor"): cv.string,
     }
@@ -107,6 +108,7 @@ async def ws_update_settings(
             "hot_tolerance",
             "true_radiant",
             "auto_schedule",
+            "leaf_enabled",
             "away_delay_minutes",
             "outdoor_temp_sensor",
         )

@@ -26,6 +26,7 @@ CONF_TRUE_RADIANT = "true_radiant"
 CONF_AUTO_SCHEDULE = "auto_schedule"
 CONF_AWAY_DELAY_MINUTES = "away_delay_minutes"
 CONF_OUTDOOR_TEMP_SENSOR = "outdoor_temp_sensor"
+CONF_LEAF_ENABLED = "leaf_enabled"
 
 DEFAULT_ECO_TEMP = 16.0
 DEFAULT_BOOST_TEMP = 22.0
@@ -38,6 +39,7 @@ DEFAULT_MAX_TEMP = 30.0
 DEFAULT_TRUE_RADIANT = True
 DEFAULT_AUTO_SCHEDULE = False
 DEFAULT_AWAY_DELAY_MINUTES = 20
+DEFAULT_LEAF_ENABLED = True
 
 ATTR_WINDOW_OPEN = "window_open"
 ATTR_SUMMER_MODE = "summer_mode_state"
@@ -46,6 +48,9 @@ ATTR_AWAY_MODE = "away_mode"
 ATTR_PREHEATING = "preheating"
 ATTR_PREHEAT_FOR = "preheat_for"
 ATTR_TRUE_RADIANT = "true_radiant"
+ATTR_LEAF = "leaf"
+ATTR_LEAF_THRESHOLD = "leaf_threshold"
+ATTR_LEAF_BASELINE = "leaf_baseline"
 
 PRESET_NONE = "none"
 PRESET_ECO = "eco"
