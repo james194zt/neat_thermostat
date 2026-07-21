@@ -1,0 +1,5 @@
+﻿{
+  "version": "2.0.0-dev",
+  "forkOf": "nspanel-thermostat",
+  "note": "Restyle fork — stable fallback remains in ../nspanel-thermostat"
+}

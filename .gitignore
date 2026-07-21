@@ -16,3 +16,9 @@ nspanel-thermostat/apk/app/build/
 nspanel-thermostat/node_modules/
 nspanel-thermostat/dist/
 _commit_push.sh
+nspanel-thermostat-v2/config.json
+nspanel-thermostat-v2/apk/.gradle/
+nspanel-thermostat-v2/apk/build/
+nspanel-thermostat-v2/apk/app/build/
+nspanel-thermostat-v2/node_modules/
+nspanel-thermostat-v2/dist/

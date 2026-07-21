@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.3.1
+ * @version 0.3.2
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.3.1";
+const PANEL_VERSION = "0.3.2";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 
@@ -468,6 +468,18 @@ code {
 }
 .toast.ok { background: var(--nt-green); color: #fff; }
 .toast.err { background: var(--nt-red); color: #fff; }
+.entity-picker-host {
+  display: block; min-height: 56px; width: 100%;
+}
+.entity-picker-host ha-entity-picker,
+.entity-picker-host ha-entities-picker {
+  display: block; width: 100%;
+}
+.entity-picker-loading, .entity-picker-error {
+  margin: 0; font-size: 13px; color: var(--secondary-text-color);
+}
+.entity-picker-error { color: var(--error-color, #db4437); }
+label.field .entity-picker-host { margin-top: 0; }
 
 @media (max-width: 720px) {
   .nest-dial { width: 140px; height: 140px; }
@@ -518,6 +530,41 @@ function leafSvg() {
   </svg>`;
 }
 
+let _haEntityPickerLoadPromise = null;
+
+async function ensureHaEntityPickerLoaded() {
+  if (customElements.get("ha-entity-picker") && customElements.get("ha-entities-picker")) {
+    return;
+  }
+  if (typeof window.loadCardHelpers !== "function") {
+    throw new Error("Home Assistant entity picker is not available");
+  }
+  if (!_haEntityPickerLoadPromise) {
+    _haEntityPickerLoadPromise = (async () => {
+      const helpers = await window.loadCardHelpers();
+      const card = await helpers.createCardElement({ type: "entities", entities: [] });
+      const configEl = card.constructor.getConfigElement?.();
+      if (configEl && typeof configEl.then === "function") await configEl;
+      await customElements.whenDefined("ha-entity-picker");
+      // Multi-picker may load with the same helpers path; don't hang if missing
+      if (!customElements.get("ha-entities-picker")) {
+        await Promise.race([
+          customElements.whenDefined("ha-entities-picker"),
+          new Promise((resolve) => setTimeout(resolve, 1500)),
+        ]);
+      }
+    })();
+  }
+  await _haEntityPickerLoadPromise;
+}
+
+function temperatureSensorFilter(stateObj) {
+  if (!stateObj) return false;
+  if (stateObj.attributes?.device_class === "temperature") return true;
+  const uom = stateObj.attributes?.unit_of_measurement;
+  return uom === "°C" || uom === "°F" || uom === "K" || uom === "celsius" || uom === "fahrenheit";
+}
+
 class NeatThermostatPanel extends HTMLElement {
   constructor() {
     super();
@@ -535,6 +582,8 @@ class NeatThermostatPanel extends HTMLElement {
     this._liveTimer = null;
     this._refreshingLive = false;
     this._toastTimer = null;
+    this._roomDraft = { trv: "", sensor: "", extras: [] };
+    this._roomPickerMountGen = 0;
     this.attachShadow({ mode: "open" });
   }
 
@@ -1037,11 +1086,12 @@ class NeatThermostatPanel extends HTMLElement {
     const rows = rooms
       .map((r) => {
         const live = (this._live().rooms || {})[r.id] || {};
+        const extras = (r.extra_temperature_sensors || []).join(", ");
         return `<tr>
           <td>${this._escape(r.name)}</td>
           <td><code>${this._escape(r.trv_entity)}</code></td>
+          <td><code>${this._escape(r.temperature_sensor || "—")}</code>${extras ? `<div class="muted">${this._escape(extras)}</div>` : ""}</td>
           <td>${this._escape(live.target ?? r.target_temp)}°</td>
-          <td>${this._escape(live.hvac_mode || "—")}</td>
           <td>${live.needs_heat ? "Yes" : "No"}</td>
         </tr>`;
       })
@@ -1051,7 +1101,7 @@ class NeatThermostatPanel extends HTMLElement {
       <div class="card">
         <p class="card-title">Configured rooms</p>
         <table class="data">
-          <thead><tr><th>Room</th><th>TRV</th><th>Target</th><th>Mode</th><th>Needs heat</th></tr></thead>
+          <thead><tr><th>Room</th><th>TRV</th><th>Sensors</th><th>Target</th><th>Needs heat</th></tr></thead>
           <tbody>${rows || `<tr><td colspan="5" class="muted">No rooms yet — add one below.</td></tr>`}</tbody>
         </table>
       </div>
@@ -1059,14 +1109,151 @@ class NeatThermostatPanel extends HTMLElement {
         <p class="card-title">Add / update room</p>
         <div class="row">
           <label class="field">Name<input id="roomName" placeholder="Kitchen" /></label>
-          <label class="field">TRV climate<input id="roomTrv" placeholder="climate.kitchen_..." /></label>
-          <label class="field">Temp sensor (optional)<input id="roomSensor" placeholder="sensor...." /></label>
-          <label class="field">Extra temp sensors (comma-separated)<input id="roomExtraSensors" placeholder="sensor.room_2, sensor.room_3" /></label>
         </div>
-        <p class="muted">Neat averages all available room temperature sensors.</p>
+        <div class="row">
+          <label class="field">TRV climate
+            <div class="entity-picker-host" data-room-picker="trv"></div>
+          </label>
+        </div>
+        <div class="row">
+          <label class="field">Temp sensor (optional)
+            <div class="entity-picker-host" data-room-picker="sensor"></div>
+          </label>
+        </div>
+        <div class="row">
+          <label class="field">Extra temp sensors (optional)
+            <div class="entity-picker-host" data-room-picker="extras"></div>
+          </label>
+        </div>
+        <p class="muted">Pick entities from Home Assistant. Neat averages all available room temperature sensors.</p>
         <button class="primary" id="saveRoom">Save room</button>
       </div>
     `;
+  }
+
+  async _mountRoomPickers() {
+    if (this._view !== "rooms" || !this._hass) return;
+    const gen = ++this._roomPickerMountGen;
+    const hosts = [...(this.shadowRoot?.querySelectorAll("[data-room-picker]") || [])];
+    if (!hosts.length) return;
+    for (const host of hosts) {
+      if (!host.querySelector("ha-entity-picker, ha-entities-picker")) {
+        host.innerHTML = `<p class="entity-picker-loading">Loading entity picker…</p>`;
+      }
+    }
+    try {
+      await ensureHaEntityPickerLoaded();
+    } catch (err) {
+      if (gen !== this._roomPickerMountGen) return;
+      for (const host of hosts) {
+        host.innerHTML = `<p class="entity-picker-error">${this._escape(err?.message || "Entity picker unavailable")}</p>`;
+      }
+      return;
+    }
+    if (gen !== this._roomPickerMountGen || this._view !== "rooms") return;
+
+    const mountSingle = (key, { domains, filter, label }) => {
+      const host = this.shadowRoot.querySelector(`[data-room-picker="${key}"]`);
+      if (!host) return;
+      let picker = host.querySelector("ha-entity-picker");
+      if (!picker) {
+        host.replaceChildren();
+        picker = document.createElement("ha-entity-picker");
+        picker.setAttribute("allow-custom-entity", "");
+        if (this._hass.userData?.showEntityIdPicker) picker.setAttribute("show-entity-id", "");
+        if (label) picker.label = label;
+        picker.includeDomains = domains;
+        if (filter) picker.entityFilter = filter;
+        picker.addEventListener("value-changed", (ev) => {
+          this._roomDraft[key] = ev.detail?.value || "";
+        });
+        host.appendChild(picker);
+      }
+      picker.hass = this._hass;
+      const value = this._roomDraft[key] || "";
+      if (picker.value !== value) picker.value = value || undefined;
+    };
+
+    mountSingle("trv", { domains: ["climate"], label: "TRV climate" });
+    mountSingle("sensor", {
+      domains: ["sensor"],
+      filter: temperatureSensorFilter,
+      label: "Temperature sensor",
+    });
+
+    const extrasHost = this.shadowRoot.querySelector(`[data-room-picker="extras"]`);
+    if (extrasHost) {
+      if (customElements.get("ha-entities-picker")) {
+        let multi = extrasHost.querySelector("ha-entities-picker");
+        if (!multi) {
+          extrasHost.replaceChildren();
+          multi = document.createElement("ha-entities-picker");
+          multi.includeDomains = ["sensor"];
+          multi.entityFilter = temperatureSensorFilter;
+          multi.label = "Extra temperature sensors";
+          multi.addEventListener("value-changed", (ev) => {
+            const val = ev.detail?.value;
+            this._roomDraft.extras = Array.isArray(val) ? val.filter(Boolean) : [];
+          });
+          extrasHost.appendChild(multi);
+        }
+        multi.hass = this._hass;
+        const extras = this._roomDraft.extras || [];
+        multi.value = extras;
+      } else {
+        // Fallback: single picker that appends to extras list
+        let picker = extrasHost.querySelector("ha-entity-picker");
+        if (!picker) {
+          extrasHost.replaceChildren();
+          const hint = document.createElement("p");
+          hint.className = "muted";
+          hint.style.margin = "0 0 8px";
+          hint.textContent = "Pick sensors one at a time (multi-picker unavailable).";
+          extrasHost.appendChild(hint);
+          const list = document.createElement("div");
+          list.id = "roomExtrasList";
+          list.className = "muted";
+          list.style.marginBottom = "8px";
+          extrasHost.appendChild(list);
+          picker = document.createElement("ha-entity-picker");
+          picker.setAttribute("allow-custom-entity", "");
+          picker.includeDomains = ["sensor"];
+          picker.entityFilter = temperatureSensorFilter;
+          picker.label = "Add extra sensor";
+          picker.addEventListener("value-changed", (ev) => {
+            const id = ev.detail?.value || "";
+            if (!id) return;
+            if (!this._roomDraft.extras.includes(id)) {
+              this._roomDraft.extras = [...this._roomDraft.extras, id];
+            }
+            this._refreshRoomExtrasFallbackList();
+            picker.value = undefined;
+          });
+          extrasHost.appendChild(picker);
+        }
+        picker.hass = this._hass;
+        this._refreshRoomExtrasFallbackList();
+      }
+    }
+  }
+
+  _refreshRoomExtrasFallbackList() {
+    const list = this.shadowRoot?.getElementById("roomExtrasList");
+    if (!list) return;
+    const extras = this._roomDraft.extras || [];
+    list.textContent = extras.length ? `Selected: ${extras.join(", ")}` : "None selected yet";
+  }
+
+  _readRoomPickerValues() {
+    const trvPicker = this.shadowRoot.querySelector('[data-room-picker="trv"] ha-entity-picker');
+    const sensorPicker = this.shadowRoot.querySelector('[data-room-picker="sensor"] ha-entity-picker');
+    const multi = this.shadowRoot.querySelector('[data-room-picker="extras"] ha-entities-picker');
+    if (trvPicker?.value != null) this._roomDraft.trv = String(trvPicker.value || "");
+    if (sensorPicker?.value != null) this._roomDraft.sensor = String(sensorPicker.value || "");
+    if (multi?.value != null) {
+      this._roomDraft.extras = Array.isArray(multi.value) ? multi.value.filter(Boolean) : [];
+    }
+    return this._roomDraft;
   }
 
   _renderWallPanels() {
@@ -1271,6 +1458,9 @@ class NeatThermostatPanel extends HTMLElement {
       </div>
     `;
     this._bind();
+    if (this._view === "rooms") {
+      void this._mountRoomPickers();
+    }
   }
 
   _bind() {
@@ -1428,17 +1618,13 @@ class NeatThermostatPanel extends HTMLElement {
     if (saveRoom) {
       saveRoom.addEventListener("click", async () => {
         const name = this.shadowRoot.getElementById("roomName").value.trim();
-        const trv = this.shadowRoot.getElementById("roomTrv").value.trim();
-        const sensor = this.shadowRoot.getElementById("roomSensor").value.trim();
-        const extras = this.shadowRoot
-          .getElementById("roomExtraSensors")
-          .value.split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
+        const draft = this._readRoomPickerValues();
+        const trv = String(draft.trv || "").trim();
+        const sensor = String(draft.sensor || "").trim();
+        const extras = (draft.extras || []).map((s) => String(s).trim()).filter(Boolean);
         if (!name || !trv) {
           this._error = "Room name and TRV required";
           this._showToast(this._error, "err");
-          this._render();
           return;
         }
         const id = name.toLowerCase().replace(/\s+/g, "_");
@@ -1453,6 +1639,7 @@ class NeatThermostatPanel extends HTMLElement {
         });
         try {
           await this._ws("neat_thermostat/update_rooms", { rooms });
+          this._roomDraft = { trv: "", sensor: "", extras: [] };
           await this._loadState();
           this._showToast(`Room ${name} saved`);
         } catch (e) {
