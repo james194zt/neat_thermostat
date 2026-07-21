@@ -35,15 +35,20 @@ Copy `custom_components/neat_thermostat` into your HA `config/custom_components/
 
 ## NSPanel / wall UI
 
-The folder [`nspanel-thermostat/`](nspanel-thermostat/) is a **copy of the working wall UI** from HADashboard. The live panels under `HADashboard/nspanel-thermostat` are left alone so they keep working until this copy is adapted and redeployed.
+| Folder | Purpose |
+|--------|---------|
+| [`nspanel-thermostat/`](nspanel-thermostat/) | **Stable fallback** — Neat-wired copy of the working wall UI. Leave this alone for rollback. |
+| [`nspanel-thermostat-v2/`](nspanel-thermostat-v2/) | **Restyle fork** — redesign / restyle work happens here. |
+| `HADashboard/nspanel-thermostat` | **Live production panels** — do not change unless deliberately redeploying. |
 
-Neat wiring (in this copy):
+Neat wiring (both copies):
 
 1. Define wall panels in the Neat sidebar
 2. Setup page → connect to HA → **select which wall panel this screen is**
 3. Full config loads from Neat via `neat_thermostat/get_wall_panel_config`
 4. Locked panels prompt for the house **Wall PIN** before setpoint/mode changes; unlock lasts until screensaver/idle
 
+Deploy **v2** only when ready; keep **v1** (`nspanel-thermostat/`) available as fallback.
 ## Nest intelligence (house only)
 
 Intelligence applies to **`climate.neat_home` / the boiler**, not per-room TRV learning.

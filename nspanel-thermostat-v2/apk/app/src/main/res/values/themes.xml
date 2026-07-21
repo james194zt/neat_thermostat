@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.HAThermostat" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowBackground">#2B333A</item>
+    </style>
+</resources>
