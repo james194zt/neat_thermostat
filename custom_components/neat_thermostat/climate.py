@@ -18,8 +18,11 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     ATTR_AWAY_MODE,
+    ATTR_PREHEAT_FOR,
+    ATTR_PREHEATING,
     ATTR_SCHEDULE_ACTIVE,
     ATTR_SUMMER_MODE,
+    ATTR_TRUE_RADIANT,
     ATTR_WINDOW_OPEN,
     DOMAIN,
     PRESET_AWAY,
@@ -118,12 +121,17 @@ class NeatHomeClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         _, schedule_active = self.coordinator.effective_main_target()
+        preheat = self.coordinator.data.get("preheat") or {}
         return {
             ATTR_WINDOW_OPEN: bool(self.coordinator.data.get("window_open")),
             ATTR_SUMMER_MODE: bool(self.coordinator.data.get("summer_mode")),
             ATTR_SCHEDULE_ACTIVE: schedule_active,
             ATTR_AWAY_MODE: bool(self.coordinator.data.get("away")),
+            ATTR_TRUE_RADIANT: bool(self.coordinator.config.true_radiant),
+            ATTR_PREHEATING: bool(preheat.get("preheating")),
+            ATTR_PREHEAT_FOR: preheat.get("block_start") if preheat.get("preheating") else None,
             "boiler_on": bool(self.coordinator.data.get("boiler_on")),
+            "warmup_c_per_hour": self.coordinator.intel.state.warmup.c_per_hour,
         }
 
     async def async_set_temperature(self, **kwargs: Any) -> None:

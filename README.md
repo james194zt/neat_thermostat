@@ -5,6 +5,7 @@ Home Assistant custom integration that replaces Better Thermostat-style heating 
 - **House climate** `climate.neat_home` — schedule, Eco / Boost / Away, window & summer hold
 - **Room climates** `climate.neat_<room>` — own sensors/setpoints; each room can call for heat
 - **Boiler demand** — heats when the house **or** any room needs heat
+- **Nest-like intelligence (house only)** — True Radiant preheat, Auto-Schedule learning, Home/Away Assist
 - **HA sidebar** — Overview, Rooms, Schedule, Wall panels, Settings
 - **Wall panels** — configure NSPanels centrally; each screen only picks which panel it is
 
@@ -40,6 +41,20 @@ Planned Neat wiring (in this copy only):
 2. Setup page → connect to HA → **select which wall panel this screen is**
 3. Full config loads from Neat via `neat_thermostat/get_wall_panel_config`
 
+## Nest intelligence (house only)
+
+Intelligence applies to **`climate.neat_home` / the boiler**, not per-room TRV learning.
+
+| Nest feature | Neat setting | Behaviour |
+|--------------|--------------|-----------|
+| **True Radiant / Early-On** | Settings → True Radiant (default On) | Learns °C/h warm-up from heat cycles; starts heating early so the house hits the scheduled temp *at* the block start; stops slightly early to limit overshoot. No preheat while Away Eco is active. |
+| **Auto-Schedule** | Settings → Auto-Schedule (default Off) | Manual Home setpoint changes are logged; repeated similar weekday/time adjustments upsert schedule blocks. More eager for the first ~7 days, then needs stronger confirmation. |
+| **Home/Away Assist** | Presence entities + Away delay | Away Eco only when **all** listed people/trackers are not home, after the delay (default 20 min). Overrides the schedule while active. |
+
+Optional: set an **outdoor temp sensor** so preheat estimates scale with cold weather.
+
+Overview shows a chip when preheating (`Preheating for 07:00`) or Away Eco, plus warm-up model stats.
+
 ## Migrating from Better Thermostat
 
 1. Install Neat and add rooms pointing at the same TRV climates BT used
@@ -53,7 +68,7 @@ NSPanel attributes kept compatible: `hvac_action`, `preset_mode` (`none`/`eco`/`
 | Type | Purpose |
 |------|---------|
 | `neat_thermostat/get_state` | Full config + live snapshot |
-| `neat_thermostat/update_settings` | Eco/Boost/Away/summer/tolerances |
+| `neat_thermostat/update_settings` | Eco/Boost/Away, True Radiant, Auto-Schedule, presence, delays |
 | `neat_thermostat/update_schedule` | 7-day schedule |
 | `neat_thermostat/update_rooms` | Room list (reloads platforms) |
 | `neat_thermostat/list_wall_panels` | List wall panels |

@@ -31,7 +31,7 @@ const DAY_SHORT = {
   sun: "Sun",
 };
 
-const PANEL_VERSION = "0.1.2";
+const PANEL_VERSION = "0.2.0";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 
@@ -365,6 +365,16 @@ code {
 }
 .nest-status-dots .heat { background: var(--nt-heat); }
 .nest-status-dots .idle { background: #9aa0a6; }
+.intel-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin: 0 0 14px; padding: 8px 14px; border-radius: 999px;
+  background: color-mix(in srgb, var(--nt-heat) 16%, transparent);
+  color: var(--nt-heat); font-size: 13px; font-weight: 600;
+}
+.intel-chip.home {
+  background: color-mix(in srgb, var(--nt-accent) 14%, transparent);
+  color: var(--nt-accent);
+}
 
 @media (max-width: 720px) {
   .nest-dial { width: 140px; height: 140px; }
@@ -531,7 +541,9 @@ class NeatThermostatPanel extends HTMLElement {
     const current = formatTemp(this._mainCurrent());
     const heating = Boolean(live.boiler_on);
     const mode = (live.main || {}).hvac_mode || "heat";
-    const caption = mode === "off" ? "Off" : heating ? "Heating to" : "Heat set to";
+    const preheat = live.preheat || {};
+    let caption = mode === "off" ? "Off" : heating ? "Heating to" : "Heat set to";
+    if (preheat.preheating) caption = "Preheating to";
 
     const roomZones = rooms
       .map((room) => {
@@ -608,15 +620,35 @@ class NeatThermostatPanel extends HTMLElement {
 
   _renderOverview() {
     const live = this._live();
+    const preheat = live.preheat || {};
+    const intel = live.intelligence || {};
+    const chip = preheat.preheating
+      ? `<div class="intel-chip">Preheating for ${this._escape(preheat.block_start)}</div>`
+      : live.away
+        ? `<div class="intel-chip">Away · Eco</div>`
+        : intel.true_radiant
+          ? `<div class="intel-chip home">True Radiant · ${this._escape(intel.warmup_c_per_hour ?? "—")}°C/h</div>`
+          : "";
     return `
       ${this._renderHero()}
       <div style="height:14px"></div>
+      ${chip}
       <div class="stats-row">
         <div class="stat ${live.boiler_on ? "ok" : ""}"><div class="label">Boiler</div><div class="value">${live.boiler_on ? "On" : "Off"}</div></div>
         <div class="stat"><div class="label">Preset</div><div class="value">${this._escape((live.main || {}).preset || "none")}</div></div>
         <div class="stat ${live.window_open ? "warn" : ""}"><div class="label">Windows</div><div class="value">${live.window_open ? "Open" : "Closed"}</div></div>
         <div class="stat ${live.summer_mode ? "warn" : ""}"><div class="label">Summer</div><div class="value">${live.summer_mode ? "On" : "Off"}</div></div>
         <div class="stat ${live.away ? "warn" : ""}"><div class="label">Away</div><div class="value">${live.away ? "Yes" : "Home"}</div></div>
+      </div>
+      <div class="card">
+        <p class="card-title">Nest intelligence (house)</p>
+        <p class="muted" style="margin:0;line-height:1.55">
+          True Radiant: <strong>${intel.true_radiant ? "On" : "Off"}</strong>
+          · Auto-Schedule: <strong>${intel.auto_schedule ? "On" : "Off"}</strong>
+          · Away delay: <strong>${this._escape(intel.away_delay_minutes ?? 20)} min</strong><br />
+          Warm-up model: <strong>${this._escape(intel.warmup_c_per_hour ?? "—")} °C/h</strong>
+          (${this._escape(intel.warmup_samples ?? 0)} samples)
+        </p>
       </div>
       <div class="card">
         <p class="card-title">Entities</p>
@@ -785,8 +817,9 @@ class NeatThermostatPanel extends HTMLElement {
 
   _renderSettings() {
     const cfg = this._cfg();
+    const presence = (cfg.presence_entities || []).join(", ");
     return `
-      ${this._pageHeader("Settings", "House-wide temperatures and modes.")}
+      ${this._pageHeader("Settings", "House-wide temperatures, Nest intelligence, and modes.")}
       <div class="card">
         <p class="card-title">Temperatures</p>
         <div class="row">
@@ -794,6 +827,35 @@ class NeatThermostatPanel extends HTMLElement {
           <label class="field">Boost °C<input id="boostTemp" type="number" step="0.5" value="${this._escape(cfg.boost_temp ?? 22)}" /></label>
           <label class="field">Away °C<input id="awayTemp" type="number" step="0.5" value="${this._escape(cfg.away_temp ?? 15)}" /></label>
         </div>
+      </div>
+      <div class="card">
+        <p class="card-title">Nest intelligence (house only)</p>
+        <div class="row">
+          <label class="field">True Radiant
+            <select id="trueRadiant">
+              <option value="true" ${cfg.true_radiant !== false ? "selected" : ""}>On</option>
+              <option value="false" ${cfg.true_radiant === false ? "selected" : ""}>Off (on schedule)</option>
+            </select>
+          </label>
+          <label class="field">Auto-Schedule
+            <select id="autoSchedule">
+              <option value="false" ${!cfg.auto_schedule ? "selected" : ""}>Off</option>
+              <option value="true" ${cfg.auto_schedule ? "selected" : ""}>On</option>
+            </select>
+          </label>
+          <label class="field">Away delay (min)
+            <input id="awayDelay" type="number" min="0" max="180" value="${this._escape(cfg.away_delay_minutes ?? 20)}" />
+          </label>
+        </div>
+        <div class="row">
+          <label class="field">Outdoor temp sensor
+            <input id="outdoorSensor" value="${this._escape(cfg.outdoor_temp_sensor || "")}" placeholder="sensor.home_temperature" />
+          </label>
+          <label class="field">Presence entities (comma-separated)
+            <input id="presenceEntities" value="${this._escape(presence || cfg.person_entity || "")}" placeholder="person.you, person.partner" />
+          </label>
+        </div>
+        <p class="muted">True Radiant preheats so the house hits the scheduled temp on time. Auto-Schedule learns from Home dial changes. Away Eco engages only after the delay when all presence entities are not home.</p>
       </div>
       <div class="card">
         <p class="card-title">Behaviour</p>
@@ -808,7 +870,7 @@ class NeatThermostatPanel extends HTMLElement {
           </label>
         </div>
         <div class="row">
-          <label class="field">Person (Away)<input id="personEntity" value="${this._escape(cfg.person_entity || "")}" placeholder="person.you" /></label>
+          <label class="field">Person (legacy)<input id="personEntity" value="${this._escape(cfg.person_entity || "")}" placeholder="person.you" /></label>
           <label class="field">Heater<input value="${this._escape(cfg.heater || "")}" disabled /></label>
           <label class="field">House sensor<input value="${this._escape(cfg.temperature_sensor || "")}" disabled /></label>
         </div>
@@ -984,6 +1046,15 @@ class NeatThermostatPanel extends HTMLElement {
             hot_tolerance: Number(this.shadowRoot.getElementById("hotTol").value),
             summer_mode: this.shadowRoot.getElementById("summerMode").value === "true",
             person_entity: this.shadowRoot.getElementById("personEntity").value.trim(),
+            true_radiant: this.shadowRoot.getElementById("trueRadiant").value === "true",
+            auto_schedule: this.shadowRoot.getElementById("autoSchedule").value === "true",
+            away_delay_minutes: Number(this.shadowRoot.getElementById("awayDelay").value),
+            outdoor_temp_sensor: this.shadowRoot.getElementById("outdoorSensor").value.trim(),
+            presence_entities: this.shadowRoot
+              .getElementById("presenceEntities")
+              .value.split(",")
+              .map((s) => s.trim())
+              .filter(Boolean),
           });
           this._flash = "Settings saved";
           await this._loadState();
