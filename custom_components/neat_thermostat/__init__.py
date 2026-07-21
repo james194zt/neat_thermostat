@@ -50,6 +50,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         model="Thermostat Hub",
     )
 
+    await coordinator.async_initialize_intelligence()
     await coordinator.async_config_entry_first_refresh()
     await coordinator.async_setup_listeners()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

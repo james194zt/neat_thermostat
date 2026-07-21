@@ -7,6 +7,8 @@ from typing import Any
 
 from .const import (
     DAYS,
+    DEFAULT_AUTO_SCHEDULE,
+    DEFAULT_AWAY_DELAY_MINUTES,
     DEFAULT_AWAY_TEMP,
     DEFAULT_BOOST_TEMP,
     DEFAULT_COLD_TOLERANCE,
@@ -15,6 +17,7 @@ from .const import (
     DEFAULT_MAX_TEMP,
     DEFAULT_MIN_TEMP,
     DEFAULT_TARGET_TEMP,
+    DEFAULT_TRUE_RADIANT,
 )
 
 
@@ -127,9 +130,14 @@ class NeatConfig:
     max_temp: float = DEFAULT_MAX_TEMP
     summer_mode: bool = False
     person_entity: str = ""
+    presence_entities: list[str] = field(default_factory=list)
     schedule: dict[str, list[dict[str, Any]]] = field(default_factory=default_schedule)
     wall_panels: list[WallPanelConfig] = field(default_factory=list)
     schedule_enabled: bool = True
+    true_radiant: bool = DEFAULT_TRUE_RADIANT
+    auto_schedule: bool = DEFAULT_AUTO_SCHEDULE
+    away_delay_minutes: int = DEFAULT_AWAY_DELAY_MINUTES
+    outdoor_temp_sensor: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -147,9 +155,14 @@ class NeatConfig:
             "max_temp": self.max_temp,
             "summer_mode": self.summer_mode,
             "person_entity": self.person_entity,
+            "presence_entities": self.presence_entities,
             "schedule": self.schedule,
             "wall_panels": [w.to_dict() for w in self.wall_panels],
             "schedule_enabled": self.schedule_enabled,
+            "true_radiant": self.true_radiant,
+            "auto_schedule": self.auto_schedule,
+            "away_delay_minutes": self.away_delay_minutes,
+            "outdoor_temp_sensor": self.outdoor_temp_sensor,
         }
 
     @classmethod
@@ -157,6 +170,10 @@ class NeatConfig:
         rooms_raw = data.get("rooms") or []
         panels_raw = data.get("wall_panels") or []
         schedule = data.get("schedule") or default_schedule()
+        presence = list(data.get("presence_entities") or [])
+        person = str(data.get("person_entity") or "")
+        if person and person not in presence:
+            presence = [person, *presence]
         return cls(
             heater=str(data.get("heater") or ""),
             temperature_sensor=str(data.get("temperature_sensor") or ""),
@@ -171,8 +188,15 @@ class NeatConfig:
             min_temp=float(data.get("min_temp", DEFAULT_MIN_TEMP)),
             max_temp=float(data.get("max_temp", DEFAULT_MAX_TEMP)),
             summer_mode=bool(data.get("summer_mode", False)),
-            person_entity=str(data.get("person_entity") or ""),
+            person_entity=person,
+            presence_entities=presence,
             schedule=schedule,
             wall_panels=[WallPanelConfig.from_dict(p) for p in panels_raw],
             schedule_enabled=bool(data.get("schedule_enabled", True)),
+            true_radiant=bool(data.get("true_radiant", DEFAULT_TRUE_RADIANT)),
+            auto_schedule=bool(data.get("auto_schedule", DEFAULT_AUTO_SCHEDULE)),
+            away_delay_minutes=int(
+                data.get("away_delay_minutes", DEFAULT_AWAY_DELAY_MINUTES)
+            ),
+            outdoor_temp_sensor=str(data.get("outdoor_temp_sensor") or ""),
         )

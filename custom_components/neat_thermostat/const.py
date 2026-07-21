@@ -21,6 +21,11 @@ CONF_SCHEDULE = "schedule"
 CONF_WALL_PANELS = "wall_panels"
 CONF_SUMMER_MODE = "summer_mode"
 CONF_PERSON_ENTITY = "person_entity"
+CONF_PRESENCE_ENTITIES = "presence_entities"
+CONF_TRUE_RADIANT = "true_radiant"
+CONF_AUTO_SCHEDULE = "auto_schedule"
+CONF_AWAY_DELAY_MINUTES = "away_delay_minutes"
+CONF_OUTDOOR_TEMP_SENSOR = "outdoor_temp_sensor"
 
 DEFAULT_ECO_TEMP = 16.0
 DEFAULT_BOOST_TEMP = 22.0
@@ -30,11 +35,17 @@ DEFAULT_COLD_TOLERANCE = 0.3
 DEFAULT_HOT_TOLERANCE = 0.3
 DEFAULT_MIN_TEMP = 5.0
 DEFAULT_MAX_TEMP = 30.0
+DEFAULT_TRUE_RADIANT = True
+DEFAULT_AUTO_SCHEDULE = False
+DEFAULT_AWAY_DELAY_MINUTES = 20
 
 ATTR_WINDOW_OPEN = "window_open"
 ATTR_SUMMER_MODE = "summer_mode_state"
 ATTR_SCHEDULE_ACTIVE = "schedule_active"
 ATTR_AWAY_MODE = "away_mode"
+ATTR_PREHEATING = "preheating"
+ATTR_PREHEAT_FOR = "preheat_for"
+ATTR_TRUE_RADIANT = "true_radiant"
 
 PRESET_NONE = "none"
 PRESET_ECO = "eco"

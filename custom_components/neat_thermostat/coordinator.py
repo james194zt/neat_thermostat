@@ -1,13 +1,13 @@
-"""Coordinator: boiler demand + shared Neat state."""
+"""Coordinator: boiler demand + Nest-like house intelligence."""
 
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_HOME, STATE_ON, STATE_OPEN
+from homeassistant.const import STATE_ON, STATE_OPEN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import (
     async_track_state_change_event,
@@ -16,6 +16,16 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import DOMAIN, PRESET_AWAY, PRESET_BOOST, PRESET_ECO, PRESET_NONE
+from .intelligence import (
+    IntelligenceStore,
+    early_off_should_idle,
+    learn_schedule_from_adjustments,
+    preheat_status,
+    presence_anyone_home,
+    record_manual_adjustment,
+    update_away_tracking,
+    update_warmup_from_cycle,
+)
 from .models import NeatConfig, RoomConfig, WallPanelConfig
 from .schedule import scheduled_temperature
 
@@ -42,7 +52,17 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "target": room.target_temp,
                 "needs_heat": False,
             }
+        self.intel = IntelligenceStore(hass, entry.entry_id)
+        self._away_eco_active = False
+        self._preheat: dict[str, Any] | None = None
+        self._heat_cycle_start: datetime | None = None
+        self._heat_cycle_start_temp: float | None = None
+        self._last_boiler_on = False
+        self._dirty_intel = False
         self.data = self._snapshot()
+
+    async def async_initialize_intelligence(self) -> None:
+        await self.intel.async_load()
 
     def update_config(self, data: dict[str, Any]) -> None:
         self.config = NeatConfig.from_entry_data(data)
@@ -77,9 +97,17 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "target": self._main_target,
             },
             "rooms": dict(self._room_states),
-            "away": self._is_away(),
+            "away": self._away_eco_active,
             "window_open": self._any_window_open(self.config.window_sensors),
             "summer_mode": self.config.summer_mode,
+            "preheat": self._preheat,
+            "intelligence": {
+                "true_radiant": self.config.true_radiant,
+                "auto_schedule": self.config.auto_schedule,
+                "away_delay_minutes": self.config.away_delay_minutes,
+                "warmup_c_per_hour": self.intel.state.warmup.c_per_hour,
+                "warmup_samples": self.intel.state.warmup.samples,
+            },
         }
 
     def _state_float(self, entity_id: str | None) -> float | None:
@@ -106,21 +134,35 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return True
         return False
 
-    def _is_away(self) -> bool:
-        person = self.config.person_entity
-        if not person:
-            return False
-        state = self.hass.states.get(person)
-        if state is None:
-            return False
-        return state.state != STATE_HOME
+    def _presence_entities(self) -> list[str]:
+        entities = list(self.config.presence_entities or [])
+        if self.config.person_entity and self.config.person_entity not in entities:
+            entities.append(self.config.person_entity)
+        return entities
+
+    def _refresh_away(self) -> None:
+        anyone = presence_anyone_home(
+            self.hass.states.get, self._presence_entities()
+        )
+        self.intel.state, self._away_eco_active = update_away_tracking(
+            self.intel.state,
+            anyone_home=anyone,
+            delay_minutes=self.config.away_delay_minutes,
+        )
+        self._dirty_intel = True
 
     def effective_main_target(self) -> tuple[float, bool]:
+        """Return (target_temp, schedule_or_preheat_active)."""
         if self._main_preset == PRESET_BOOST:
             return self.config.boost_temp, False
-        if self._main_preset in (PRESET_ECO, PRESET_AWAY) or self._is_away():
-            temp = self.config.away_temp if self._is_away() else self.config.eco_temp
-            return temp, False
+
+        # Away Eco overrides schedule (Nest precedence); no preheat while away
+        if self._away_eco_active or self._main_preset == PRESET_AWAY:
+            return self.config.away_temp, False
+        if self._main_preset == PRESET_ECO:
+            return self.config.eco_temp, False
+
+        # Active schedule block
         if self.config.schedule_enabled and self._main_preset == PRESET_NONE:
             temp, active = scheduled_temperature(
                 self.config.schedule,
@@ -129,6 +171,24 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             if active:
                 return temp, True
+
+            # True Radiant preheat toward upcoming block
+            outdoor = self._state_float(self.config.outdoor_temp_sensor)
+            status = preheat_status(
+                self.config.schedule,
+                schedule_enabled=True,
+                true_radiant=self.config.true_radiant,
+                current_temp=self._state_float(self.config.temperature_sensor),
+                warmup=self.intel.state.warmup,
+                outdoor_temp=outdoor,
+                away_eco_active=self._away_eco_active,
+            )
+            self._preheat = status
+            if status and status.get("preheating"):
+                return float(status["temperature"]), True
+        else:
+            self._preheat = None
+
         return self._main_target, False
 
     def effective_room_target(self, room: RoomConfig) -> float:
@@ -136,7 +196,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         preset = st.get("preset", PRESET_NONE)
         if preset == PRESET_BOOST:
             return room.boost_temp
-        if preset == PRESET_ECO or self._is_away():
+        if preset == PRESET_ECO or self._away_eco_active:
             return room.eco_temp
         return float(st.get("target", room.target_temp))
 
@@ -175,6 +235,14 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if current is None:
             return False
         target, _ = self.effective_main_target()
+        if early_off_should_idle(
+            true_radiant=self.config.true_radiant,
+            current_temp=current,
+            target_temp=target,
+            hot_tolerance=self.config.hot_tolerance,
+            warmup=self.intel.state.warmup,
+        ):
+            return False
         return current < target - self.config.cold_tolerance
 
     def main_should_idle(self) -> bool:
@@ -182,7 +250,13 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if current is None:
             return True
         target, _ = self.effective_main_target()
-        return current > target + self.config.hot_tolerance
+        return early_off_should_idle(
+            true_radiant=self.config.true_radiant,
+            current_temp=current,
+            target_temp=target,
+            hot_tolerance=self.config.hot_tolerance,
+            warmup=self.intel.state.warmup,
+        )
 
     async def _async_set_heater(self, turn_on: bool) -> None:
         heater = self.config.heater
@@ -235,7 +309,58 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             blocking=False,
         )
 
+    def _track_heat_cycle(self, want_heat: bool) -> None:
+        now = datetime.now()
+        current = self._state_float(self.config.temperature_sensor)
+        outdoor = self._state_float(self.config.outdoor_temp_sensor)
+        if want_heat and not self._last_boiler_on:
+            self._heat_cycle_start = now
+            self._heat_cycle_start_temp = current
+        elif not want_heat and self._last_boiler_on and self._heat_cycle_start:
+            if (
+                current is not None
+                and self._heat_cycle_start_temp is not None
+            ):
+                duration = (now - self._heat_cycle_start).total_seconds() / 60.0
+                self.intel.state.warmup = update_warmup_from_cycle(
+                    self.intel.state.warmup,
+                    start_temp=self._heat_cycle_start_temp,
+                    end_temp=current,
+                    duration_minutes=duration,
+                    outdoor_temp=outdoor,
+                )
+                self.intel.state.recent_cycles.append(
+                    {
+                        "started_at": self._heat_cycle_start.isoformat(),
+                        "ended_at": now.isoformat(),
+                        "start_temp": self._heat_cycle_start_temp,
+                        "end_temp": current,
+                        "outdoor_temp": outdoor,
+                        "duration_minutes": round(duration, 1),
+                    }
+                )
+                self.intel.state.recent_cycles = self.intel.state.recent_cycles[-40:]
+                self._dirty_intel = True
+            self._heat_cycle_start = None
+            self._heat_cycle_start_temp = None
+        self._last_boiler_on = want_heat
+
+    async def _maybe_learn_schedule(self) -> None:
+        if not self.config.auto_schedule:
+            return
+        new_schedule, changed = learn_schedule_from_adjustments(
+            self.config.schedule,
+            self.intel.state,
+            auto_schedule=True,
+        )
+        if changed:
+            _LOGGER.info("Auto-Schedule updated house weekly schedule from adjustments")
+            await self.async_save_config({"schedule": new_schedule})
+
     async def _async_update_data(self) -> dict[str, Any]:
+        self._refresh_away()
+
+        # Recompute preheat each tick via effective_main_target
         for room in self.config.rooms:
             needs = self.room_needs_heat(room)
             self._room_states.setdefault(room.id, {})["needs_heat"] = needs
@@ -245,22 +370,41 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.main_needs_heat()
             or any(self.room_needs_heat(r) for r in self.config.rooms)
         )
-        # Hysteresis for main zone while heater already running
         if (
             not want_heat
             and self._is_on(self.config.heater)
             and self._main_hvac_mode == "heat"
             and not self.config.summer_mode
             and not self._any_window_open(self.config.window_sensors)
+            and not self.main_should_idle()
         ):
             current = self._state_float(self.config.temperature_sensor)
             target, _ = self.effective_main_target()
             if current is not None and current < target:
                 want_heat = True
 
+        # If early-off says idle for house and no room demand, force off
+        if (
+            want_heat
+            and self.main_should_idle()
+            and not any(self.room_needs_heat(r) for r in self.config.rooms)
+        ):
+            want_heat = False
+
+        self._track_heat_cycle(want_heat)
         await self._async_set_heater(want_heat)
+
+        if self._dirty_intel:
+            await self.intel.async_save()
+            self._dirty_intel = False
+
+        # Ensure preheat field is fresh
+        self.effective_main_target()
         self.data = self._snapshot()
         self.data["boiler_on"] = want_heat
+        target, sched = self.effective_main_target()
+        self.data["main"]["effective_target"] = target
+        self.data["main"]["schedule_active"] = sched
         return self.data
 
     @callback
@@ -272,7 +416,15 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def set_main_temperature(self, temperature: float) -> None:
         self._main_target = temperature
         self._main_preset = PRESET_NONE
-        self.hass.async_create_task(self.async_request_refresh())
+        # Manual change → Auto-Schedule learning
+        record_manual_adjustment(self.intel.state, temperature)
+        self._dirty_intel = True
+        self.hass.async_create_task(self._after_manual_setpoint())
+
+    async def _after_manual_setpoint(self) -> None:
+        await self.intel.async_save()
+        await self._maybe_learn_schedule()
+        await self.async_request_refresh()
 
     @callback
     def set_main_preset(self, preset: str) -> None:
@@ -281,6 +433,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._main_target = self.config.eco_temp
         elif preset == PRESET_BOOST:
             self._main_target = self.config.boost_temp
+        elif preset == PRESET_AWAY:
+            self._main_target = self.config.away_temp
         self.hass.async_create_task(self.async_request_refresh())
 
     @callback
@@ -319,7 +473,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         sensors = panel.sensors or {
             "insideTemp": self.config.temperature_sensor,
             "insideHumidity": "",
-            "outsideTemp": "",
+            "outsideTemp": self.config.outdoor_temp_sensor or "",
             "weather": "weather.home",
             "sun": "sun.sun",
         }
@@ -341,8 +495,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_setup_listeners(self) -> None:
         entities = [self.config.heater, self.config.temperature_sensor]
         entities.extend(self.config.window_sensors)
-        if self.config.person_entity:
-            entities.append(self.config.person_entity)
+        entities.extend(self._presence_entities())
+        if self.config.outdoor_temp_sensor:
+            entities.append(self.config.outdoor_temp_sensor)
         for room in self.config.rooms:
             entities.append(room.trv_entity)
             if room.temperature_sensor:
@@ -367,6 +522,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     async def async_unload(self) -> None:
+        if self._dirty_intel:
+            await self.intel.async_save()
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()

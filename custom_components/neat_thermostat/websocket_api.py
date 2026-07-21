@@ -73,9 +73,14 @@ async def ws_get_state(
         vol.Optional("summer_mode"): cv.boolean,
         vol.Optional("schedule_enabled"): cv.boolean,
         vol.Optional("person_entity"): cv.string,
+        vol.Optional("presence_entities"): [cv.entity_id],
         vol.Optional("window_sensors"): [cv.entity_id],
         vol.Optional("cold_tolerance"): vol.Coerce(float),
         vol.Optional("hot_tolerance"): vol.Coerce(float),
+        vol.Optional("true_radiant"): cv.boolean,
+        vol.Optional("auto_schedule"): cv.boolean,
+        vol.Optional("away_delay_minutes"): vol.All(vol.Coerce(int), vol.Range(min=0, max=180)),
+        vol.Optional("outdoor_temp_sensor"): cv.string,
     }
 )
 @websocket_api.async_response
@@ -96,9 +101,14 @@ async def ws_update_settings(
             "summer_mode",
             "schedule_enabled",
             "person_entity",
+            "presence_entities",
             "window_sensors",
             "cold_tolerance",
             "hot_tolerance",
+            "true_radiant",
+            "auto_schedule",
+            "away_delay_minutes",
+            "outdoor_temp_sensor",
         )
         if k in msg
     }
