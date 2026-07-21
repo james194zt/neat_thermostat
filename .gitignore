@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+.vscode/
+.idea/
+*.log
+.DS_Store
+nspanel-thermostat/config.json
+nspanel-thermostat/apk/.gradle/
+nspanel-thermostat/apk/build/
+nspanel-thermostat/apk/app/build/
+nspanel-thermostat/node_modules/
+nspanel-thermostat/dist/

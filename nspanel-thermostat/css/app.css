@@ -1,0 +1,528 @@
+:root {
+  --bg-idle: #2b333a;
+  --bg-heating: #d37c35;
+  --bg-cooling: #0055ff;
+  --bg-eco: #2d6a4f;
+  --bg-boost: #c1121f;
+  --text: #ffffff;
+  --text-muted: rgba(255, 255, 255, 0.75);
+  --surface: rgba(0, 0, 0, 0.18);
+  --surface-strong: rgba(0, 0, 0, 0.28);
+  --accent: #25b1f6;
+  --danger: #ff5c5c;
+  --radius: 18px;
+  --pad: 2.5vmin;
+  --gap: 2vmin;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--bg-idle);
+}
+
+body {
+  transition: background 0.35s ease;
+}
+
+button {
+  font: inherit;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* Same vertical rhythm as before weather — weather is overlaid, not in flow. */
+.app {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows:
+    auto
+    auto
+    minmax(0, 1fr)
+    auto
+    auto
+    auto
+    auto
+    auto;
+  padding: var(--pad);
+  gap: var(--gap);
+  overflow: hidden;
+}
+
+.banner {
+  padding: 1.5vmin 2vmin;
+  border-radius: 2vmin;
+  background: rgba(0, 0, 0, 0.28);
+  text-align: center;
+  font-size: 2.8vmin;
+  font-weight: 600;
+}
+
+.status-row {
+  display: flex;
+  justify-content: center;
+}
+
+.status-row.hidden {
+  display: none;
+}
+
+.top-bar {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--gap);
+}
+
+.app.room-view .top-bar {
+  grid-template-columns: auto 1fr auto;
+}
+
+.top-left {
+  position: relative;
+  justify-self: start;
+  min-width: 0;
+}
+
+.app.room-view .top-left {
+  justify-self: center;
+}
+
+.top-back {
+  padding: 1.5vmin 2.5vmin;
+  border-radius: 999px;
+  background: var(--surface-strong);
+  font-size: 2.6vmin;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 1vmin;
+  padding: 1.2vmin 2vmin;
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 2.5vmin;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+#actionPill {
+  justify-self: end;
+}
+
+/* Sits under Connected without pushing thermostat layout down. */
+.weather-block {
+  position: absolute;
+  top: calc(100% + 1vmin);
+  left: 1.2vmin;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.6vmin;
+  min-width: 0;
+  pointer-events: none;
+}
+
+.weather-block[hidden] {
+  display: none;
+}
+
+.weather-main {
+  display: flex;
+  align-items: center;
+  gap: 1.4vmin;
+  line-height: 1.15;
+  min-width: 0;
+}
+
+.weather-icon {
+  width: 5vmin;
+  height: 5vmin;
+  flex-shrink: 0;
+  display: block;
+  object-fit: contain;
+}
+
+.weather-temp {
+  font-size: 3.6vmin;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.weather-label {
+  font-size: 3.1vmin;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.weather-sun {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2.2vmin;
+  font-size: 2.5vmin;
+  font-weight: 500;
+  color: var(--text-muted);
+  line-height: 1.15;
+}
+
+.sun-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7vmin;
+  white-space: nowrap;
+}
+
+.sun-icon {
+  width: 2.9vmin;
+  height: 2.9vmin;
+  flex-shrink: 0;
+  display: block;
+  color: var(--accent);
+}
+
+.status-dot {
+  width: 1.6vmin;
+  height: 1.6vmin;
+  border-radius: 50%;
+  background: #7dffb3;
+}
+
+.status-dot.offline {
+  background: var(--danger);
+}
+
+.main-stage {
+  display: contents;
+}
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hero-label {
+  font-size: 3vmin;
+  color: var(--text-muted);
+  margin-bottom: 0.5vmin;
+  max-width: 100%;
+  padding: 0 2vmin;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hero-temp {
+  font-size: 16vmin;
+  line-height: 0.95;
+  font-weight: 300;
+  letter-spacing: -0.04em;
+}
+
+.hero-target {
+  margin-top: 1vmin;
+  font-size: 2.8vmin;
+  color: var(--text-muted);
+  max-width: 100%;
+  padding: 0 2vmin;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.temp-controls {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  column-gap: 2vmin;
+}
+
+.temp-btn {
+  width: 14vmin;
+  height: 14vmin;
+  border-radius: 50%;
+  background: var(--surface-strong);
+  font-size: 8vmin;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+#tempDown {
+  justify-self: end;
+}
+
+#tempUp {
+  justify-self: start;
+}
+
+.temp-btn:active,
+.mode-btn:active,
+.room-chip:active,
+.top-back:active {
+  transform: scale(0.96);
+}
+
+.target-display {
+  text-align: center;
+}
+
+.target-display .label {
+  font-size: 2.5vmin;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.target-display .value {
+  font-size: 8vmin;
+  font-weight: 500;
+}
+
+.mode-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--gap);
+}
+
+.mode-btn {
+  padding: 2.5vmin 1vmin;
+  border-radius: 2.5vmin;
+  background: var(--surface);
+  font-size: 2.8vmin;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.mode-btn.active {
+  background: rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.35);
+}
+
+.info-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--gap);
+}
+
+.info-card {
+  padding: 2vmin 1vmin;
+  border-radius: 2vmin;
+  background: var(--surface);
+  text-align: center;
+}
+
+.info-card .label {
+  font-size: 2.3vmin;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.info-card .value {
+  margin-top: 0.5vmin;
+  font-size: 3.8vmin;
+  font-weight: 600;
+}
+
+.bottom-panel {
+  display: grid;
+  gap: 1vmin;
+}
+
+.panel-title {
+  font-size: 2.5vmin;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.room-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--gap);
+}
+
+.room-chip {
+  min-width: 0;
+  padding: 2vmin 1vmin;
+  border-radius: 2vmin;
+  background: var(--surface);
+  text-align: center;
+}
+
+.room-chip.active {
+  background: rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.35);
+}
+
+.room-chip .name {
+  font-size: 2.4vmin;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-chip .temp {
+  margin-top: 0.5vmin;
+  font-size: 3.5vmin;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.room-chip .state {
+  display: none;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 24px;
+}
+
+.overlay.hidden {
+  display: none;
+}
+
+.error-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 20px;
+  border-radius: var(--radius);
+  background: #1b2228;
+  color: var(--text);
+}
+
+.error-card h1 {
+  margin: 0 0 8px;
+  font-size: 22px;
+}
+
+.error-card p {
+  margin: 0 0 14px;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.error-card button {
+  margin-top: 16px;
+  width: 100%;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #041018;
+  font-weight: 700;
+}
+
+.device-card label {
+  display: block;
+  margin: 14px 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.device-card input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text);
+  font: inherit;
+}
+
+.device-pick-list {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.device-pick-list button {
+  margin-top: 0;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  text-align: left;
+}
+
+.device-pick-list .id {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.secondary-link {
+  margin-top: 10px !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: var(--text) !important;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.screensaver {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  background: #101418;
+  color: white;
+  z-index: 20;
+}
+
+.screensaver-time {
+  font-size: 16vmin;
+  font-weight: 300;
+  letter-spacing: -0.04em;
+}
+
+.screensaver-date {
+  font-size: 4vmin;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.screensaver-hint {
+  margin-top: 3vmin;
+  font-size: 2.8vmin;
+  color: rgba(255, 255, 255, 0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
