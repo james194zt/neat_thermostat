@@ -393,7 +393,7 @@ function minutesToHHMM(mins) {
 function formatTemp(value) {
   if (value == null || Number.isNaN(Number(value))) return null;
   const n = Number(value);
-  return Number.isInteger(n) ? String(n) : n.toFixed(1).replace(/\\.0$/, "");
+  return Number.isInteger(n) ? String(n) : n.toFixed(1).replace(/\.0$/, "");
 }
 
 function houseSvg() {
