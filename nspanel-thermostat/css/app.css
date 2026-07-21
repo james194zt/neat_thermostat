@@ -526,3 +526,42 @@ button {
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
+
+.pin-card {
+  max-width: 420px;
+  width: min(92vw, 420px);
+}
+
+.pin-display {
+  font-size: 8vmin;
+  letter-spacing: 0.35em;
+  text-align: center;
+  margin: 12px 0 18px;
+  font-weight: 600;
+}
+
+.pin-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.pin-pad button {
+  min-height: 56px;
+  border: none;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.12);
+  color: white;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.pin-pad button[data-digit="ok"] {
+  background: var(--accent);
+}
+
+.pin-error {
+  color: var(--danger);
+  text-align: center;
+  margin: 12px 0 0;
+}

@@ -136,6 +136,29 @@
       </div>
     </div>
 
+    <div class="overlay hidden" id="pinOverlay">
+      <div class="error-card pin-card">
+        <h1>Enter PIN</h1>
+        <p>This panel is locked. Enter the 4-digit PIN from Neat Settings.</p>
+        <div class="pin-display" id="pinDisplay">••••</div>
+        <div class="pin-pad" id="pinPad">
+          <button type="button" data-digit="1">1</button>
+          <button type="button" data-digit="2">2</button>
+          <button type="button" data-digit="3">3</button>
+          <button type="button" data-digit="4">4</button>
+          <button type="button" data-digit="5">5</button>
+          <button type="button" data-digit="6">6</button>
+          <button type="button" data-digit="7">7</button>
+          <button type="button" data-digit="8">8</button>
+          <button type="button" data-digit="9">9</button>
+          <button type="button" data-digit="clear">C</button>
+          <button type="button" data-digit="0">0</button>
+          <button type="button" data-digit="ok">OK</button>
+        </div>
+        <p class="pin-error hidden" id="pinError">Incorrect PIN</p>
+      </div>
+    </div>
+
     <div class="screensaver hidden" id="screensaver" aria-hidden="true">
       <div class="screensaver-time" data-clock>--:--</div>
       <div class="screensaver-date" data-date></div>

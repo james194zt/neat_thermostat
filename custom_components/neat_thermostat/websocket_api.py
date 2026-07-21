@@ -36,6 +36,9 @@ def async_register_ws_handlers(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_upsert_wall_panel)
     websocket_api.async_register_command(hass, ws_delete_wall_panel)
     websocket_api.async_register_command(hass, ws_get_wall_panel_config)
+    websocket_api.async_register_command(hass, ws_get_energy_history)
+    websocket_api.async_register_command(hass, ws_verify_wall_pin)
+    websocket_api.async_register_command(hass, ws_stop_seasonal_savings)
 
 
 @websocket_api.websocket_command(
@@ -82,6 +85,11 @@ async def ws_get_state(
         vol.Optional("leaf_enabled"): cv.boolean,
         vol.Optional("away_delay_minutes"): vol.All(vol.Coerce(int), vol.Range(min=0, max=180)),
         vol.Optional("outdoor_temp_sensor"): cv.string,
+        vol.Optional("safety_temp_enabled"): cv.boolean,
+        vol.Optional("safety_min_temp"): vol.All(vol.Coerce(float), vol.Range(min=5, max=12)),
+        vol.Optional("seasonal_savings"): cv.boolean,
+        vol.Optional("adaptive_comfort"): cv.boolean,
+        vol.Optional("wall_pin"): cv.string,
     }
 )
 @websocket_api.async_response
@@ -111,9 +119,20 @@ async def ws_update_settings(
             "leaf_enabled",
             "away_delay_minutes",
             "outdoor_temp_sensor",
+            "safety_temp_enabled",
+            "safety_min_temp",
+            "seasonal_savings",
+            "adaptive_comfort",
+            "wall_pin",
         )
         if k in msg
     }
+    if "wall_pin" in updates:
+        pin = str(updates["wall_pin"] or "").strip()
+        if pin and (not pin.isdigit() or len(pin) != 4):
+            connection.send_error(msg["id"], "invalid", "wall_pin must be 4 digits")
+            return
+        updates["wall_pin"] = pin
     config = await coordinator.async_save_config(updates)
     connection.send_result(msg["id"], {"config": config.to_dict()})
 
@@ -158,7 +177,6 @@ async def ws_update_rooms(
         return
     rooms = [RoomConfig.from_dict(r).to_dict() for r in msg.get("rooms") or []]
     config = await coordinator.async_save_config({"rooms": rooms})
-    # Reload so climate entities match room list
     await hass.config_entries.async_reload(coordinator.entry.entry_id)
     connection.send_result(msg["id"], {"config": config.to_dict()})
 
@@ -245,7 +263,6 @@ async def ws_delete_wall_panel(
 async def ws_get_wall_panel_config(
     hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
 ) -> None:
-    """Used by NSPanel / wall UI to load full config after room pick."""
     coordinator = _coordinator(hass, msg.get("entry_id"))
     if coordinator is None:
         connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
@@ -255,3 +272,68 @@ async def ws_get_wall_panel_config(
         connection.send_error(msg["id"], "not_found", f"Unknown panel {msg['panel_id']}")
         return
     connection.send_result(msg["id"], {"config": payload})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "neat_thermostat/get_energy_history",
+        vol.Optional("entry_id"): cv.string,
+        vol.Optional("days"): vol.All(vol.Coerce(int), vol.Range(min=7, max=60)),
+    }
+)
+@websocket_api.async_response
+async def ws_get_energy_history(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
+        return
+    days = int(msg.get("days") or 31)
+    connection.send_result(
+        msg["id"],
+        {
+            "history": coordinator.energy_history(days=days),
+            "seasonal_savings": coordinator.data.get("seasonal_savings")
+            if coordinator.data
+            else {},
+        },
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "neat_thermostat/verify_wall_pin",
+        vol.Required("pin"): cv.string,
+        vol.Optional("entry_id"): cv.string,
+        vol.Optional("panel_id"): cv.string,
+    }
+)
+@websocket_api.async_response
+async def ws_verify_wall_pin(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
+        return
+    ok = coordinator.verify_wall_pin(msg.get("pin") or "")
+    connection.send_result(msg["id"], {"ok": ok})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "neat_thermostat/stop_seasonal_savings",
+        vol.Optional("entry_id"): cv.string,
+    }
+)
+@websocket_api.async_response
+async def ws_stop_seasonal_savings(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
+        return
+    config = await coordinator.async_stop_seasonal_savings()
+    connection.send_result(msg["id"], {"config": config.to_dict()})

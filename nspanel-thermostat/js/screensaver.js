@@ -1,8 +1,9 @@
 export class ScreenSaver {
-  constructor({ overlay, idleMs = 30000, useHardwareSleep = false }) {
+  constructor({ overlay, idleMs = 30000, useHardwareSleep = false, onShow = null }) {
     this.overlay = overlay;
     this.idleMs = idleMs;
     this.useHardwareSleep = useHardwareSleep;
+    this.onShow = onShow;
     this.timer = null;
     this.clockTimer = null;
     this.active = false;
@@ -11,6 +12,7 @@ export class ScreenSaver {
   showOverlay() {
     this.active = true;
     this.overlay.classList.remove("hidden");
+    this.onShow?.();
     this.updateClock();
     clearInterval(this.clockTimer);
     this.clockTimer = setInterval(() => this.updateClock(), 1000);

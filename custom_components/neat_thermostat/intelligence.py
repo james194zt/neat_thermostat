@@ -9,7 +9,14 @@ from typing import Any, Callable
 
 from homeassistant.helpers.storage import Store
 
-from .const import DAYS, DEFAULT_ECO_TEMP, DOMAIN
+from .const import (
+    DAYS,
+    DEFAULT_ECO_TEMP,
+    DOMAIN,
+    ENERGY_HISTORY_KEEP_DAYS,
+    SEASONAL_SAVINGS_DAYS,
+    SEASONAL_SAVINGS_OFFSET_C,
+)
 from .models import ScheduleBlock
 from .schedule import _minutes, _parse_hhmm, day_key
 
@@ -33,6 +40,7 @@ LEAF_CHALLENGE_OFFSET_C = 0.5
 LEAF_DEFAULT_EARLY_THRESHOLD_C = 19.5
 LEAF_BASELINE_SAMPLES_NEEDED = 6
 LEAF_DAY_MEANINGFUL_MINUTES = 30
+TTT_MIN_SAMPLES = 3
 
 
 @dataclass
@@ -123,6 +131,64 @@ class LeafState:
 
 
 @dataclass
+class EnergyHistoryState:
+    """Daily heat intervals + setpoint events for Energy History UI."""
+
+    heat_intervals_by_day: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    setpoint_events_by_day: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    open_heat_start: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "heat_intervals_by_day": {
+                k: v
+                for k, v in sorted(self.heat_intervals_by_day.items())[
+                    -ENERGY_HISTORY_KEEP_DAYS:
+                ]
+            },
+            "setpoint_events_by_day": {
+                k: v
+                for k, v in sorted(self.setpoint_events_by_day.items())[
+                    -ENERGY_HISTORY_KEEP_DAYS:
+                ]
+            },
+            "open_heat_start": self.open_heat_start,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> EnergyHistoryState:
+        if not data:
+            return cls()
+        return cls(
+            heat_intervals_by_day={
+                str(k): list(v or [])
+                for k, v in (data.get("heat_intervals_by_day") or {}).items()
+            },
+            setpoint_events_by_day={
+                str(k): list(v or [])
+                for k, v in (data.get("setpoint_events_by_day") or {}).items()
+            },
+            open_heat_start=data.get("open_heat_start"),
+        )
+
+
+@dataclass
+class SeasonalSavingsState:
+    """Ramp start for Seasonal Savings comfort offset."""
+
+    started_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"started_at": self.started_at}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> SeasonalSavingsState:
+        if not data:
+            return cls()
+        return cls(started_at=data.get("started_at"))
+
+
+@dataclass
 class IntelligenceState:
     """Persisted intelligence state."""
 
@@ -132,6 +198,8 @@ class IntelligenceState:
     learning_started_at: str | None = None
     away_since: str | None = None
     leaf: LeafState = field(default_factory=LeafState)
+    energy: EnergyHistoryState = field(default_factory=EnergyHistoryState)
+    seasonal: SeasonalSavingsState = field(default_factory=SeasonalSavingsState)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -141,6 +209,8 @@ class IntelligenceState:
             "learning_started_at": self.learning_started_at,
             "away_since": self.away_since,
             "leaf": self.leaf.to_dict(),
+            "energy": self.energy.to_dict(),
+            "seasonal": self.seasonal.to_dict(),
         }
 
     @classmethod
@@ -154,6 +224,8 @@ class IntelligenceState:
             learning_started_at=data.get("learning_started_at"),
             away_since=data.get("away_since"),
             leaf=LeafState.from_dict(data.get("leaf")),
+            energy=EnergyHistoryState.from_dict(data.get("energy")),
+            seasonal=SeasonalSavingsState.from_dict(data.get("seasonal")),
         )
 
 
@@ -592,3 +664,199 @@ def leaf_week_stats(leaf: LeafState, now: datetime | None = None) -> dict[str, A
         "hours_total": round(float(leaf.minutes_total) / 60.0, 2),
         "days_streak": streak,
     }
+
+
+def estimate_time_to_temp_minutes(
+    *,
+    current_temp: float | None,
+    target_temp: float,
+    warmup: WarmupModel,
+    heating: bool,
+    hvac_mode: str = "heat",
+) -> int | None:
+    """ETA minutes to reach target while heating; None when not applicable."""
+    if hvac_mode != "heat" or not heating:
+        return None
+    if current_temp is None:
+        return None
+    delta = float(target_temp) - float(current_temp)
+    if delta <= 0.05:
+        return None
+    rate = max(MIN_WARMUP_C_PER_HOUR, float(warmup.c_per_hour or DEFAULT_WARMUP_C_PER_HOUR))
+    minutes = int(round((delta / rate) * 60.0))
+    if warmup.samples < TTT_MIN_SAMPLES:
+        # Still estimate, but UI may show soft wording
+        minutes = max(5, minutes)
+    return max(1, min(24 * 60, minutes))
+
+
+def adaptive_eco_offset_c(
+    *,
+    adaptive_comfort: bool,
+    outdoor_temp: float | None,
+) -> float:
+    """Live Eco/Away offset from outdoor bands (heat-only)."""
+    if not adaptive_comfort or outdoor_temp is None:
+        return 0.0
+    if outdoor_temp >= 12.0:
+        return -0.5
+    if outdoor_temp <= 2.0:
+        return 0.5
+    return 0.0
+
+
+def seasonal_comfort_offset_c(
+    seasonal: SeasonalSavingsState,
+    *,
+    seasonal_savings_enabled: bool,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Ramp comfort offset 0 → SEASONAL_SAVINGS_OFFSET_C over SEASONAL_SAVINGS_DAYS."""
+    now = now or datetime.now()
+    if not seasonal_savings_enabled:
+        return {
+            "active": False,
+            "offset_c": 0.0,
+            "days_elapsed": 0,
+            "days_remaining": SEASONAL_SAVINGS_DAYS,
+            "started_at": None,
+        }
+    if seasonal.started_at is None:
+        seasonal.started_at = now.isoformat()
+    try:
+        started = datetime.fromisoformat(seasonal.started_at)
+    except ValueError:
+        seasonal.started_at = now.isoformat()
+        started = now
+    elapsed = max(0, (now.date() - started.date()).days)
+    progress = min(1.0, elapsed / float(SEASONAL_SAVINGS_DAYS))
+    offset = round(SEASONAL_SAVINGS_OFFSET_C * progress, 2)
+    remaining = max(0, SEASONAL_SAVINGS_DAYS - elapsed)
+    return {
+        "active": True,
+        "offset_c": offset,
+        "days_elapsed": elapsed,
+        "days_remaining": remaining,
+        "started_at": seasonal.started_at,
+    }
+
+
+def stop_seasonal_savings(seasonal: SeasonalSavingsState) -> SeasonalSavingsState:
+    seasonal.started_at = None
+    return seasonal
+
+
+def _prune_day_map(day_map: dict[str, Any], keep: int = ENERGY_HISTORY_KEEP_DAYS) -> None:
+    if len(day_map) <= keep:
+        return
+    for old in sorted(day_map.keys())[:-keep]:
+        del day_map[old]
+
+
+def track_heat_interval(
+    energy: EnergyHistoryState,
+    *,
+    want_heat: bool,
+    now: datetime | None = None,
+) -> bool:
+    """Open/close heat intervals for Energy History. Returns True if state changed."""
+    now = now or datetime.now()
+    changed = False
+    day = now.date().isoformat()
+
+    if want_heat and energy.open_heat_start is None:
+        energy.open_heat_start = now.isoformat()
+        changed = True
+    elif not want_heat and energy.open_heat_start is not None:
+        try:
+            start = datetime.fromisoformat(energy.open_heat_start)
+        except ValueError:
+            start = now
+        # Split across midnight if needed
+        cursor = start
+        while cursor.date() < now.date():
+            day_end = datetime.combine(cursor.date(), datetime.max.time()).replace(microsecond=0)
+            dkey = cursor.date().isoformat()
+            energy.heat_intervals_by_day.setdefault(dkey, []).append(
+                {"start_ts": cursor.isoformat(), "end_ts": day_end.isoformat()}
+            )
+            cursor = datetime.combine(cursor.date() + timedelta(days=1), datetime.min.time())
+            changed = True
+        energy.heat_intervals_by_day.setdefault(day, []).append(
+            {"start_ts": cursor.isoformat(), "end_ts": now.isoformat()}
+        )
+        energy.open_heat_start = None
+        changed = True
+
+    # Keep open interval visible: do not close until off
+    _prune_day_map(energy.heat_intervals_by_day)
+    _prune_day_map(energy.setpoint_events_by_day)
+    return changed
+
+
+def note_setpoint_event(
+    energy: EnergyHistoryState,
+    temperature: float,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Log effective target change once per distinct value."""
+    now = now or datetime.now()
+    day = now.date().isoformat()
+    events = energy.setpoint_events_by_day.setdefault(day, [])
+    temp = round(float(temperature), 1)
+    if events:
+        last = events[-1]
+        if abs(float(last.get("temperature", 0)) - temp) < 0.05:
+            return False
+    events.append({"ts": now.isoformat(), "temperature": temp})
+    # Cap per day
+    if len(events) > 48:
+        energy.setpoint_events_by_day[day] = events[-48:]
+    _prune_day_map(energy.setpoint_events_by_day)
+    return True
+
+
+def energy_history_payload(
+    energy: EnergyHistoryState,
+    leaf: LeafState,
+    *,
+    now: datetime | None = None,
+    days: int = 31,
+) -> dict[str, Any]:
+    """Slice for Energy History UI (includes open heat interval as ongoing)."""
+    now = now or datetime.now()
+    out_days: list[dict[str, Any]] = []
+    for i in range(days):
+        d = (now.date() - timedelta(days=i)).isoformat()
+        intervals = list(energy.heat_intervals_by_day.get(d) or [])
+        # Attach open interval for today
+        if i == 0 and energy.open_heat_start:
+            try:
+                start = datetime.fromisoformat(energy.open_heat_start)
+                if start.date() == now.date():
+                    intervals = [
+                        *intervals,
+                        {"start_ts": energy.open_heat_start, "end_ts": None},
+                    ]
+                elif start.date() < now.date():
+                    intervals = [
+                        *intervals,
+                        {
+                            "start_ts": datetime.combine(now.date(), datetime.min.time()).isoformat(),
+                            "end_ts": None,
+                        },
+                    ]
+            except ValueError:
+                pass
+        leaf_mins = float(leaf.minutes_by_day.get(d, 0.0))
+        out_days.append(
+            {
+                "date": d,
+                "leaf": leaf_mins >= LEAF_DAY_MEANINGFUL_MINUTES,
+                "leaf_minutes": round(leaf_mins, 1),
+                "heat_intervals": intervals,
+                "setpoints": list(energy.setpoint_events_by_day.get(d) or []),
+            }
+        )
+    return {"days": out_days}

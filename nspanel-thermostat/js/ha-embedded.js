@@ -96,6 +96,10 @@ export class EmbeddedHomeAssistantClient {
     });
   }
 
+  async request(type, payload = {}) {
+    return this.hass.connection.sendMessagePromise({ type, ...payload });
+  }
+
   disconnect() {
     this.unsubscribe?.();
     this.unsubscribe = null;
