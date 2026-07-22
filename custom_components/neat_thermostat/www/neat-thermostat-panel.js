@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.3.4
+ * @version 0.3.5
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.3.4";
+const PANEL_VERSION = "0.3.5";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 
@@ -1417,7 +1417,7 @@ class NeatThermostatPanel extends HTMLElement {
             </select>
           </label>
         </div>
-        <p class="muted">House defaults: temp <code>${this._escape(cfg.temperature_sensor || "—")}</code>, outdoor <code>${this._escape(cfg.outdoor_temp_sensor || "—")}</code>. Room chips: ${rooms.length ? rooms.map((r) => r.name).join(", ") : "none yet"}.</p>
+        <p class="muted">House defaults: temp <code>${this._escape(cfg.temperature_sensor || "—")}</code>, outdoor <code>${this._escape(cfg.outdoor_temp_sensor || "—")}</code>. Room chips follow the live Rooms list (${rooms.length ? rooms.map((r) => r.name).join(", ") : "none yet"}).</p>
         <button class="primary" id="saveWallPanel">Save wall panel</button>
       </div>
     `;
@@ -1846,7 +1846,8 @@ class NeatThermostatPanel extends HTMLElement {
         const trv = String(draft.trv || "").trim();
         const sensor = String(draft.sensor || "").trim();
         const extras = (draft.extras || []).map((s) => String(s).trim()).filter(Boolean);
-        const callsForHeat = Boolean(this.shadowRoot.getElementById("roomCallsForHeat")?.checked);
+        const callsForHeat =
+          this.shadowRoot.getElementById("roomCallsForHeat")?.value === "true";
         if (!name || !trv) {
           this._error = "Room name and TRV required";
           this._showToast(this._error, "err");
@@ -1889,9 +1890,32 @@ class NeatThermostatPanel extends HTMLElement {
       });
 
       this.shadowRoot.querySelectorAll("tr.room-row[data-room-id]").forEach((row) => {
-        row.addEventListener("click", () => {
+        row.addEventListener("click", (ev) => {
+          if (ev.target.closest("[data-toggle-calls]")) return;
           const room = (this._cfg().rooms || []).find((r) => r.id === row.dataset.roomId);
           this._loadRoomIntoForm(room);
+        });
+      });
+
+      this.shadowRoot.querySelectorAll("[data-toggle-calls]").forEach((btn) => {
+        btn.addEventListener("click", async (ev) => {
+          ev.stopPropagation();
+          const id = btn.dataset.toggleCalls;
+          const rooms = (this._cfg().rooms || []).map((r) =>
+            r.id === id ? { ...r, calls_for_heat: r.calls_for_heat === false } : { ...r }
+          );
+          try {
+            await this._ws("neat_thermostat/update_rooms", { rooms });
+            await this._loadState();
+            const next = rooms.find((r) => r.id === id);
+            this._showToast(
+              `Call for heat ${next?.calls_for_heat !== false ? "On" : "Off"} for ${next?.name || id}`
+            );
+          } catch (e) {
+            this._error = String(e.message || e);
+            this._showToast(this._error, "err");
+            this._render();
+          }
         });
       });
 
@@ -1919,7 +1943,7 @@ class NeatThermostatPanel extends HTMLElement {
       });
 
       this.shadowRoot.getElementById("roomCallsForHeat")?.addEventListener("change", (ev) => {
-        this._roomDraft.calls_for_heat = Boolean(ev.target.checked);
+        this._roomDraft.calls_for_heat = ev.target.value === "true";
       });
     }
 
@@ -1936,10 +1960,8 @@ class NeatThermostatPanel extends HTMLElement {
         const draft = this._readWallPickerValues();
         const primary = String(draft.primary || "").trim() || "climate.neat_home";
         const idleSec = Number(this.shadowRoot.getElementById("wpIdle").value) || 30;
-        const rooms = (this._cfg().rooms || []).map((r) => ({
-          entity: `climate.neat_${r.id}`,
-          name: r.name,
-        }));
+        // Empty rooms list = wall UI always loads the live Neat room list
+        const rooms = [];
         try {
           await this._ws("neat_thermostat/upsert_wall_panel", {
             panel: {

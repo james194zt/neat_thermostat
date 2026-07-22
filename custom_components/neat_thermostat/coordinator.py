@@ -632,11 +632,17 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if panel is None:
             return None
         primary = panel.primary_entity or "climate.neat_home"
-        rooms = panel.rooms or [
-            {"entity": f"climate.neat_{r.id}", "name": r.name}
-            for r in self.config.rooms
-            if r.enabled
-        ]
+        # Always mirror current Neat rooms so newly added rooms show on panels
+        # without re-saving the wall panel. Prefer Neat room climates; fall back
+        # to the TRV entity if a room climate id is missing.
+        rooms = []
+        for room in self.config.rooms:
+            if room.enabled is False:
+                continue
+            entity = f"climate.neat_{room.id}" if room.id else (room.trv_entity or "")
+            if not entity:
+                continue
+            rooms.append({"entity": entity, "name": room.name})
         defaults = {
             "insideTemp": self.config.temperature_sensor or "",
             "insideHumidity": "",
