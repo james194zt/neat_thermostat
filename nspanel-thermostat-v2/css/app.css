@@ -59,17 +59,26 @@ button {
   width: 100%;
   height: 100%;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "header"
+    "banner"
+    "stage"
+    "eta"
+    "rooms";
   padding: var(--pad);
   gap: var(--gap);
+  overflow: hidden;
   background: radial-gradient(ellipse at 50% 35%, #343940 0%, var(--bg) 55%, var(--bg-deep) 100%);
 }
 
 /* —— Header —— */
 .ring-header {
+  grid-area: header;
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  grid-template-areas: "back zone conn";
+  grid-template-columns: auto auto 1fr auto;
+  grid-template-areas: "back zone mid conn";
   align-items: center;
   gap: 1vmin;
   position: relative;
@@ -78,7 +87,7 @@ button {
 
 .zone-pill {
   grid-area: zone;
-  justify-self: center;
+  justify-self: start;
   padding: 1.1vmin 3.5vmin;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.28);
@@ -116,6 +125,7 @@ button {
 }
 
 .banner {
+  grid-area: banner;
   padding: 1.4vmin 2vmin;
   border-radius: 2vmin;
   background: rgba(0, 0, 0, 0.35);
@@ -128,20 +138,33 @@ button {
   color: #ffd666;
 }
 
+/* Stack both banners into the same row when visible */
+#windowBanner {
+  grid-area: banner;
+}
+
+#summerPill {
+  grid-area: banner;
+}
+
 /* —— Ring stage —— */
 .ring-stage {
-  display: grid;
-  place-items: center;
+  grid-area: stage;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-height: 0;
   overflow: visible;
 }
 
 .thermo-ring {
-  --ring-size: min(78vmin, 92vw, 520px);
-  --gauge-accent: #ff9800;
+  /* Prefer filling stage height so the dial sits large with cards below */
+  --gauge-accent: #9aa0a6;
   position: relative;
-  width: var(--ring-size);
-  height: var(--ring-size);
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  aspect-ratio: 1 / 1;
   border-radius: 50%;
   background: transparent;
   box-shadow: 0 2vmin 6vmin rgba(0, 0, 0, 0.35);
@@ -150,9 +173,10 @@ button {
 
 .ring-gauge {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  /* Extend past the dial so callout labels aren't clipped */
+  inset: -12%;
+  width: 124%;
+  height: 124%;
   z-index: 0;
   overflow: visible;
   pointer-events: none;
@@ -173,31 +197,18 @@ button {
 .ring-gauge .tick.active {
   stroke: var(--gauge-accent);
   stroke-width: 2.35;
-  filter: drop-shadow(0 0 1.5px color-mix(in srgb, var(--gauge-accent) 70%, transparent));
-}
-
-.ring-active-arc {
-  stroke: var(--gauge-accent);
-  stroke-width: 3.2;
-  stroke-linecap: round;
-  fill: none;
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--gauge-accent) 55%, transparent));
-  transition: stroke 0.25s ease;
 }
 
 .ring-callout {
   fill: var(--gauge-accent);
-  font-size: 7px;
+  font-size: 10px;
   font-weight: 700;
   font-family: "Segoe UI", system-ui, sans-serif;
   letter-spacing: -0.02em;
 }
 
 .ring-callout-line {
-  stroke: var(--gauge-accent);
-  stroke-width: 1.1;
-  stroke-linecap: round;
-  opacity: 0.85;
+  display: none;
 }
 
 .thermo-ring[data-state="heating"] {
@@ -215,63 +226,77 @@ button {
   --gauge-accent: #ff5252;
 }
 
-.thermo-ring[data-state="off"],
-.thermo-ring[data-state="idle"] {
-  --gauge-accent: #ff9800;
+.thermo-ring[data-state="off"] {
+  --gauge-accent: #6b7280;
 }
 
-.thermo-ring[data-state="off"] .ring-active-arc {
-  opacity: 0.35;
+.thermo-ring[data-state="idle"] {
+  --gauge-accent: #9aa0a6;
+}
+
+.thermo-ring[data-state="off"] .tick.active,
+.thermo-ring[data-state="idle"] .tick.active {
+  filter: none;
 }
 
 .ring-face {
   position: absolute;
-  inset: 9.5%;
+  inset: 7.5%;
   z-index: 1;
   border-radius: 50%;
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.06) 0%, transparent 42%),
     radial-gradient(circle at 50% 40%, var(--face-hi) 0%, var(--face) 70%, #282c31 100%);
-  display: grid;
-  grid-template-rows: auto 1fr auto auto;
-  padding: 8% 9% 9%;
   overflow: hidden;
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.06),
     0 0 0 1px rgba(0, 0, 0, 0.35);
 }
 
+.ring-face-inner {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  align-content: stretch;
+  padding: 5% 5% 11%;
+  gap: 0.6vmin;
+}
+
 .ring-sheen {
   pointer-events: none;
   position: absolute;
-  inset: -20% -30% auto;
-  height: 55%;
-  background: linear-gradient(
-    115deg,
-    transparent 35%,
-    rgba(255, 255, 255, 0.07) 48%,
-    transparent 58%
+  inset: 0;
+  z-index: 0;
+  /* Soft top highlight only — no hard diagonal band across the setpoint */
+  background: radial-gradient(
+    ellipse 80% 55% at 50% 0%,
+    rgba(255, 255, 255, 0.06) 0%,
+    transparent 70%
   );
-  transform: rotate(-18deg);
+  transform: none;
 }
 
 .ring-top {
   position: relative;
   z-index: 1;
+  grid-row: 1;
   width: 100%;
   display: flex;
   justify-content: center;
   align-items: center;
-  justify-self: stretch;
-  padding-top: 1vmin;
+  flex-shrink: 0;
 }
 
 /* Icon column + value column, then centre the whole block */
 .stat-row {
   display: grid;
-  grid-template-columns: 3.6vmin max-content;
-  column-gap: 1.2vmin;
-  row-gap: 1.4vmin;
+  grid-template-columns: 5vmin max-content;
+  column-gap: 1.4vmin;
+  row-gap: 1.2vmin;
   align-items: center;
   justify-items: start;
   margin: 0 auto;
@@ -282,20 +307,20 @@ button {
 }
 
 .stat-icon {
-  width: 3.6vmin;
-  height: 3.6vmin;
+  width: 5vmin;
+  height: 5vmin;
   grid-column: 1;
   justify-self: center;
 }
 
 .stat-line > span {
   grid-column: 2;
-  font-size: 3.4vmin;
+  font-size: 4.8vmin;
   font-weight: 700;
   letter-spacing: -0.01em;
   line-height: 1;
   font-variant-numeric: tabular-nums;
-  min-width: 5.5ch;
+  min-width: 4.5ch;
 }
 
 .outdoor-icon,
@@ -309,103 +334,202 @@ button {
 }
 
 .ring-mid {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 1.5vmin;
-  min-height: 0;
+  /* Span the full face; buttons pin to left/right edges, setpoint centres independently */
+  grid-row: 1 / -1;
+  grid-column: 1;
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+
+.ring-mid .temp-btn,
+.ring-mid .current-temp {
+  pointer-events: auto;
 }
 
 .temp-btn {
-  width: 9.5vmin;
-  height: 9.5vmin;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+  width: clamp(48px, 12.5vmin, 76px);
+  height: clamp(48px, 12.5vmin, 76px);
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.1);
-  font-size: 5.5vmin;
-  font-weight: 400;
-  line-height: 1;
-  display: grid;
-  place-items: center;
+  background: rgba(255, 255, 255, 0.12);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  line-height: 0;
+}
+
+#tempDown {
+  left: 5%;
+}
+
+#tempUp {
+  right: 5%;
 }
 
 .temp-btn:active {
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.temp-btn-glyph {
+  display: block;
+  font-size: clamp(28px, 7vmin, 44px);
+  font-weight: 400;
+  line-height: 1;
+  transform: translateY(-0.06em);
 }
 
 .current-temp {
-  text-align: center;
-  line-height: 0.95;
+  /* Centre on the integer only — decimal is out-of-flow so it can't shift or hit + */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+  display: block;
+  line-height: 1;
   font-weight: 700;
   letter-spacing: -0.04em;
   font-variant-numeric: tabular-nums;
+  width: max-content;
+  overflow: visible;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .current-temp.is-empty .temp-int {
-  font-size: 12vmin;
+  font-size: clamp(4.2rem, 22vmin, 9.5rem);
   opacity: 0.35;
   letter-spacing: 0.02em;
 }
 
+.current-temp.is-off .temp-int {
+  font-size: clamp(2.6rem, 12vmin, 5.2rem);
+  letter-spacing: 0.12em;
+  min-width: unset;
+  font-weight: 700;
+  opacity: 0.92;
+}
+
 .temp-int {
-  font-size: 16vmin;
+  display: block;
+  min-width: 2ch;
+  text-align: center;
+  font-size: clamp(4.4rem, 23vmin, 10rem);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .temp-dec {
-  font-size: 7.5vmin;
+  position: absolute;
+  left: 100%;
+  top: 0.08em;
+  display: block;
+  font-size: clamp(1.35rem, 6.2vmin, 2.8rem);
   font-weight: 600;
   opacity: 0.92;
-  margin-left: 0.05em;
+  margin-left: 0.04em;
+  line-height: 1;
+  pointer-events: none;
 }
 
 .ring-divider {
+  position: relative;
+  z-index: 1;
+  grid-row: 3;
   height: 1px;
-  margin: 1.5vmin 4% 2vmin;
+  margin: 0 4% 0.6vmin;
   background: rgba(255, 255, 255, 0.22);
+  flex-shrink: 0;
 }
 
 .ring-bottom {
   position: relative;
   z-index: 1;
+  grid-row: 4;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 2vmin;
-  padding: 0 2vmin 1vmin;
+  align-items: flex-start;
+  padding: 0 4% 1%;
+  flex-shrink: 0;
+  min-height: 3.6em;
 }
 
 .meta-block {
-  text-align: left;
+  text-align: center;
+  min-width: clamp(56px, 14vmin, 88px);
 }
 
-.meta-block:last-child {
-  text-align: right;
+.ring-bottom > .meta-block:first-child {
+  justify-self: center;
+}
+
+.ring-bottom > .mode-btn-face {
+  justify-self: center;
+}
+
+/* Sit on the face itself (not the inner grid) so it can't steal MODE's place */
+.ring-leaf {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: 3.5%;
+  transform: translateX(-50%);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: clamp(26px, 6.5vmin, 40px);
+  height: clamp(26px, 6.5vmin, 40px);
+  color: #66bb6a;
+  pointer-events: none;
+}
+
+.ring-leaf.is-active {
+  display: flex;
+}
+
+.ring-leaf svg {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .meta-label {
-  font-size: 2.4vmin;
+  font-size: clamp(10px, 2.1vmin, 14px);
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--text-muted);
-  margin-bottom: 0.6vmin;
+  margin-bottom: 0.5vmin;
 }
 
 .meta-value {
-  font-size: 5.2vmin;
+  font-size: clamp(18px, 4.6vmin, 30px);
   font-weight: 700;
   letter-spacing: -0.02em;
 }
 
 .mode-btn-face {
   display: block;
-  width: 100%;
+  width: auto;
+  padding: 0;
 }
 
 .mode-icon {
   color: var(--ring-orange);
-  font-size: 4.6vmin;
-  min-height: 5.2vmin;
+  font-size: clamp(16px, 3.8vmin, 24px);
+  min-height: 1.2em;
+  line-height: 0;
 }
 
 .mode-icon[data-mode="eco"],
@@ -418,14 +542,27 @@ button {
 }
 
 .mode-icon svg {
-  width: 5.5vmin;
-  height: 5.5vmin;
+  width: clamp(22px, 4.8vmin, 32px);
+  height: clamp(22px, 4.8vmin, 32px);
   display: inline-block;
   vertical-align: middle;
 }
 
+.mode-icon .mode-icon-img {
+  width: clamp(26px, 6.2vmin, 40px);
+  height: clamp(26px, 6.2vmin, 40px);
+  object-fit: contain;
+  display: inline-block;
+  vertical-align: middle;
+  pointer-events: none;
+  background: transparent;
+  /* Drop any residual black plate on the dark dial face */
+  mix-blend-mode: lighten;
+}
+
 /* —— Mode drawer —— */
 .mode-drawer {
+  grid-area: eta;
   display: flex;
   justify-content: center;
   flex-wrap: wrap;
@@ -448,6 +585,7 @@ button {
 }
 
 .footer-eta {
+  grid-area: eta;
   margin: 0;
   text-align: center;
   font-size: 2.3vmin;
@@ -461,45 +599,56 @@ button {
 
 /* —— Rooms —— */
 .bottom-panel {
+  grid-area: rooms;
   min-height: 0;
+  flex-shrink: 0;
 }
 
 .room-strip {
-  display: flex;
-  justify-content: center;
-  gap: 1.5vmin;
-  overflow-x: auto;
-  padding: 0.5vmin 0 1vmin;
-  scrollbar-width: none;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1.4vmin;
+  padding: 0.2vmin 0 0;
 }
 
-.room-strip::-webkit-scrollbar {
-  display: none;
+.room-strip.room-strip--few {
+  grid-template-columns: repeat(auto-fit, minmax(18vmin, 1fr));
+  justify-content: center;
 }
 
 .room-chip {
-  flex: 0 0 auto;
-  min-width: 18vmin;
-  padding: 1.6vmin 2.2vmin;
+  min-width: 0;
+  padding: 1.8vmin 1.2vmin;
   border-radius: 2vmin;
-  background: rgba(0, 0, 0, 0.3);
-  text-align: left;
+  background: rgba(0, 0, 0, 0.32);
+  text-align: center;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 
 .room-chip.active {
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.4);
 }
 
 .room-chip .name {
-  font-size: 2.4vmin;
-  font-weight: 700;
+  font-size: 2.2vmin;
+  font-weight: 600;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   margin-bottom: 0.4vmin;
 }
 
+.room-chip .temp {
+  font-size: 3.4vmin;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
 .room-chip .meta {
-  font-size: 2.1vmin;
-  color: var(--text-muted);
+  display: none;
 }
 
 /* —— Overlays / screensaver (kept usable) —— */
@@ -647,9 +796,37 @@ button {
 
 @media (max-height: 520px) {
   .temp-int {
-    font-size: 12vmin;
+    font-size: clamp(3.8rem, 21vmin, 8.5rem);
   }
-  .thermo-ring {
-    --ring-size: min(68vmin, 88vw);
+  .current-temp.is-empty .temp-int {
+    font-size: clamp(3.6rem, 20vmin, 8rem);
+  }
+  .temp-dec {
+    font-size: clamp(1.5rem, 7vmin, 3.2rem);
+  }
+  .temp-btn {
+    width: clamp(44px, 11.5vmin, 68px);
+    height: clamp(44px, 11.5vmin, 68px);
+  }
+  .temp-btn-glyph {
+    font-size: clamp(26px, 6.5vmin, 40px);
+  }
+  #tempDown {
+    left: 4%;
+  }
+  #tempUp {
+    right: 4%;
+  }
+  .ring-face {
+    inset: 7.5%;
+  }
+  .ring-face-inner {
+    padding: 4% 4% 10%;
+  }
+  .ring-divider {
+    margin: 0 3% 0.5vmin;
+  }
+  .ring-bottom {
+    min-height: 3.2em;
   }
 }

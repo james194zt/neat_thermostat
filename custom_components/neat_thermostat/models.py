@@ -41,6 +41,8 @@ class RoomConfig:
     eco_temp: float = DEFAULT_ECO_TEMP
     boost_temp: float = DEFAULT_BOOST_TEMP
     enabled: bool = True
+    # When True, a cold room can call the boiler on (needed for most TRVs).
+    calls_for_heat: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -59,6 +61,7 @@ class RoomConfig:
             eco_temp=float(data.get("eco_temp", DEFAULT_ECO_TEMP)),
             boost_temp=float(data.get("boost_temp", DEFAULT_BOOST_TEMP)),
             enabled=bool(data.get("enabled", True)),
+            calls_for_heat=bool(data.get("calls_for_heat", True)),
         )
 
 

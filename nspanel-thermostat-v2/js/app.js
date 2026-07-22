@@ -48,9 +48,9 @@ const ui = {
   modeDrawer: document.getElementById("modeDrawer"),
   modeFace: document.getElementById("modeFace"),
   modeIcon: document.getElementById("modeIcon"),
+  ringLeaf: document.getElementById("ringLeaf"),
   thermoRing: document.getElementById("thermoRing"),
   ringTicks: document.getElementById("ringTicks"),
-  ringActiveArc: document.getElementById("ringActiveArc"),
   ringCallouts: document.getElementById("ringCallouts"),
   currentTemp: document.getElementById("currentTemp"),
   zonePill: document.getElementById("zonePill"),
@@ -76,6 +76,14 @@ let panelUnlocked = false;
 let pinBuffer = "";
 let pendingUnlockAction = null;
 let configPollTimer = null;
+/** Optimistic setpoint while HA catches up (instant +/- feedback). */
+let optimisticTarget = null;
+let tempSendTimer = null;
+let tempSendSeq = 0;
+/** Wait for a pause in +/- taps before writing to Home Assistant. */
+const TEMP_SEND_IDLE_MS = 2500;
+/** Optimistic HVAC mode / preset while HA catches up. */
+let optimisticMode = null;
 
 function getDisplayLabel() {
   return activeLabel;
@@ -89,6 +97,7 @@ function formatTemp(value, suffix = "°") {
 function setCurrentTempDisplay(value) {
   const empty = value === null || value === undefined || Number.isNaN(Number(value));
   ui.currentTemp?.classList.toggle("is-empty", empty);
+  ui.currentTemp?.classList.remove("is-off");
   if (empty) {
     if (ui.currentTempInt) ui.currentTempInt.textContent = "–";
     if (ui.currentTempDec) ui.currentTempDec.textContent = "";
@@ -99,9 +108,22 @@ function setCurrentTempDisplay(value) {
   const [intPart, decPart] = fixed.split(".");
   if (ui.currentTempInt) ui.currentTempInt.textContent = intPart;
   if (ui.currentTempDec) {
-    // Match ThermoRing mockup: comma decimal (e.g. 22,2)
-    ui.currentTempDec.textContent = decPart === "0" ? "" : `,${decPart}`;
+    ui.currentTempDec.textContent = decPart === "0" ? "" : `.${decPart}`;
   }
+}
+
+function updateCentreControls(state, target = getEffectiveTarget(state)) {
+  const off = state?.state === "off";
+  ui.tempDown?.classList.toggle("hidden", off);
+  ui.tempUp?.classList.toggle("hidden", off);
+  ui.currentTemp?.classList.toggle("is-off", off);
+  if (off) {
+    ui.currentTemp?.classList.remove("is-empty");
+    if (ui.currentTempInt) ui.currentTempInt.textContent = "OFF";
+    if (ui.currentTempDec) ui.currentTempDec.textContent = "";
+    return;
+  }
+  setCurrentTempDisplay(target);
 }
 
 function modeGlyph(state) {
@@ -113,10 +135,12 @@ function modeGlyph(state) {
   if (preset === "boost") {
     return `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M13 2 4 14h7l-1 8 10-14h-7l0-6z"/></svg>`;
   }
+  // Cache-bust: Android WebView keeps sticky PNG caches
+  const iconV = "20260722b";
   if (mode === "off") {
-    return `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" d="M12 7v5"/></svg>`;
+    return `<img class="mode-icon-img" src="assets/mode/off.png?v=${iconV}" alt="Off" draggable="false" />`;
   }
-  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3c.5 4 3 6.5 3 10a3 3 0 1 1-6 0c0-3.5 2.5-6 3-10z"/></svg>`;
+  return `<img class="mode-icon-img" src="assets/mode/heat.png?v=${iconV}" alt="Heat" draggable="false" />`;
 }
 
 function formatSensor(value, suffix = "") {
@@ -231,6 +255,60 @@ function getTargetTemperature(state) {
   return Number(value);
 }
 
+function getEffectiveTarget(state = getActiveState()) {
+  if (optimisticTarget != null) return optimisticTarget;
+  return getTargetTemperature(state);
+}
+
+function clearOptimisticTarget() {
+  optimisticTarget = null;
+  clearTimeout(tempSendTimer);
+  tempSendTimer = null;
+  tempSendSeq += 1;
+}
+
+function clearOptimisticMode() {
+  optimisticMode = null;
+}
+
+function getEffectiveClimateState(state = getActiveState()) {
+  if (!state || !optimisticMode) return state;
+  return {
+    ...state,
+    state: optimisticMode.mode ?? state.state,
+    attributes: {
+      ...state.attributes,
+      preset_mode: optimisticMode.preset ?? state.attributes?.preset_mode,
+    },
+  };
+}
+
+function syncOptimisticFromHa(state) {
+  const ha = getTargetTemperature(state);
+  if (optimisticTarget != null && ha != null && Math.abs(ha - optimisticTarget) < 0.05) {
+    optimisticTarget = null;
+  }
+}
+
+function syncOptimisticModeFromHa(state) {
+  if (!optimisticMode || !state) return;
+  const haMode = state.state;
+  const haPreset = state.attributes?.preset_mode || "none";
+  const wantMode = optimisticMode.mode;
+  const wantPreset = optimisticMode.preset || "none";
+  const modeOk = wantMode == null || haMode === wantMode;
+  const presetOk = haPreset === wantPreset || (wantPreset === "none" && (!haPreset || haPreset === "none"));
+  if (modeOk && presetOk) optimisticMode = null;
+}
+
+function applyOptimisticMode(next) {
+  optimisticMode = next;
+  const view = getEffectiveClimateState(getActiveState());
+  applyTheme(view);
+  updateModeButtons(view);
+  updateCentreControls(view, getEffectiveTarget());
+}
+
 function getCurrentTemperature(state) {
   const fromClimate = state?.attributes?.current_temperature;
   if (fromClimate != null && !Number.isNaN(Number(fromClimate))) {
@@ -257,9 +335,11 @@ function getHvacAction(state) {
 const GAUGE = {
   cx: 100,
   cy: 100,
-  rOuter: 97,
-  rInner: 87,
-  rLabel: 104,
+  // Keep ticks tight against the face (face inset ~7.5% → ~r85)
+  rOuter: 96,
+  rInner: 88,
+  // Outside the ticks; viewBox padding keeps these from clipping
+  rLabel: 116,
   // Sweep leaves a gap at the bottom for the face content rhythm
   startDeg: -140,
   sweepDeg: 280,
@@ -295,14 +375,6 @@ function tempToDeg(temp, min, max) {
   return GAUGE.startDeg + ratio * GAUGE.sweepDeg;
 }
 
-function describeArc(startDeg, endDeg, r) {
-  const start = polar(GAUGE.cx, GAUGE.cy, r, startDeg);
-  const end = polar(GAUGE.cx, GAUGE.cy, r, endDeg);
-  const delta = ((endDeg - startDeg) % 360 + 360) % 360;
-  const large = delta > 180 ? 1 : 0;
-  return `M ${start.x.toFixed(2)} ${start.y.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${end.x.toFixed(2)} ${end.y.toFixed(2)}`;
-}
-
 function ensureRingTicks() {
   if (ringTicksBuilt || !ui.ringTicks) return;
   const frag = document.createDocumentFragment();
@@ -334,17 +406,7 @@ function addRingCallout(temp, deg) {
   const label = formatGaugeLabel(temp);
   if (!label) return;
 
-  const tip = polar(GAUGE.cx, GAUGE.cy, GAUGE.rOuter, deg);
-  const mid = polar(GAUGE.cx, GAUGE.cy, GAUGE.rLabel - 2, deg);
-  const textPos = polar(GAUGE.cx, GAUGE.cy, GAUGE.rLabel + 1, deg);
-
-  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-  line.setAttribute("class", "ring-callout-line");
-  line.setAttribute("x1", tip.x.toFixed(2));
-  line.setAttribute("y1", tip.y.toFixed(2));
-  line.setAttribute("x2", mid.x.toFixed(2));
-  line.setAttribute("y2", mid.y.toFixed(2));
-  ui.ringCallouts.appendChild(line);
+  const textPos = polar(GAUGE.cx, GAUGE.cy, GAUGE.rLabel, deg);
 
   const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
   text.setAttribute("class", "ring-callout");
@@ -361,7 +423,6 @@ function updateRingGauge(state, current, target) {
   if (!ui.ringTicks) return;
 
   const { min, max } = getGaugeRange(state);
-  const action = getHvacAction(state);
   const mode = state?.state;
   const hasCurrent = current != null && Number.isFinite(current);
   const hasTarget = target != null && Number.isFinite(target);
@@ -377,22 +438,17 @@ function updateRingGauge(state, current, target) {
     low = high = current;
   }
 
-  const showActive =
-    low != null &&
-    high != null &&
-    mode !== "off" &&
-    action !== "off";
+  const showBand = low != null && high != null && mode !== "off";
 
-  // Light up ticks between current and target (heating demand band)
+  // Light up ticks between current and target
   const ticks = ui.ringTicks.querySelectorAll(".tick");
   ticks.forEach((tick, i) => {
     const t = i / (GAUGE.ticks - 1);
     const deg = GAUGE.startDeg + t * GAUGE.sweepDeg;
     let active = false;
-    if (showActive) {
+    if (showBand) {
       const lowDeg = tempToDeg(low, min, max);
       const highDeg = tempToDeg(high, min, max);
-      // Always highlight at least a small band around a single point
       if (Math.abs(highDeg - lowDeg) < 2) {
         active = Math.abs(deg - lowDeg) <= 2.5;
       } else {
@@ -402,31 +458,16 @@ function updateRingGauge(state, current, target) {
     tick.classList.toggle("active", active);
   });
 
-  if (ui.ringActiveArc) {
-    if (showActive && low != null && high != null) {
-      let a0 = tempToDeg(low, min, max);
-      let a1 = tempToDeg(high, min, max);
-      if (Math.abs(a1 - a0) < 2) {
-        a0 -= 1.5;
-        a1 += 1.5;
-      }
-      ui.ringActiveArc.setAttribute("d", describeArc(a0, a1, (GAUGE.rOuter + GAUGE.rInner) / 2));
-      ui.ringActiveArc.style.opacity = action === "heating" || mode === "heat" ? "1" : "0.55";
-    } else {
-      ui.ringActiveArc.setAttribute("d", "");
-    }
-  }
-
   if (ui.ringCallouts) {
     ui.ringCallouts.innerHTML = "";
-    if (showActive && hasCurrent && hasTarget) {
+    if (showBand && hasCurrent && hasTarget) {
       if (Math.abs(current - target) < 0.05) {
         addRingCallout(current, tempToDeg(current, min, max));
       } else {
         addRingCallout(current, tempToDeg(current, min, max));
         addRingCallout(target, tempToDeg(target, min, max));
       }
-    } else if (showActive && hasTarget) {
+    } else if (showBand && hasTarget) {
       addRingCallout(target, tempToDeg(target, min, max));
     }
   }
@@ -436,12 +477,20 @@ function applyTheme(state) {
   const action = getHvacAction(state);
   const preset = state?.attributes?.preset_mode;
   const mode = state?.state;
+  const current = getCurrentTemperature(state);
+  const target = getEffectiveTarget(state);
+  const needsHeat =
+    current != null &&
+    target != null &&
+    target > current + 0.05 &&
+    mode !== "off";
 
   let ringState = "idle";
-  if (preset === "eco") ringState = "eco";
-  else if (preset === "boost") ringState = "boost";
-  else if (mode === "off") ringState = "off";
-  else if (action === "heating") ringState = "heating";
+  if (mode === "off") ringState = "off";
+  else if (preset === "eco") ringState = "eco";
+  else if (preset === "boost") ringState = needsHeat ? "boost" : "idle";
+  else if (needsHeat) ringState = "heating";
+  else ringState = "idle";
 
   ui.thermoRing?.setAttribute("data-state", ringState);
   document.body.style.background = "";
@@ -458,6 +507,10 @@ function applyTheme(state) {
     ui.modeIcon.innerHTML = modeGlyph(state);
     ui.modeIcon.dataset.mode = preset === "eco" || preset === "boost" ? preset : mode || "heat";
   }
+  ui.ringLeaf?.classList.toggle(
+    "is-active",
+    mode === "off" || preset === "eco" || preset === "away"
+  );
 }
 
 function updateModeButtons(state) {
@@ -489,8 +542,11 @@ function renderBetterThermostatStatus() {
 
 function renderActiveClimate() {
   const state = getActiveState();
+  syncOptimisticFromHa(state);
+  syncOptimisticModeFromHa(state);
+  const viewState = getEffectiveClimateState(state);
   const current = getCurrentTemperature(state);
-  const target = getTargetTemperature(state);
+  const target = getEffectiveTarget(state);
   const etaMins =
     state?.attributes?.time_to_temp_minutes ?? config.time_to_temp_minutes ?? null;
   let etaText = "";
@@ -503,13 +559,14 @@ function renderActiveClimate() {
   }
 
   if (ui.heroLabel) ui.heroLabel.textContent = getDisplayLabel();
-  setCurrentTempDisplay(current);
-  if (ui.targetTemp) ui.targetTemp.textContent = formatTemp(target, "°");
+  // Centre dial = setpoint (or OFF); bottom-left = live room temp
+  updateCentreControls(viewState, target);
+  if (ui.targetTemp) ui.targetTemp.textContent = formatTemp(current, "°");
   if (ui.heroSubtitle) ui.heroSubtitle.textContent = etaText;
 
-  applyTheme(state);
+  applyTheme(viewState);
   updateRingGauge(state, current, target);
-  updateModeButtons(state);
+  updateModeButtons(viewState);
   renderBetterThermostatStatus();
 }
 
@@ -643,11 +700,18 @@ function isPrimaryView() {
 function updateRoomNavigation() {
   const inRoom = !isPrimaryView();
   ui.backToHome.classList.toggle("hidden", !inRoom);
+  if (ui.backToHome) {
+    const homeName = config.primary?.name || "Heating";
+    ui.backToHome.textContent = `← ${homeName}`;
+    ui.backToHome.setAttribute("aria-label", `Back to ${homeName}`);
+  }
   ui.app.classList.toggle("room-view", inRoom);
   renderWeather();
 }
 
 function goToPrimaryView() {
+  clearOptimisticTarget();
+  clearOptimisticMode();
   activeEntity = config.primary.entity;
   activeLabel = config.primary.name;
   activeStep = config.primary.step ?? 0.5;
@@ -660,12 +724,12 @@ function renderRooms() {
   ui.roomStrip.innerHTML = "";
 
   const rooms = config.rooms || [];
-  // Hide the strip when there isn't a real multi-room switcher (orphan chips look broken)
-  if (rooms.length < 2) {
+  if (!rooms.length) {
     ui.roomStrip.classList.add("hidden");
     return;
   }
   ui.roomStrip.classList.remove("hidden");
+  ui.roomStrip.classList.toggle("room-strip--few", rooms.length < 4);
 
   for (const room of rooms) {
     const state = getClimateState(room.entity);
@@ -676,12 +740,11 @@ function renderRooms() {
 
     const current = getCurrentTemperature(state);
     const target = getTargetTemperature(state);
-    const action = getHvacAction(state);
-    const actionLabel = !state || action === "unknown" ? "—" : action;
+    const shown = target ?? current;
 
     chip.innerHTML = `
       <div class="name">${room.name}</div>
-      <div class="meta">${formatTemp(target ?? current)} · ${actionLabel}</div>
+      <div class="temp">${formatTemp(shown)}</div>
     `;
 
     chip.addEventListener("click", () => {
@@ -693,6 +756,8 @@ function renderRooms() {
       activeEntity = room.entity;
       activeLabel = room.name;
       activeStep = 0.5;
+      clearOptimisticTarget();
+      clearOptimisticMode();
       updateRoomNavigation();
       renderActiveClimate();
       renderRooms();
@@ -841,14 +906,41 @@ function handleStateChange(entityId) {
 }
 
 async function adjustTemperature(delta) {
-  await ensureUnlocked(async () => {
-    const state = getActiveState();
-    const currentTarget = getTargetTemperature(state);
-    if (currentTarget === null) return;
+  await ensureUnlocked(() => {
+    const state = getEffectiveClimateState(getActiveState());
+    if (state?.state === "off") return;
 
-    const next = Number((currentTarget + delta).toFixed(1));
-    if (ui.targetTemp) ui.targetTemp.textContent = formatTemp(next, "°");
-    await client.setTemperature(activeEntity, next);
+    const base = getEffectiveTarget(state);
+    if (base === null) return;
+
+    const min = Number(state?.attributes?.min_temp);
+    const max = Number(state?.attributes?.max_temp);
+    const lo = Number.isFinite(min) ? min : 5;
+    const hi = Number.isFinite(max) ? max : 30;
+    const next = Math.min(hi, Math.max(lo, Number((base + delta).toFixed(1))));
+
+    optimisticTarget = next;
+    updateCentreControls(state, next);
+    const current = getCurrentTemperature(state);
+    if (ui.targetTemp) ui.targetTemp.textContent = formatTemp(current, "°");
+    updateRingGauge(state, current, next);
+    applyTheme(getEffectiveClimateState(state));
+
+    // Debounce HA write so rapid taps stay instant and only the final value is sent
+    clearTimeout(tempSendTimer);
+    const entity = activeEntity;
+    const value = next;
+    const seq = ++tempSendSeq;
+    tempSendTimer = setTimeout(() => {
+      tempSendTimer = null;
+      if (!client || seq !== tempSendSeq) return;
+      client.setTemperature(entity, value).catch(() => {
+        if (seq === tempSendSeq) {
+          clearOptimisticTarget();
+          renderActiveClimate();
+        }
+      });
+    }, 280);
   });
 }
 
@@ -932,6 +1024,9 @@ ui.saveDeviceId?.addEventListener("click", async () => {
 ui.tempDown.addEventListener("click", () => adjustTemperature(-activeStep));
 ui.tempUp.addEventListener("click", () => adjustTemperature(activeStep));
 ui.backToHome.addEventListener("click", goToPrimaryView);
+ui.zonePill?.addEventListener("click", () => {
+  if (!isPrimaryView()) goToPrimaryView();
+});
 
 ui.pinPad?.addEventListener("click", async (ev) => {
   const btn = ev.target.closest("button[data-digit]");
@@ -971,27 +1066,53 @@ ui.modeFace?.addEventListener("click", () => {
 for (const button of ui.modeButtons) {
   button.addEventListener("click", async () => {
     await ensureUnlocked(async () => {
+      const entity = activeEntity;
+
       if (button.dataset.preset === "eco") {
-        await client.setPresetMode(activeEntity, "eco");
+        applyOptimisticMode({ mode: "heat", preset: "eco" });
         closeModeDrawer();
+        try {
+          await client.setPresetMode(entity, "eco");
+        } catch {
+          clearOptimisticMode();
+          renderActiveClimate();
+        }
         return;
       }
 
       if (button.dataset.preset === "boost") {
         const state = getActiveState();
-        const nextPreset = state?.attributes?.preset_mode === "boost" ? "none" : "boost";
-        await client.setPresetMode(activeEntity, nextPreset);
+        const nextPreset = state?.attributes?.preset_mode === "boost" || optimisticMode?.preset === "boost"
+          ? "none"
+          : "boost";
+        applyOptimisticMode({
+          mode: nextPreset === "boost" ? (state?.state === "off" ? "heat" : state?.state || "heat") : state?.state || "heat",
+          preset: nextPreset,
+        });
         closeModeDrawer();
+        try {
+          await client.setPresetMode(entity, nextPreset);
+        } catch {
+          clearOptimisticMode();
+          renderActiveClimate();
+        }
         return;
       }
 
       if (button.dataset.mode) {
-        const preset = getActiveState()?.attributes?.preset_mode;
-        if (preset && preset !== "none") {
-          await client.setPresetMode(activeEntity, "none");
-        }
-        await client.setHvacMode(activeEntity, button.dataset.mode);
+        const nextMode = button.dataset.mode;
+        applyOptimisticMode({ mode: nextMode, preset: "none" });
         closeModeDrawer();
+        try {
+          const preset = getActiveState()?.attributes?.preset_mode;
+          if (preset && preset !== "none") {
+            await client.setPresetMode(entity, "none");
+          }
+          await client.setHvacMode(entity, nextMode);
+        } catch {
+          clearOptimisticMode();
+          renderActiveClimate();
+        }
       }
     });
   });

@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.3.3
+ * @version 0.3.4
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.3.3";
+const PANEL_VERSION = "0.3.4";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 
@@ -202,6 +202,47 @@ code {
   padding: 14px 16px; border-radius: 12px; border: 1px solid var(--divider-color);
   background: var(--secondary-background-color, transparent);
   cursor: pointer;
+}
+table.data tbody tr.room-row {
+  cursor: pointer;
+}
+table.data tbody tr.room-row:hover {
+  background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+}
+table.data tbody tr.room-row.selected {
+  background: color-mix(in srgb, var(--primary-color) 18%, transparent);
+}
+.field-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+}
+.field-toggle .toggle-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--secondary-text-color);
+}
+.field-toggle select {
+  width: 100%;
+  max-width: 280px;
+}
+.call-heat-btn {
+  border: 1px solid var(--divider-color);
+  background: var(--secondary-background-color, transparent);
+  color: var(--primary-text-color);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.call-heat-btn.on {
+  border-color: color-mix(in srgb, var(--success-color, #4caf50) 55%, var(--divider-color));
+  color: var(--success-color, #4caf50);
+}
+.call-heat-btn.off {
+  opacity: 0.75;
 }
 .panel-build-footer {
   position: absolute; right: 12px; bottom: 8px; font-size: 9px;
@@ -589,7 +630,8 @@ class NeatThermostatPanel extends HTMLElement {
     this._liveTimer = null;
     this._refreshingLive = false;
     this._toastTimer = null;
-    this._roomDraft = { trv: "", sensor: "", extras: [] };
+    this._roomDraft = { trv: "", sensor: "", extras: [], calls_for_heat: true };
+    this._editingRoomId = null;
     this._roomPickerMountGen = 0;
     this._wallDraft = {
       primary: "climate.neat_home",
@@ -792,7 +834,7 @@ class NeatThermostatPanel extends HTMLElement {
 
     const dialClass = `nest-dial${heating ? " heating" : ""}${leafActive ? " leaf" : ""}`;
     const leafBadge = leafActive
-      ? `<div class="nest-leaf" title="Leaf — efficient setpoint">${leafSvg()}</div>`
+      ? `<div class="nest-leaf" title="Leaf — efficient (eco, away, or off)">${leafSvg()}</div>`
       : "";
     const eta = this._formatEta(live.time_to_temp_minutes);
     const etaHtml = eta ? `<div class="nest-dial-eta">${this._escape(eta)}</div>` : "";
@@ -907,7 +949,7 @@ class NeatThermostatPanel extends HTMLElement {
       <div class="card">
         <p class="card-title">Leaf (earned)</p>
         <p class="muted" style="margin:0;line-height:1.55">
-          ${leaf.active ? "Leaf is on right now — you're at an efficient setpoint." : "Turn the heat down a little (or Eco/Away) to earn Leaf time."}<br />
+          ${leaf.active ? "Leaf is on right now — you're running efficiently (low setpoint, Eco/Away, or heating Off)." : "Turn the heat down, use Eco/Away, or switch Off to earn Leaf time."}<br />
           This week: <strong>${this._escape(hoursWeek)} h</strong>
           · All time: <strong>${this._escape(hoursTotal)} h</strong>
           · Streak: <strong>${this._escape(streak)} day${streak === 1 ? "" : "s"}</strong><br />
@@ -1098,30 +1140,40 @@ class NeatThermostatPanel extends HTMLElement {
 
   _renderRooms() {
     const rooms = this._cfg().rooms || [];
+    const editing = this._editingRoomId;
     const rows = rooms
       .map((r) => {
         const live = (this._live().rooms || {})[r.id] || {};
         const extras = (r.extra_temperature_sensors || []).join(", ");
-        return `<tr>
+        const calls = r.calls_for_heat !== false;
+        const selected = editing === r.id ? " selected" : "";
+        return `<tr class="room-row${selected}" data-room-id="${this._escape(r.id)}" title="Click to edit">
           <td>${this._escape(r.name)}</td>
           <td><code>${this._escape(r.trv_entity)}</code></td>
           <td><code>${this._escape(r.temperature_sensor || "—")}</code>${extras ? `<div class="muted">${this._escape(extras)}</div>` : ""}</td>
           <td>${this._escape(live.target ?? r.target_temp)}°</td>
+          <td>
+            <button type="button" class="call-heat-btn ${calls ? "on" : "off"}" data-toggle-calls="${this._escape(r.id)}" title="Toggle call for heat">
+              ${calls ? "On" : "Off"}
+            </button>
+          </td>
           <td>${live.needs_heat ? "Yes" : "No"}</td>
         </tr>`;
       })
       .join("");
+    const formTitle = editing ? "Edit room" : "Add room";
     return `
-      ${this._pageHeader("Rooms", "Each room has its own Neat climate and can call for heat independently.")}
+      ${this._pageHeader("Rooms", "Each room has its own Neat climate. Enable Call for heat so a cold TRV can demand the boiler.")}
       <div class="card">
         <p class="card-title">Configured rooms</p>
         <table class="data">
-          <thead><tr><th>Room</th><th>TRV</th><th>Sensors</th><th>Target</th><th>Needs heat</th></tr></thead>
-          <tbody>${rows || `<tr><td colspan="5" class="muted">No rooms yet — add one below.</td></tr>`}</tbody>
+          <thead><tr><th>Room</th><th>TRV</th><th>Sensors</th><th>Target</th><th>Call boiler</th><th>Needs heat</th></tr></thead>
+          <tbody>${rows || `<tr><td colspan="6" class="muted">No rooms yet — add one below.</td></tr>`}</tbody>
         </table>
+        <p class="muted" style="margin:8px 0 0">Click a room to load it into the form. <strong>Call boiler</strong> must be on for that room to turn the boiler on when it is cold.</p>
       </div>
       <div class="card">
-        <p class="card-title">Add / update room</p>
+        <p class="card-title">${formTitle}</p>
         <div class="row">
           <label class="field">Name<input id="roomName" placeholder="Kitchen" /></label>
         </div>
@@ -1140,10 +1192,45 @@ class NeatThermostatPanel extends HTMLElement {
             <div class="entity-picker-host" data-room-picker="extras"></div>
           </label>
         </div>
-        <p class="muted">Pick entities from Home Assistant. Neat averages all available room temperature sensors.</p>
-        <button class="primary" id="saveRoom">Save room</button>
+        <div class="row">
+          <label class="field field-toggle">
+            <span class="toggle-label">Call for heat (boiler)</span>
+            <select id="roomCallsForHeat">
+              <option value="true" ${this._roomDraft.calls_for_heat !== false ? "selected" : ""}>On — cold room can turn the boiler on</option>
+              <option value="false" ${this._roomDraft.calls_for_heat === false ? "selected" : ""}>Off — TRV only, never demands boiler</option>
+            </select>
+          </label>
+        </div>
+        <p class="muted">Most TRV installs need Call for heat <strong>On</strong>, otherwise the valve can open with no hot water from the boiler. Turn it Off only if that room must not fire the boiler.</p>
+        <div class="row" style="gap:10px;align-items:center">
+          <button class="primary" id="saveRoom">${editing ? "Update room" : "Save room"}</button>
+          ${editing ? `<button class="secondary" id="clearRoomForm" type="button">New room</button>
+          <button class="danger" id="deleteRoom" type="button">Delete room</button>` : ""}
+        </div>
       </div>
     `;
+  }
+
+  _clearRoomForm() {
+    this._editingRoomId = null;
+    this._roomDraft = { trv: "", sensor: "", extras: [], calls_for_heat: true };
+    this._render();
+  }
+
+  _loadRoomIntoForm(room) {
+    if (!room) return;
+    this._editingRoomId = room.id;
+    this._roomDraft = {
+      trv: room.trv_entity || "",
+      sensor: room.temperature_sensor || "",
+      extras: [...(room.extra_temperature_sensors || [])],
+      calls_for_heat: room.calls_for_heat !== false,
+    };
+    this._render();
+    const nameEl = this.shadowRoot?.getElementById("roomName");
+    if (nameEl) nameEl.value = room.name || "";
+    const callsEl = this.shadowRoot?.getElementById("roomCallsForHeat");
+    if (callsEl) callsEl.value = room.calls_for_heat !== false ? "true" : "false";
   }
 
   async _mountRoomPickers() {
@@ -1759,12 +1846,21 @@ class NeatThermostatPanel extends HTMLElement {
         const trv = String(draft.trv || "").trim();
         const sensor = String(draft.sensor || "").trim();
         const extras = (draft.extras || []).map((s) => String(s).trim()).filter(Boolean);
+        const callsForHeat = Boolean(this.shadowRoot.getElementById("roomCallsForHeat")?.checked);
         if (!name || !trv) {
           this._error = "Room name and TRV required";
           this._showToast(this._error, "err");
           return;
         }
-        const id = name.toLowerCase().replace(/\s+/g, "_");
+        const existing = this._editingRoomId
+          ? (this._cfg().rooms || []).find((r) => r.id === this._editingRoomId)
+          : null;
+        const id =
+          existing?.id ||
+          name
+            .toLowerCase()
+            .replace(/\s+/g, "_")
+            .replace(/[^a-z0-9_]/g, "");
         const rooms = [...(this._cfg().rooms || [])].filter((r) => r.id !== id);
         rooms.push({
           id,
@@ -1772,11 +1868,17 @@ class NeatThermostatPanel extends HTMLElement {
           trv_entity: trv,
           temperature_sensor: sensor,
           extra_temperature_sensors: extras,
-          enabled: true,
+          enabled: existing?.enabled !== false,
+          calls_for_heat: callsForHeat,
+          target_temp: existing?.target_temp,
+          eco_temp: existing?.eco_temp,
+          boost_temp: existing?.boost_temp,
+          window_sensors: existing?.window_sensors || [],
         });
         try {
           await this._ws("neat_thermostat/update_rooms", { rooms });
-          this._roomDraft = { trv: "", sensor: "", extras: [] };
+          this._editingRoomId = null;
+          this._roomDraft = { trv: "", sensor: "", extras: [], calls_for_heat: true };
           await this._loadState();
           this._showToast(`Room ${name} saved`);
         } catch (e) {
@@ -1784,6 +1886,40 @@ class NeatThermostatPanel extends HTMLElement {
           this._showToast(this._error, "err");
           this._render();
         }
+      });
+
+      this.shadowRoot.querySelectorAll("tr.room-row[data-room-id]").forEach((row) => {
+        row.addEventListener("click", () => {
+          const room = (this._cfg().rooms || []).find((r) => r.id === row.dataset.roomId);
+          this._loadRoomIntoForm(room);
+        });
+      });
+
+      this.shadowRoot.getElementById("clearRoomForm")?.addEventListener("click", () => {
+        this._clearRoomForm();
+      });
+
+      this.shadowRoot.getElementById("deleteRoom")?.addEventListener("click", async () => {
+        const id = this._editingRoomId;
+        if (!id) return;
+        const room = (this._cfg().rooms || []).find((r) => r.id === id);
+        if (!window.confirm(`Delete room “${room?.name || id}”?`)) return;
+        const rooms = (this._cfg().rooms || []).filter((r) => r.id !== id);
+        try {
+          await this._ws("neat_thermostat/update_rooms", { rooms });
+          this._editingRoomId = null;
+          this._roomDraft = { trv: "", sensor: "", extras: [], calls_for_heat: true };
+          await this._loadState();
+          this._showToast("Room deleted");
+        } catch (e) {
+          this._error = String(e.message || e);
+          this._showToast(this._error, "err");
+          this._render();
+        }
+      });
+
+      this.shadowRoot.getElementById("roomCallsForHeat")?.addEventListener("change", (ev) => {
+        this._roomDraft.calls_for_heat = Boolean(ev.target.checked);
       });
     }
 
