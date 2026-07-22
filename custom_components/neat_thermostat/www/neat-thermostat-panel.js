@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.3.2
+ * @version 0.3.3
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.3.2";
+const PANEL_VERSION = "0.3.3";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 
@@ -201,6 +201,7 @@ code {
   display: flex; justify-content: space-between; gap: 12px; align-items: center;
   padding: 14px 16px; border-radius: 12px; border: 1px solid var(--divider-color);
   background: var(--secondary-background-color, transparent);
+  cursor: pointer;
 }
 .panel-build-footer {
   position: absolute; right: 12px; bottom: 8px; font-size: 9px;
@@ -565,6 +566,12 @@ function temperatureSensorFilter(stateObj) {
   return uom === "°C" || uom === "°F" || uom === "K" || uom === "celsius" || uom === "fahrenheit";
 }
 
+function humiditySensorFilter(stateObj) {
+  if (!stateObj) return false;
+  if (stateObj.attributes?.device_class === "humidity") return true;
+  return stateObj.attributes?.unit_of_measurement === "%";
+}
+
 class NeatThermostatPanel extends HTMLElement {
   constructor() {
     super();
@@ -584,6 +591,14 @@ class NeatThermostatPanel extends HTMLElement {
     this._toastTimer = null;
     this._roomDraft = { trv: "", sensor: "", extras: [] };
     this._roomPickerMountGen = 0;
+    this._wallDraft = {
+      primary: "climate.neat_home",
+      insideTemp: "",
+      outsideTemp: "",
+      humidity: "",
+      weather: "weather.home",
+    };
+    this._wallPickerMountGen = 0;
     this.attachShadow({ mode: "open" });
   }
 
@@ -1259,10 +1274,11 @@ class NeatThermostatPanel extends HTMLElement {
   _renderWallPanels() {
     const panels = this._cfg().wall_panels || [];
     const rooms = this._cfg().rooms || [];
+    const cfg = this._cfg();
     const list = panels
       .map(
         (p) => `
-      <div class="panel-item" data-id="${this._escape(p.id)}">
+      <div class="panel-item" data-id="${this._escape(p.id)}" role="button" tabindex="0" title="Click to edit">
         <div>
           <strong>${this._escape(p.label || p.id)}</strong>
           <div class="muted">id: <code>${this._escape(p.id)}</code> · primary: <code>${this._escape(p.primary_entity || "climate.neat_home")}</code></div>
@@ -1276,20 +1292,37 @@ class NeatThermostatPanel extends HTMLElement {
       <div class="card">
         <p class="card-title">Registered panels</p>
         <div class="panel-list">${list || `<p class="muted" style="margin:0">No wall panels yet.</p>`}</div>
+        <p class="muted" style="margin:8px 0 0">Click a panel to load it into the form below.</p>
       </div>
       <div class="card">
         <p class="card-title">Add / update wall panel</p>
         <div class="row">
           <label class="field">Panel ID<input id="wpId" placeholder="hallway" /></label>
           <label class="field">Label<input id="wpLabel" placeholder="Hallway panel" /></label>
-          <label class="field">Primary climate<input id="wpPrimary" placeholder="climate.neat_home" value="climate.neat_home" /></label>
+        </div>
+        <div class="row">
+          <label class="field">Primary climate
+            <div class="entity-picker-host" data-wall-picker="primary"></div>
+          </label>
+        </div>
+        <div class="row">
+          <label class="field">Inside temp sensor
+            <div class="entity-picker-host" data-wall-picker="insideTemp"></div>
+          </label>
+          <label class="field">Outside temp sensor
+            <div class="entity-picker-host" data-wall-picker="outsideTemp"></div>
+          </label>
+        </div>
+        <div class="row">
+          <label class="field">Humidity sensor
+            <div class="entity-picker-host" data-wall-picker="humidity"></div>
+          </label>
+          <label class="field">Weather entity
+            <div class="entity-picker-host" data-wall-picker="weather"></div>
+          </label>
         </div>
         <div class="row">
           <label class="field">Idle timeout (sec)<input id="wpIdle" type="number" value="30" min="5" /></label>
-          <label class="field">Inside temp sensor<input id="wpInside" placeholder="sensor...." /></label>
-          <label class="field">Weather entity<input id="wpWeather" placeholder="weather.home" value="weather.home" /></label>
-        </div>
-        <div class="row">
           <label class="field">Temperature lock
             <select id="wpLock">
               <option value="false" selected>Off</option>
@@ -1297,10 +1330,111 @@ class NeatThermostatPanel extends HTMLElement {
             </select>
           </label>
         </div>
-        <p class="muted">Room chips default to all Neat rooms (${rooms.length ? rooms.map((r) => r.name).join(", ") : "none yet"}). Lock only affects this wall panel.</p>
+        <p class="muted">House defaults: temp <code>${this._escape(cfg.temperature_sensor || "—")}</code>, outdoor <code>${this._escape(cfg.outdoor_temp_sensor || "—")}</code>. Room chips: ${rooms.length ? rooms.map((r) => r.name).join(", ") : "none yet"}.</p>
         <button class="primary" id="saveWallPanel">Save wall panel</button>
       </div>
     `;
+  }
+
+  _loadWallPanelIntoForm(panel) {
+    if (!panel) return;
+    const idEl = this.shadowRoot?.getElementById("wpId");
+    const labelEl = this.shadowRoot?.getElementById("wpLabel");
+    const idleEl = this.shadowRoot?.getElementById("wpIdle");
+    const lockEl = this.shadowRoot?.getElementById("wpLock");
+    if (idEl) idEl.value = panel.id || "";
+    if (labelEl) labelEl.value = panel.label || "";
+    const idleMs = Number(panel.display?.idleMs ?? 30000);
+    if (idleEl) idleEl.value = String(Math.round(idleMs / 1000) || 30);
+    if (lockEl) lockEl.value = panel.temperature_lock ? "true" : "false";
+    const sensors = panel.sensors || {};
+    this._wallDraft = {
+      primary: panel.primary_entity || "climate.neat_home",
+      insideTemp: sensors.insideTemp || this._cfg().temperature_sensor || "",
+      outsideTemp: sensors.outsideTemp || this._cfg().outdoor_temp_sensor || "",
+      humidity: sensors.insideHumidity || "",
+      weather: sensors.weather || "weather.home",
+    };
+    void this._mountWallPickers();
+  }
+
+  async _mountWallPickers() {
+    if (this._view !== "wall_panels" || !this._hass) return;
+    const gen = ++this._wallPickerMountGen;
+    const hosts = [...(this.shadowRoot?.querySelectorAll("[data-wall-picker]") || [])];
+    if (!hosts.length) return;
+    for (const host of hosts) {
+      if (!host.querySelector("ha-entity-picker")) {
+        host.innerHTML = `<p class="entity-picker-loading">Loading entity picker…</p>`;
+      }
+    }
+    try {
+      await ensureHaEntityPickerLoaded();
+    } catch (err) {
+      if (gen !== this._wallPickerMountGen) return;
+      for (const host of hosts) {
+        host.innerHTML = `<p class="entity-picker-error">${this._escape(err?.message || "Entity picker unavailable")}</p>`;
+      }
+      return;
+    }
+    if (gen !== this._wallPickerMountGen || this._view !== "wall_panels") return;
+
+    // Prefill blanks from house config once
+    const cfg = this._cfg();
+    if (!this._wallDraft.insideTemp && cfg.temperature_sensor) {
+      this._wallDraft.insideTemp = cfg.temperature_sensor;
+    }
+    if (!this._wallDraft.outsideTemp && cfg.outdoor_temp_sensor) {
+      this._wallDraft.outsideTemp = cfg.outdoor_temp_sensor;
+    }
+
+    const mountSingle = (key, { domains, filter, label }) => {
+      const host = this.shadowRoot.querySelector(`[data-wall-picker="${key}"]`);
+      if (!host) return;
+      let picker = host.querySelector("ha-entity-picker");
+      if (!picker) {
+        host.replaceChildren();
+        picker = document.createElement("ha-entity-picker");
+        picker.setAttribute("allow-custom-entity", "");
+        if (this._hass.userData?.showEntityIdPicker) picker.setAttribute("show-entity-id", "");
+        if (label) picker.label = label;
+        picker.includeDomains = domains;
+        if (filter) picker.entityFilter = filter;
+        picker.addEventListener("value-changed", (ev) => {
+          this._wallDraft[key] = ev.detail?.value || "";
+        });
+        host.appendChild(picker);
+      }
+      picker.hass = this._hass;
+      const value = this._wallDraft[key] || "";
+      if (picker.value !== value) picker.value = value || undefined;
+    };
+
+    mountSingle("primary", { domains: ["climate"], label: "Primary climate" });
+    mountSingle("insideTemp", {
+      domains: ["sensor"],
+      filter: temperatureSensorFilter,
+      label: "Inside temperature",
+    });
+    mountSingle("outsideTemp", {
+      domains: ["sensor"],
+      filter: temperatureSensorFilter,
+      label: "Outside temperature",
+    });
+    mountSingle("humidity", {
+      domains: ["sensor"],
+      filter: humiditySensorFilter,
+      label: "Humidity",
+    });
+    mountSingle("weather", { domains: ["weather"], label: "Weather" });
+  }
+
+  _readWallPickerValues() {
+    for (const key of ["primary", "insideTemp", "outsideTemp", "humidity", "weather"]) {
+      const picker = this.shadowRoot.querySelector(`[data-wall-picker="${key}"] ha-entity-picker`);
+      if (picker?.value != null) this._wallDraft[key] = String(picker.value || "");
+    }
+    return this._wallDraft;
   }
 
   _renderSettings() {
@@ -1460,6 +1594,9 @@ class NeatThermostatPanel extends HTMLElement {
     this._bind();
     if (this._view === "rooms") {
       void this._mountRoomPickers();
+    }
+    if (this._view === "wall_panels") {
+      void this._mountWallPickers();
     }
   }
 
@@ -1658,9 +1795,10 @@ class NeatThermostatPanel extends HTMLElement {
         if (!id) {
           this._error = "Panel ID required";
           this._showToast(this._error, "err");
-          this._render();
           return;
         }
+        const draft = this._readWallPickerValues();
+        const primary = String(draft.primary || "").trim() || "climate.neat_home";
         const idleSec = Number(this.shadowRoot.getElementById("wpIdle").value) || 30;
         const rooms = (this._cfg().rooms || []).map((r) => ({
           entity: `climate.neat_${r.id}`,
@@ -1671,13 +1809,13 @@ class NeatThermostatPanel extends HTMLElement {
             panel: {
               id,
               label,
-              primary_entity:
-                this.shadowRoot.getElementById("wpPrimary").value.trim() || "climate.neat_home",
+              primary_entity: primary,
               rooms,
               sensors: {
-                insideTemp: this.shadowRoot.getElementById("wpInside").value.trim(),
-                weather:
-                  this.shadowRoot.getElementById("wpWeather").value.trim() || "weather.home",
+                insideTemp: String(draft.insideTemp || "").trim(),
+                outsideTemp: String(draft.outsideTemp || "").trim(),
+                insideHumidity: String(draft.humidity || "").trim(),
+                weather: String(draft.weather || "").trim() || "weather.home",
                 sun: "sun.sun",
               },
               display: { idleMs: idleSec * 1000, panelEntity: "" },
@@ -1692,8 +1830,22 @@ class NeatThermostatPanel extends HTMLElement {
           this._render();
         }
       });
+      this.shadowRoot.querySelectorAll(".panel-item[data-id]").forEach((row) => {
+        row.addEventListener("click", (ev) => {
+          if (ev.target.closest(".del-panel")) return;
+          const panel = (this._cfg().wall_panels || []).find((p) => p.id === row.dataset.id);
+          this._loadWallPanelIntoForm(panel);
+        });
+        row.addEventListener("keydown", (ev) => {
+          if (ev.key !== "Enter" && ev.key !== " ") return;
+          ev.preventDefault();
+          const panel = (this._cfg().wall_panels || []).find((p) => p.id === row.dataset.id);
+          this._loadWallPanelIntoForm(panel);
+        });
+      });
       this.shadowRoot.querySelectorAll(".del-panel").forEach((btn) => {
-        btn.addEventListener("click", async () => {
+        btn.addEventListener("click", async (ev) => {
+          ev.stopPropagation();
           try {
             await this._ws("neat_thermostat/delete_wall_panel", { panel_id: btn.dataset.id });
             await this._loadState();

@@ -17,7 +17,6 @@
     <div class="app" id="app" hidden>
       <header class="ring-header">
         <button class="top-back hidden" id="backToHome" type="button" aria-label="Back to home">← Home</button>
-        <div class="brand-title">Neat</div>
         <button type="button" class="zone-pill" id="zonePill">
           <span id="heroLabel">Home</span>
         </button>
@@ -29,12 +28,16 @@
 
       <section class="ring-stage">
         <div class="thermo-ring" id="thermoRing" data-state="idle">
-          <div class="ring-glow" aria-hidden="true"></div>
+          <svg class="ring-gauge" id="ringGauge" viewBox="0 0 200 200" aria-hidden="true">
+            <g id="ringTicks"></g>
+            <path id="ringActiveArc" class="ring-active-arc" fill="none" d="" />
+            <g id="ringCallouts"></g>
+          </svg>
           <div class="ring-face">
             <div class="ring-sheen" aria-hidden="true"></div>
 
             <div class="ring-top">
-              <div class="stat-stack">
+              <div class="stat-row">
                 <div class="stat-line outdoor" title="Outside temperature">
                   <svg class="stat-icon outdoor-icon" viewBox="0 0 24 24" aria-hidden="true">
                     <path
@@ -58,18 +61,6 @@
                   <span id="insideHumidity">--</span>
                 </div>
               </div>
-              <button type="button" class="chart-btn" id="chartBtn" aria-label="Status details" title="Status">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M4 16.5 9 11l3.5 3.5L20 7"
-                  />
-                </svg>
-              </button>
             </div>
 
             <div class="ring-mid">
@@ -103,7 +94,6 @@
         <button class="mode-btn" data-preset="boost" type="button">Boost</button>
       </section>
 
-      <p class="footer-status" id="actionPill">Idle overview</p>
       <p class="footer-eta muted" id="heroSubtitle"></p>
 
       <section class="bottom-panel">
@@ -111,6 +101,7 @@
       </section>
 
       <!-- Kept for JS compatibility; visually unused in ring layout -->
+      <span class="sr-only" id="actionPill">Idle overview</span>
       <span class="sr-only" id="connectionLabel">Connecting</span>
       <span class="sr-only" id="insideTemp">--</span>
       <div class="sr-only" id="weatherBlock" hidden>

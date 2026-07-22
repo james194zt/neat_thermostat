@@ -17,7 +17,7 @@ export const LEGACY_STORAGE_KEYS = [
 ];
 export const LOCAL_SECRETS_KEY = "nspanel-thermostat-local-secrets";
 export const DEFAULT_HA_URL = "http://192.168.0.6:8123";
-export const CONFIG_VERSION = 10;
+export const CONFIG_VERSION = 11;
 
 export const DEFAULT_CONFIG = {
   haUrl: DEFAULT_HA_URL,
@@ -171,6 +171,39 @@ async function loadFromNeat(hassClient, deviceId) {
   }
 }
 
+async function loadBundledSensorDefaults() {
+  const sensors = {};
+  try {
+    const response = await fetch(`config.json?v=${CONFIG_VERSION}`, { cache: "no-store" });
+    if (response.ok) {
+      const bundled = await response.json();
+      Object.assign(sensors, bundled.sensors || {});
+    }
+  } catch {
+    // optional
+  }
+  try {
+    const registry = await resolveRegistry(null);
+    const deviceId = getStoredDeviceId();
+    const device = deviceId ? registry?.devices?.[deviceId] : null;
+    const shared = registry?.shared?.sensors || {};
+    Object.assign(sensors, shared, device?.sensors || {});
+  } catch {
+    // optional
+  }
+  return sensors;
+}
+
+function fillBlankSensors(target, fallback) {
+  const sensors = { ...(target.sensors || {}) };
+  for (const [key, value] of Object.entries(fallback || {})) {
+    if (!String(sensors[key] || "").trim() && String(value || "").trim()) {
+      sensors[key] = value;
+    }
+  }
+  return { ...target, sensors };
+}
+
 export async function loadConfig(hassClient = null) {
   clearLegacyStorage();
 
@@ -181,12 +214,17 @@ export async function loadConfig(hassClient = null) {
     deviceId,
   };
 
+  const bundledSensors = await loadBundledSensorDefaults();
+
   // Prefer central Neat wall-panel config (source of truth).
   const fromNeat = await loadFromNeat(hassClient, deviceId);
   if (fromNeat) {
-    return sanitizeConfig(
-      mergeConfig(DEFAULT_CONFIG, mergeConfig(fromNeat, localOverrides))
+    // Neat often omits humidity; fill blanks from local devices.json / config.json
+    const merged = fillBlankSensors(
+      mergeConfig(DEFAULT_CONFIG, mergeConfig(fromNeat, localOverrides)),
+      bundledSensors
     );
+    return sanitizeConfig(merged);
   }
 
   // Fallback: legacy devices.json / HA user-data registry (pre-Neat).
@@ -203,7 +241,9 @@ export async function loadConfig(hassClient = null) {
     ? configFromRegistry(registry, deviceId, DEFAULT_CONFIG, localOverrides)
     : mergeConfig(DEFAULT_CONFIG, localOverrides);
 
-  return sanitizeConfig(mergeConfig(DEFAULT_CONFIG, mergeConfig(bundled, fromRegistry)));
+  return sanitizeConfig(
+    fillBlankSensors(mergeConfig(DEFAULT_CONFIG, mergeConfig(bundled, fromRegistry)), bundledSensors)
+  );
 }
 
 export function isConfiguredForStandalone(config) {
