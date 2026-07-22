@@ -315,6 +315,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         st = self._room_states.get(room.id, {})
         if st.get("hvac_mode") != "heat" or not room.enabled:
             return False
+        # Opt-out rooms never demand the boiler (TRV setpoint sync still runs).
+        if not bool(getattr(room, "calls_for_heat", True)):
+            return False
         if self.config.summer_mode or self._any_window_open(room.window_sensors):
             return False
         current = self.room_current_temp(room)
@@ -511,9 +514,13 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if note_setpoint_event(self.intel.state.energy, float(target)):
             self._dirty_intel = True
 
-        eco_or_away = self._away_eco_active or self._main_preset in (
-            PRESET_ECO,
-            PRESET_AWAY,
+        eco_or_away = (
+            self._main_hvac_mode == "off"
+            or self._away_eco_active
+            or self._main_preset in (
+                PRESET_ECO,
+                PRESET_AWAY,
+            )
         )
         leaf = self.intel.state.leaf
         prev_total = leaf.minutes_total

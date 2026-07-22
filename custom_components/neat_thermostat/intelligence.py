@@ -577,7 +577,11 @@ def evaluate_leaf(
     leaf_enabled: bool,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Return live Leaf awareness status (icon may hide; earned minutes never decrease)."""
+    """Return live Leaf awareness status (icon may hide; earned minutes never decrease).
+
+    ``eco_or_away`` is true for Eco/Away presets, presence-away eco, or HVAC off —
+    you can't get more efficient than the heat being off.
+    """
     now = now or datetime.now()
     if leaf.coaching_started_at is None:
         leaf.coaching_started_at = now.isoformat()

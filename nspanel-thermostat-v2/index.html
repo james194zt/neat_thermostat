@@ -16,7 +16,7 @@
   <body>
     <div class="app" id="app" hidden>
       <header class="ring-header">
-        <button class="top-back hidden" id="backToHome" type="button" aria-label="Back to home">← Home</button>
+        <button class="top-back hidden" id="backToHome" type="button" aria-label="Back to heating">← Heating</button>
         <button type="button" class="zone-pill" id="zonePill">
           <span id="heroLabel">Home</span>
         </button>
@@ -28,60 +28,72 @@
 
       <section class="ring-stage">
         <div class="thermo-ring" id="thermoRing" data-state="idle">
-          <svg class="ring-gauge" id="ringGauge" viewBox="0 0 200 200" aria-hidden="true">
+          <svg class="ring-gauge" id="ringGauge" viewBox="-24 -24 248 248" aria-hidden="true">
             <g id="ringTicks"></g>
-            <path id="ringActiveArc" class="ring-active-arc" fill="none" d="" />
             <g id="ringCallouts"></g>
           </svg>
           <div class="ring-face">
             <div class="ring-sheen" aria-hidden="true"></div>
+            <div class="ring-face-inner">
+              <div class="ring-top">
+                <div class="stat-row">
+                  <div class="stat-line outdoor" title="Outside temperature">
+                    <svg class="stat-icon outdoor-icon" viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        d="M12 3v11.5a3.5 3.5 0 1 0 2.2 0V7h2"
+                      />
+                      <circle cx="12" cy="17.5" r="1.2" fill="currentColor" />
+                    </svg>
+                    <span id="outsideTemp">--</span>
+                  </div>
+                  <div class="stat-line humidity" title="Humidity">
+                    <svg class="stat-icon humidity-icon" viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        fill="currentColor"
+                        d="M12 3.2S6.5 10.1 6.5 14.2a5.5 5.5 0 0 0 11 0C17.5 10.1 12 3.2 12 3.2z"
+                      />
+                    </svg>
+                    <span id="insideHumidity">--</span>
+                  </div>
+                </div>
+              </div>
 
-            <div class="ring-top">
-              <div class="stat-row">
-                <div class="stat-line outdoor" title="Outside temperature">
-                  <svg class="stat-icon outdoor-icon" viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.8"
-                      stroke-linecap="round"
-                      d="M12 3v11.5a3.5 3.5 0 1 0 2.2 0V7h2"
-                    />
-                    <circle cx="12" cy="17.5" r="1.2" fill="currentColor" />
-                  </svg>
-                  <span id="outsideTemp">--</span>
+              <div class="ring-mid">
+                <button class="temp-btn" id="tempDown" type="button" aria-label="Decrease target">
+                  <span class="temp-btn-glyph" aria-hidden="true">−</span>
+                </button>
+                <div class="current-temp" id="currentTemp" aria-live="polite">
+                  <span class="temp-int" id="currentTempInt">--</span><span class="temp-dec" id="currentTempDec"></span>
                 </div>
-                <div class="stat-line humidity" title="Humidity">
-                  <svg class="stat-icon humidity-icon" viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      fill="currentColor"
-                      d="M12 3.2S6.5 10.1 6.5 14.2a5.5 5.5 0 0 0 11 0C17.5 10.1 12 3.2 12 3.2z"
-                    />
-                  </svg>
-                  <span id="insideHumidity">--</span>
+                <button class="temp-btn" id="tempUp" type="button" aria-label="Increase target">
+                  <span class="temp-btn-glyph" aria-hidden="true">+</span>
+                </button>
+              </div>
+
+              <div class="ring-divider" aria-hidden="true"></div>
+
+              <div class="ring-bottom">
+                <div class="meta-block">
+                  <div class="meta-label">Now</div>
+                  <div class="meta-value" id="targetTemp">--</div>
                 </div>
+                <button type="button" class="meta-block mode-btn-face" id="modeFace" aria-label="Change mode">
+                  <div class="meta-label">Mode</div>
+                  <div class="meta-value mode-icon" id="modeIcon">heat</div>
+                </button>
               </div>
             </div>
-
-            <div class="ring-mid">
-              <button class="temp-btn" id="tempDown" type="button" aria-label="Decrease target">−</button>
-              <div class="current-temp" id="currentTemp" aria-live="polite">
-                <span class="temp-int" id="currentTempInt">--</span><span class="temp-dec" id="currentTempDec"></span>
-              </div>
-              <button class="temp-btn" id="tempUp" type="button" aria-label="Increase target">+</button>
-            </div>
-
-            <div class="ring-divider" aria-hidden="true"></div>
-
-            <div class="ring-bottom">
-              <div class="meta-block">
-                <div class="meta-label">Set</div>
-                <div class="meta-value" id="targetTemp">--</div>
-              </div>
-              <button type="button" class="meta-block mode-btn-face" id="modeFace" aria-label="Change mode">
-                <div class="meta-label">Mode</div>
-                <div class="meta-value mode-icon" id="modeIcon">heat</div>
-              </button>
+            <div class="ring-leaf" id="ringLeaf" title="Leaf — efficient (eco, away, or off)" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path
+                  fill="currentColor"
+                  d="M17 8c-9 2-11.1 8.17-13.18 13.67l1.89.33C8.67 16.37 14.5 12.5 17 11.33V8m0 0c2.67 0 5 1.79 5 5 0 4.5-4.5 8.5-10.5 9.5C13.5 19.5 15 16 17 11.33V8z"
+                />
+              </svg>
             </div>
           </div>
         </div>
