@@ -630,13 +630,18 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             for r in self.config.rooms
             if r.enabled
         ]
-        sensors = panel.sensors or {
-            "insideTemp": self.config.temperature_sensor,
+        defaults = {
+            "insideTemp": self.config.temperature_sensor or "",
             "insideHumidity": "",
             "outsideTemp": self.config.outdoor_temp_sensor or "",
             "weather": "weather.home",
             "sun": "sun.sun",
         }
+        sensors = {**defaults, **dict(panel.sensors or {})}
+        # Don't let blank panel values wipe house-level outdoor/temp defaults
+        for key, value in defaults.items():
+            if not str(sensors.get(key) or "").strip():
+                sensors[key] = value
         display = panel.display or {"idleMs": 30000, "panelEntity": ""}
         lock_on = bool(panel.temperature_lock) and bool(
             str(self.config.wall_pin or "").strip()

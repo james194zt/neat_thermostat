@@ -49,7 +49,10 @@ const ui = {
   modeFace: document.getElementById("modeFace"),
   modeIcon: document.getElementById("modeIcon"),
   thermoRing: document.getElementById("thermoRing"),
-  chartBtn: document.getElementById("chartBtn"),
+  ringTicks: document.getElementById("ringTicks"),
+  ringActiveArc: document.getElementById("ringActiveArc"),
+  ringCallouts: document.getElementById("ringCallouts"),
+  currentTemp: document.getElementById("currentTemp"),
   zonePill: document.getElementById("zonePill"),
   windowBanner: document.getElementById("windowBanner"),
   statusRow: document.getElementById("statusRow"),
@@ -84,8 +87,10 @@ function formatTemp(value, suffix = "°") {
 }
 
 function setCurrentTempDisplay(value) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) {
-    if (ui.currentTempInt) ui.currentTempInt.textContent = "--";
+  const empty = value === null || value === undefined || Number.isNaN(Number(value));
+  ui.currentTemp?.classList.toggle("is-empty", empty);
+  if (empty) {
+    if (ui.currentTempInt) ui.currentTempInt.textContent = "–";
     if (ui.currentTempDec) ui.currentTempDec.textContent = "";
     return;
   }
@@ -125,6 +130,88 @@ function formatSensor(value, suffix = "") {
   return `${value}${suffix}`;
 }
 
+function getOutsideTempDisplay() {
+  const sensorId = config.sensors?.outsideTemp?.trim();
+  if (sensorId) {
+    const formatted = formatSensor(client?.getState(sensorId)?.state, "°");
+    if (formatted !== "--") return formatted;
+  }
+
+  // Fall back to weather entity outdoor temp when panel sensor is missing/unavailable
+  const weatherId = resolveWeatherEntityId();
+  if (weatherId) {
+    const weather = client?.getState(weatherId);
+    const temp = weather?.attributes?.temperature;
+    const formatted = formatSensor(temp, "°");
+    if (formatted !== "--") return formatted;
+  }
+
+  return "--";
+}
+
+function formatHumidity(value) {
+  const formatted = formatSensor(value, "%");
+  if (formatted === "--") return "--";
+  return formatted.includes("%") ? formatted : `${formatted}%`;
+}
+
+function getHumidityDisplay() {
+  const sensorId = config.sensors?.insideHumidity?.trim();
+  if (sensorId) {
+    const formatted = formatHumidity(client?.getState(sensorId)?.state);
+    if (formatted !== "--") return formatted;
+  }
+
+  // Climate entities often expose current_humidity
+  const climate = getActiveState() || getPrimaryState();
+  const fromClimate = climate?.attributes?.current_humidity;
+  if (fromClimate != null && fromClimate !== "") {
+    const formatted = formatHumidity(fromClimate);
+    if (formatted !== "--") return formatted;
+  }
+
+  // Weather entity humidity
+  const weatherId = resolveWeatherEntityId();
+  if (weatherId) {
+    const formatted = formatHumidity(client?.getState(weatherId)?.attributes?.humidity);
+    if (formatted !== "--") return formatted;
+  }
+
+  // Auto-discover a humidity sensor (prefer common home ids)
+  const ids = client?.listEntityIds?.() ?? [];
+  const preferred = [
+    "sensor.home_humidity",
+    "sensor.indoor_humidity",
+    "sensor.humidity",
+    ...ids.filter((id) => id.includes("humidity")),
+  ];
+  const seen = new Set();
+  for (const id of preferred) {
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const state = client?.getState(id);
+    if (!state) continue;
+    if (
+      state.attributes?.device_class === "humidity" ||
+      id.includes("humidity") ||
+      state.attributes?.unit_of_measurement === "%"
+    ) {
+      const formatted = formatHumidity(state.state);
+      if (formatted !== "--") return formatted;
+    }
+  }
+
+  for (const id of ids) {
+    if (seen.has(id) || !id.startsWith("sensor.")) continue;
+    const state = client.getState(id);
+    if (state?.attributes?.device_class !== "humidity") continue;
+    const formatted = formatHumidity(state.state);
+    if (formatted !== "--") return formatted;
+  }
+
+  return "--";
+}
+
 function getClimateState(entityId) {
   return client?.getState(entityId);
 }
@@ -139,17 +226,210 @@ function getActiveState() {
 
 function getTargetTemperature(state) {
   if (!state) return null;
-  return state.attributes.target_temp_high ?? state.attributes.temperature ?? null;
+  const value = state.attributes.target_temp_high ?? state.attributes.temperature ?? null;
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return null;
+  return Number(value);
 }
 
 function getCurrentTemperature(state) {
-  if (!state) return null;
-  return state.attributes.current_temperature ?? null;
+  const fromClimate = state?.attributes?.current_temperature;
+  if (fromClimate != null && !Number.isNaN(Number(fromClimate))) {
+    return Number(fromClimate);
+  }
+
+  // Fall back to house inside sensor so the dial isn't blank when climate is offline
+  const sensorId = config.sensors?.insideTemp?.trim();
+  if (sensorId) {
+    const raw = client?.getState(sensorId)?.state;
+    if (raw != null && raw !== "unavailable" && raw !== "unknown" && !Number.isNaN(Number(raw))) {
+      return Number(raw);
+    }
+  }
+  return null;
 }
 
 function getHvacAction(state) {
   if (!state) return "unknown";
   return state.attributes.hvac_action || state.state || "unknown";
+}
+
+/* —— Heating gauge (Lovelace-style tick ring) —— */
+const GAUGE = {
+  cx: 100,
+  cy: 100,
+  rOuter: 97,
+  rInner: 87,
+  rLabel: 104,
+  // Sweep leaves a gap at the bottom for the face content rhythm
+  startDeg: -140,
+  sweepDeg: 280,
+  ticks: 70,
+  defaultMin: 5,
+  defaultMax: 30,
+};
+
+let ringTicksBuilt = false;
+
+function degToRad(deg) {
+  return (deg * Math.PI) / 180;
+}
+
+function polar(cx, cy, r, deg) {
+  // 0° at 12 o'clock, clockwise
+  const rad = degToRad(deg - 90);
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+}
+
+function getGaugeRange(state) {
+  const min = Number(state?.attributes?.min_temp);
+  const max = Number(state?.attributes?.max_temp);
+  return {
+    min: Number.isFinite(min) ? min : GAUGE.defaultMin,
+    max: Number.isFinite(max) && max > min ? max : GAUGE.defaultMax,
+  };
+}
+
+function tempToDeg(temp, min, max) {
+  const clamped = Math.min(max, Math.max(min, temp));
+  const ratio = (clamped - min) / (max - min || 1);
+  return GAUGE.startDeg + ratio * GAUGE.sweepDeg;
+}
+
+function describeArc(startDeg, endDeg, r) {
+  const start = polar(GAUGE.cx, GAUGE.cy, r, startDeg);
+  const end = polar(GAUGE.cx, GAUGE.cy, r, endDeg);
+  const delta = ((endDeg - startDeg) % 360 + 360) % 360;
+  const large = delta > 180 ? 1 : 0;
+  return `M ${start.x.toFixed(2)} ${start.y.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${end.x.toFixed(2)} ${end.y.toFixed(2)}`;
+}
+
+function ensureRingTicks() {
+  if (ringTicksBuilt || !ui.ringTicks) return;
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < GAUGE.ticks; i++) {
+    const t = i / (GAUGE.ticks - 1);
+    const deg = GAUGE.startDeg + t * GAUGE.sweepDeg;
+    const outer = polar(GAUGE.cx, GAUGE.cy, GAUGE.rOuter, deg);
+    const inner = polar(GAUGE.cx, GAUGE.cy, GAUGE.rInner, deg);
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", outer.x.toFixed(2));
+    line.setAttribute("y1", outer.y.toFixed(2));
+    line.setAttribute("x2", inner.x.toFixed(2));
+    line.setAttribute("y2", inner.y.toFixed(2));
+    line.setAttribute("class", i % 5 === 0 ? "tick major" : "tick");
+    line.dataset.index = String(i);
+    frag.appendChild(line);
+  }
+  ui.ringTicks.appendChild(frag);
+  ringTicksBuilt = true;
+}
+
+function formatGaugeLabel(value) {
+  if (value == null || Number.isNaN(Number(value))) return "";
+  return Number(value).toFixed(1).replace(/\.0$/, "");
+}
+
+function addRingCallout(temp, deg) {
+  if (!ui.ringCallouts) return;
+  const label = formatGaugeLabel(temp);
+  if (!label) return;
+
+  const tip = polar(GAUGE.cx, GAUGE.cy, GAUGE.rOuter, deg);
+  const mid = polar(GAUGE.cx, GAUGE.cy, GAUGE.rLabel - 2, deg);
+  const textPos = polar(GAUGE.cx, GAUGE.cy, GAUGE.rLabel + 1, deg);
+
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("class", "ring-callout-line");
+  line.setAttribute("x1", tip.x.toFixed(2));
+  line.setAttribute("y1", tip.y.toFixed(2));
+  line.setAttribute("x2", mid.x.toFixed(2));
+  line.setAttribute("y2", mid.y.toFixed(2));
+  ui.ringCallouts.appendChild(line);
+
+  const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  text.setAttribute("class", "ring-callout");
+  text.setAttribute("x", textPos.x.toFixed(2));
+  text.setAttribute("y", textPos.y.toFixed(2));
+  text.setAttribute("text-anchor", "middle");
+  text.setAttribute("dominant-baseline", "middle");
+  text.textContent = label;
+  ui.ringCallouts.appendChild(text);
+}
+
+function updateRingGauge(state, current, target) {
+  ensureRingTicks();
+  if (!ui.ringTicks) return;
+
+  const { min, max } = getGaugeRange(state);
+  const action = getHvacAction(state);
+  const mode = state?.state;
+  const hasCurrent = current != null && Number.isFinite(current);
+  const hasTarget = target != null && Number.isFinite(target);
+
+  let low = null;
+  let high = null;
+  if (hasCurrent && hasTarget) {
+    low = Math.min(current, target);
+    high = Math.max(current, target);
+  } else if (hasTarget) {
+    low = high = target;
+  } else if (hasCurrent) {
+    low = high = current;
+  }
+
+  const showActive =
+    low != null &&
+    high != null &&
+    mode !== "off" &&
+    action !== "off";
+
+  // Light up ticks between current and target (heating demand band)
+  const ticks = ui.ringTicks.querySelectorAll(".tick");
+  ticks.forEach((tick, i) => {
+    const t = i / (GAUGE.ticks - 1);
+    const deg = GAUGE.startDeg + t * GAUGE.sweepDeg;
+    let active = false;
+    if (showActive) {
+      const lowDeg = tempToDeg(low, min, max);
+      const highDeg = tempToDeg(high, min, max);
+      // Always highlight at least a small band around a single point
+      if (Math.abs(highDeg - lowDeg) < 2) {
+        active = Math.abs(deg - lowDeg) <= 2.5;
+      } else {
+        active = deg >= lowDeg - 0.01 && deg <= highDeg + 0.01;
+      }
+    }
+    tick.classList.toggle("active", active);
+  });
+
+  if (ui.ringActiveArc) {
+    if (showActive && low != null && high != null) {
+      let a0 = tempToDeg(low, min, max);
+      let a1 = tempToDeg(high, min, max);
+      if (Math.abs(a1 - a0) < 2) {
+        a0 -= 1.5;
+        a1 += 1.5;
+      }
+      ui.ringActiveArc.setAttribute("d", describeArc(a0, a1, (GAUGE.rOuter + GAUGE.rInner) / 2));
+      ui.ringActiveArc.style.opacity = action === "heating" || mode === "heat" ? "1" : "0.55";
+    } else {
+      ui.ringActiveArc.setAttribute("d", "");
+    }
+  }
+
+  if (ui.ringCallouts) {
+    ui.ringCallouts.innerHTML = "";
+    if (showActive && hasCurrent && hasTarget) {
+      if (Math.abs(current - target) < 0.05) {
+        addRingCallout(current, tempToDeg(current, min, max));
+      } else {
+        addRingCallout(current, tempToDeg(current, min, max));
+        addRingCallout(target, tempToDeg(target, min, max));
+      }
+    } else if (showActive && hasTarget) {
+      addRingCallout(target, tempToDeg(target, min, max));
+    }
+  }
 }
 
 function applyTheme(state) {
@@ -170,10 +450,14 @@ function applyTheme(state) {
   if (preset === "eco") labels.push("Eco");
   if (preset === "boost") labels.push("Boost");
   if (mode === "off") labels.push("Off");
+  else if (!state || action === "unknown") labels.push("Idle overview");
   else labels.push(action === "idle" || action === "off" ? "Idle overview" : action.replace("_", " "));
   if (ui.actionPill) ui.actionPill.textContent = labels.filter(Boolean).join(" · ");
 
-  if (ui.modeIcon) ui.modeIcon.innerHTML = modeGlyph(state);
+  if (ui.modeIcon) {
+    ui.modeIcon.innerHTML = modeGlyph(state);
+    ui.modeIcon.dataset.mode = preset === "eco" || preset === "boost" ? preset : mode || "heat";
+  }
 }
 
 function updateModeButtons(state) {
@@ -224,6 +508,7 @@ function renderActiveClimate() {
   if (ui.heroSubtitle) ui.heroSubtitle.textContent = etaText;
 
   applyTheme(state);
+  updateRingGauge(state, current, target);
   updateModeButtons(state);
   renderBetterThermostatStatus();
 }
@@ -284,16 +569,10 @@ async function submitPin() {
 
 function renderSensors() {
   const inside = client?.getState(config.sensors.insideTemp);
-  const outside = client?.getState(config.sensors.outsideTemp);
-  const humidity = client?.getState(config.sensors.insideHumidity);
 
   if (ui.insideTemp) ui.insideTemp.textContent = formatSensor(inside?.state, "°");
-  // Outdoor house temp replaces battery in the mockup
-  if (ui.outsideTemp) ui.outsideTemp.textContent = formatSensor(outside?.state, "°");
-  if (ui.insideHumidity) {
-    const h = formatSensor(humidity?.state, "%");
-    ui.insideHumidity.textContent = h === "--" ? "--" : h.includes("%") ? h : `${h}%`;
-  }
+  if (ui.outsideTemp) ui.outsideTemp.textContent = getOutsideTempDisplay();
+  if (ui.insideHumidity) ui.insideHumidity.textContent = getHumidityDisplay();
   renderWeather();
 }
 
@@ -380,7 +659,15 @@ function goToPrimaryView() {
 function renderRooms() {
   ui.roomStrip.innerHTML = "";
 
-  for (const room of config.rooms) {
+  const rooms = config.rooms || [];
+  // Hide the strip when there isn't a real multi-room switcher (orphan chips look broken)
+  if (rooms.length < 2) {
+    ui.roomStrip.classList.add("hidden");
+    return;
+  }
+  ui.roomStrip.classList.remove("hidden");
+
+  for (const room of rooms) {
     const state = getClimateState(room.entity);
     const chip = document.createElement("button");
     chip.type = "button";
@@ -390,10 +677,11 @@ function renderRooms() {
     const current = getCurrentTemperature(state);
     const target = getTargetTemperature(state);
     const action = getHvacAction(state);
+    const actionLabel = !state || action === "unknown" ? "—" : action;
 
     chip.innerHTML = `
       <div class="name">${room.name}</div>
-      <div class="meta">${formatTemp(target ?? current)} · ${action}</div>
+      <div class="meta">${formatTemp(target ?? current)} · ${actionLabel}</div>
     `;
 
     chip.addEventListener("click", () => {
@@ -678,17 +966,6 @@ function toggleModeDrawer() {
 
 ui.modeFace?.addEventListener("click", () => {
   toggleModeDrawer();
-});
-
-ui.chartBtn?.addEventListener("click", () => {
-  const weatherLabel = ui.weatherLabel?.textContent?.trim();
-  const outdoor = ui.outsideTemp?.textContent || "--";
-  const humidity = ui.insideHumidity?.textContent || "--";
-  if (ui.heroSubtitle) {
-    ui.heroSubtitle.textContent = weatherLabel
-      ? `Outside ${outdoor} · ${humidity} humidity · ${weatherLabel}`
-      : `Outside ${outdoor} · Humidity ${humidity}`;
-  }
 });
 
 for (const button of ui.modeButtons) {
