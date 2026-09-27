@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.3.6
+ * @version 0.3.7
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.3.6";
+const PANEL_VERSION = "0.3.7";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 
@@ -1607,6 +1607,8 @@ class NeatThermostatPanel extends HTMLElement {
         <div class="row">
           <label class="field">Cold tolerance<input id="coldTol" type="number" step="0.1" value="${this._escape(cfg.cold_tolerance ?? 0.3)}" /></label>
           <label class="field">Hot tolerance<input id="hotTol" type="number" step="0.1" value="${this._escape(cfg.hot_tolerance ?? 0.3)}" /></label>
+          <label class="field">Min boiler on (min)<input id="minOnMin" type="number" step="1" min="0" max="30" value="${this._escape(cfg.min_on_minutes ?? 5)}" /></label>
+          <label class="field">Min boiler off (min)<input id="minOffMin" type="number" step="1" min="0" max="30" value="${this._escape(cfg.min_off_minutes ?? 5)}" /></label>
           <label class="field">Summer mode
             <select id="summerMode">
               <option value="false" ${!cfg.summer_mode ? "selected" : ""}>Off</option>
@@ -1810,6 +1812,8 @@ class NeatThermostatPanel extends HTMLElement {
             away_temp: Number(this.shadowRoot.getElementById("awayTemp").value),
             cold_tolerance: Number(this.shadowRoot.getElementById("coldTol").value),
             hot_tolerance: Number(this.shadowRoot.getElementById("hotTol").value),
+            min_on_minutes: Number(this.shadowRoot.getElementById("minOnMin").value),
+            min_off_minutes: Number(this.shadowRoot.getElementById("minOffMin").value),
             summer_mode: this.shadowRoot.getElementById("summerMode").value === "true",
             person_entity: this.shadowRoot.getElementById("personEntity").value.trim(),
             true_radiant: this.shadowRoot.getElementById("trueRadiant").value === "true",

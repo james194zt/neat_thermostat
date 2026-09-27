@@ -72,6 +72,29 @@ def room_calls_for_heat(
     return current <= target - cold_tolerance
 
 
+def boiler_cycle_guard(
+    want_on: bool,
+    is_on: bool,
+    seconds_in_state: float | None,
+    *,
+    min_on_seconds: float,
+    min_off_seconds: float,
+) -> tuple[bool, float]:
+    """Anti-short-cycle: return (command_on, seconds_until_change_allowed).
+
+    Once the boiler call starts it runs at least min_on; once it stops it
+    stays off at least min_off, measured from the heater's own last change
+    (so manual toggles count too).
+    """
+    if want_on == is_on or seconds_in_state is None:
+        return want_on, 0.0
+    minimum = min_on_seconds if is_on else min_off_seconds
+    remaining = minimum - seconds_in_state
+    if remaining > 0:
+        return is_on, remaining
+    return want_on, 0.0
+
+
 def next_schedule_change(
     schedule: dict[str, list[dict[str, Any]]],
     now: datetime,

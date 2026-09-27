@@ -17,6 +17,8 @@ from .const import (
     DEFAULT_HOT_TOLERANCE,
     DEFAULT_LEAF_ENABLED,
     DEFAULT_MAX_TEMP,
+    DEFAULT_MIN_OFF_MINUTES,
+    DEFAULT_MIN_ON_MINUTES,
     DEFAULT_MIN_TEMP,
     DEFAULT_SAFETY_MIN_TEMP,
     DEFAULT_SAFETY_TEMP_ENABLED,
@@ -142,6 +144,8 @@ class NeatConfig:
     hot_tolerance: float = DEFAULT_HOT_TOLERANCE
     min_temp: float = DEFAULT_MIN_TEMP
     max_temp: float = DEFAULT_MAX_TEMP
+    min_on_minutes: float = DEFAULT_MIN_ON_MINUTES
+    min_off_minutes: float = DEFAULT_MIN_OFF_MINUTES
     summer_mode: bool = False
     person_entity: str = ""
     presence_entities: list[str] = field(default_factory=list)
@@ -173,6 +177,8 @@ class NeatConfig:
             "hot_tolerance": self.hot_tolerance,
             "min_temp": self.min_temp,
             "max_temp": self.max_temp,
+            "min_on_minutes": self.min_on_minutes,
+            "min_off_minutes": self.min_off_minutes,
             "summer_mode": self.summer_mode,
             "person_entity": self.person_entity,
             "presence_entities": self.presence_entities,
@@ -217,6 +223,10 @@ class NeatConfig:
             hot_tolerance=float(data.get("hot_tolerance", DEFAULT_HOT_TOLERANCE)),
             min_temp=float(data.get("min_temp", DEFAULT_MIN_TEMP)),
             max_temp=float(data.get("max_temp", DEFAULT_MAX_TEMP)),
+            min_on_minutes=float(data.get("min_on_minutes", DEFAULT_MIN_ON_MINUTES)),
+            min_off_minutes=float(
+                data.get("min_off_minutes", DEFAULT_MIN_OFF_MINUTES)
+            ),
             summer_mode=bool(data.get("summer_mode", False)),
             person_entity=person,
             presence_entities=presence,
