@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.3.8
+ * @version 0.3.9
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.3.8";
+const PANEL_VERSION = "0.3.9";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 
@@ -1133,7 +1133,7 @@ class NeatThermostatPanel extends HTMLElement {
           <label class="field">Temp °C<input id="addTemp" type="number" step="0.5" value="${this._escape(this._mainTarget() ?? 20)}" /></label>
           <button type="button" class="primary" id="saveSchedule">Save schedule</button>
         </div>
-        <p class="muted" style="margin:0 12px 8px">Outside comfort blocks, Eco (${this._escape(eco)}°) applies. Orange dots are block start setpoints (Nest-style).</p>
+        <p class="muted" style="margin:0 12px 8px">Outside comfort blocks, Eco (${this._escape(eco)}°) applies and rooms drop to their own Eco temp. Dial changes hold until the next block change. Orange dots are block start setpoints (Nest-style).</p>
       </div>
     `;
   }
