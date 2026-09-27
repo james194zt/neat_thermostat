@@ -200,6 +200,8 @@ class IntelligenceState:
     leaf: LeafState = field(default_factory=LeafState)
     energy: EnergyHistoryState = field(default_factory=EnergyHistoryState)
     seasonal: SeasonalSavingsState = field(default_factory=SeasonalSavingsState)
+    # Last user-chosen mode/preset/setpoints (restored across restarts).
+    control: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -211,6 +213,7 @@ class IntelligenceState:
             "leaf": self.leaf.to_dict(),
             "energy": self.energy.to_dict(),
             "seasonal": self.seasonal.to_dict(),
+            "control": self.control,
         }
 
     @classmethod
@@ -226,6 +229,7 @@ class IntelligenceState:
             leaf=LeafState.from_dict(data.get("leaf")),
             energy=EnergyHistoryState.from_dict(data.get("energy")),
             seasonal=SeasonalSavingsState.from_dict(data.get("seasonal")),
+            control=dict(data.get("control") or {}),
         )
 
 
@@ -328,26 +332,6 @@ def preheat_status(
         "preheat_start": preheat_start.strftime("%H:%M"),
         "preheat_minutes": needed,
     }
-
-
-def early_off_should_idle(
-    *,
-    true_radiant: bool,
-    current_temp: float | None,
-    target_temp: float,
-    hot_tolerance: float,
-    warmup: WarmupModel,
-) -> bool:
-    """Stop heating slightly before target to limit radiant overshoot."""
-    if current_temp is None:
-        return False
-    if current_temp > target_temp + hot_tolerance:
-        return True
-    if not true_radiant:
-        return False
-    residual = (warmup.c_per_hour / 60.0) * 12.0
-    band = max(hot_tolerance, residual * 0.5)
-    return current_temp >= target_temp - band
 
 
 def update_warmup_from_cycle(
@@ -534,6 +518,10 @@ class IntelligenceStore:
 
     async def async_save(self) -> None:
         await self._store.async_save(self.state.to_dict())
+
+    def async_delay_save(self, delay: float = 30.0) -> None:
+        """Coalesce routine writes (the 30s tick shouldn't hit disk every time)."""
+        self._store.async_delay_save(self.state.to_dict, delay)
 
 
 def note_comfort_setpoint(leaf: LeafState, temperature: float) -> LeafState:

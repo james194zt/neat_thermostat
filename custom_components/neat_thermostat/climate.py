@@ -240,7 +240,11 @@ class NeatRoomClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
             return HVACAction.OFF
         if self.coordinator._any_window_open(self.room.window_sensors):  # noqa: SLF001
             return HVACAction.OFF
-        if self.coordinator.room_needs_heat(self.room):
+        if (
+            self.coordinator.data.get("rooms", {})
+            .get(self.room.id, {})
+            .get("needs_heat")
+        ):
             return HVACAction.HEATING
         return HVACAction.IDLE
 
