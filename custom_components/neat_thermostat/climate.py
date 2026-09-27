@@ -145,6 +145,10 @@ class NeatHomeClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
             ATTR_SAFETY_ACTIVE: bool(self.coordinator.data.get("safety_active")),
             ATTR_TIME_TO_TEMP: self.coordinator.data.get("time_to_temp_minutes"),
             "boiler_on": bool(self.coordinator.data.get("boiler_on")),
+            "boiler_demand": bool(self.coordinator.data.get("boiler_demand")),
+            "boiler_cycle_wait_seconds": self.coordinator.data.get(
+                "boiler_cycle_wait_seconds"
+            ),
             "warmup_c_per_hour": self.coordinator.intel.state.warmup.c_per_hour,
         }
 

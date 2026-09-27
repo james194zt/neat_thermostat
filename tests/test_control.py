@@ -68,6 +68,34 @@ class RoomHysteresis(unittest.TestCase):
         self.assertFalse(control.room_calls_for_heat(19.8, 20.0, was_calling=False, **kw))
 
 
+GUARD = dict(min_on_seconds=300, min_off_seconds=300)
+
+
+class BoilerCycleGuard(unittest.TestCase):
+    def test_no_change_passes_through(self):
+        self.assertEqual(control.boiler_cycle_guard(True, True, 10, **GUARD), (True, 0.0))
+        self.assertEqual(control.boiler_cycle_guard(False, False, 10, **GUARD), (False, 0.0))
+
+    def test_holds_on_for_min_run(self):
+        self.assertEqual(control.boiler_cycle_guard(False, True, 60, **GUARD), (True, 240))
+
+    def test_holds_off_for_min_rest(self):
+        self.assertEqual(control.boiler_cycle_guard(True, False, 200, **GUARD), (False, 100))
+
+    def test_allows_change_after_minimum(self):
+        self.assertEqual(control.boiler_cycle_guard(False, True, 300, **GUARD), (False, 0.0))
+        self.assertEqual(control.boiler_cycle_guard(True, False, 301, **GUARD), (True, 0.0))
+
+    def test_zero_minimum_disables_guard(self):
+        self.assertEqual(
+            control.boiler_cycle_guard(True, False, 0, min_on_seconds=0, min_off_seconds=0),
+            (True, 0.0),
+        )
+
+    def test_unknown_age_does_not_block(self):
+        self.assertEqual(control.boiler_cycle_guard(True, False, None, **GUARD), (True, 0.0))
+
+
 def _sched(blocks):
     return {d: blocks for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
 

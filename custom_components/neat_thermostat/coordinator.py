@@ -14,6 +14,7 @@ from homeassistant.helpers.event import (
     async_track_time_interval,
 )
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, PRESET_AWAY, PRESET_BOOST, PRESET_ECO, PRESET_NONE
 from .intelligence import (
@@ -36,7 +37,7 @@ from .intelligence import (
     update_away_tracking,
     update_warmup_from_cycle,
 )
-from .control import house_calls_for_heat, next_schedule_change, room_calls_for_heat
+from .control import boiler_cycle_guard, house_calls_for_heat, next_schedule_change, room_calls_for_heat
 from .models import NeatConfig, RoomConfig, WallPanelConfig
 from .schedule import scheduled_temperature
 
@@ -499,6 +500,27 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 blocking=False,
             )
 
+    def _apply_cycle_guard(self, demand: bool) -> tuple[bool, float]:
+        """Hold the boiler in its current state until min on/off time has passed."""
+        state = self.hass.states.get(self.config.heater) if self.config.heater else None
+        if state is None or state.state in ("unknown", "unavailable"):
+            return demand, 0.0
+        seconds = (dt_util.utcnow() - state.last_changed).total_seconds()
+        command, wait = boiler_cycle_guard(
+            demand,
+            self._is_on(self.config.heater),
+            seconds,
+            min_on_seconds=self.config.min_on_minutes * 60.0,
+            min_off_seconds=self.config.min_off_minutes * 60.0,
+        )
+        if command != demand:
+            _LOGGER.debug(
+                "Neat: boiler %s held for %.0fs (anti-short-cycle)",
+                "on" if command else "off",
+                wait,
+            )
+        return command, wait
+
     def _track_heat_cycle(self, want_heat: bool) -> None:
         now = datetime.now()
         current = self._state_float(self.config.temperature_sensor)
@@ -558,9 +580,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._room_states.get(r.id, {}).get("needs_heat")
             for r in self.config.rooms
         )
-        want_heat = self._safety_active or (
+        demand = self._safety_active or (
             not self.config.summer_mode and (self._house_calling or rooms_calling)
         )
+        want_heat, cycle_wait = self._apply_cycle_guard(demand)
 
         self._track_heat_cycle(want_heat)
         if track_heat_interval(self.intel.state.energy, want_heat=want_heat):
@@ -628,6 +651,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self.data = self._snapshot()
         self.data["boiler_on"] = want_heat
+        self.data["boiler_demand"] = demand
+        self.data["boiler_cycle_wait_seconds"] = round(cycle_wait)
         self.data["main"]["effective_target"] = target
         self.data["main"]["schedule_active"] = _sched
         return self.data
