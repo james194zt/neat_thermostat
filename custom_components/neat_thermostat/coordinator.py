@@ -20,7 +20,6 @@ from .intelligence import (
     IntelligenceStore,
     accrue_leaf_minutes,
     adaptive_eco_offset_c,
-    early_off_should_idle,
     energy_history_payload,
     estimate_time_to_temp_minutes,
     evaluate_leaf,
@@ -37,6 +36,7 @@ from .intelligence import (
     update_away_tracking,
     update_warmup_from_cycle,
 )
+from .control import house_calls_for_heat, next_schedule_change, room_calls_for_heat
 from .models import NeatConfig, RoomConfig, WallPanelConfig
 from .schedule import scheduled_temperature
 
@@ -69,6 +69,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._heat_cycle_start: datetime | None = None
         self._heat_cycle_start_temp: float | None = None
         self._last_boiler_on = False
+        # Hysteresis state: is the house currently calling for heat?
+        self._house_calling = False
+        # Manual setpoint while the schedule runs: {"temperature", "until"}.
+        self._manual_hold: dict[str, Any] | None = None
         self._dirty_intel = False
         self._leaf: dict[str, Any] = {"active": False}
         self._safety_active = False
@@ -80,6 +84,50 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_initialize_intelligence(self) -> None:
         await self.intel.async_load()
+        self._restore_control()
+
+    def _restore_control(self) -> None:
+        """Bring back mode/preset/setpoints so a restart doesn't flip Off to Heat."""
+        saved = self.intel.state.control or {}
+        main = saved.get("main") or {}
+        if main.get("hvac_mode") in ("heat", "off"):
+            self._main_hvac_mode = main["hvac_mode"]
+        if main.get("preset") in (PRESET_NONE, PRESET_ECO, PRESET_BOOST, PRESET_AWAY):
+            self._main_preset = main["preset"]
+        if isinstance(main.get("target"), (int, float)):
+            self._main_target = float(main["target"])
+        hold = main.get("manual_hold")
+        if isinstance(hold, dict) and isinstance(hold.get("temperature"), (int, float)):
+            self._manual_hold = hold
+        for room_id, room in (saved.get("rooms") or {}).items():
+            st = self._room_states.get(room_id)
+            if st is None or not isinstance(room, dict):
+                continue
+            if room.get("hvac_mode") in ("heat", "off"):
+                st["hvac_mode"] = room["hvac_mode"]
+            if room.get("preset") in (PRESET_NONE, PRESET_ECO, PRESET_BOOST):
+                st["preset"] = room["preset"]
+            if isinstance(room.get("target"), (int, float)):
+                st["target"] = float(room["target"])
+
+    def _persist_control(self) -> None:
+        self.intel.state.control = {
+            "main": {
+                "hvac_mode": self._main_hvac_mode,
+                "preset": self._main_preset,
+                "target": self._main_target,
+                "manual_hold": self._manual_hold,
+            },
+            "rooms": {
+                room_id: {
+                    "hvac_mode": st.get("hvac_mode", "heat"),
+                    "preset": st.get("preset", PRESET_NONE),
+                    "target": st.get("target"),
+                }
+                for room_id, st in self._room_states.items()
+            },
+        }
+        self.intel.async_delay_save()
 
     def update_config(self, data: dict[str, Any]) -> None:
         self.config = NeatConfig.from_entry_data(data)
@@ -137,8 +185,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "hvac_mode": self._main_hvac_mode,
                 "preset": self._main_preset,
                 "target": self._main_target,
+                "manual_hold": self._manual_hold,
             },
-            "rooms": dict(self._room_states),
+            "rooms": {k: dict(v) for k, v in self._room_states.items()},
             "away": self._away_eco_active,
             "window_open": self._any_window_open(self.config.window_sensors),
             "summer_mode": self.config.summer_mode,
@@ -195,12 +244,14 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         anyone = presence_anyone_home(
             self.hass.states.get, self._presence_entities()
         )
+        prev_since = self.intel.state.away_since
         self.intel.state, self._away_eco_active = update_away_tracking(
             self.intel.state,
             anyone_home=anyone,
             delay_minutes=self.config.away_delay_minutes,
         )
-        self._dirty_intel = True
+        if self.intel.state.away_since != prev_since:
+            self._dirty_intel = True
 
     def _apply_adaptive(self, base: float, *, eco_mode: bool) -> float:
         if not eco_mode:
@@ -226,8 +277,6 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.intel.state.seasonal,
             seasonal_savings_enabled=self.config.seasonal_savings,
         )
-        if self.config.seasonal_savings and self.intel.state.seasonal.started_at:
-            self._dirty_intel = True
 
         if self._main_preset == PRESET_BOOST:
             return self.config.boost_temp, False
@@ -244,6 +293,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
         if self.config.schedule_enabled and self._main_preset == PRESET_NONE:
+            hold = self._active_manual_hold()
+            if hold is not None:
+                self._preheat = None
+                return hold, False
             temp, active = scheduled_temperature(
                 self.config.schedule,
                 schedule_enabled=True,
@@ -280,6 +333,23 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._apply_seasonal_comfort(self._main_target, comfort=True),
             False,
         )
+
+    def _active_manual_hold(self) -> float | None:
+        """Manual setpoint that overrides the schedule until its next change."""
+        hold = self._manual_hold
+        if not hold:
+            return None
+        until = hold.get("until")
+        if until:
+            try:
+                if datetime.now() >= datetime.fromisoformat(until):
+                    self._manual_hold = None
+                    self._persist_control()
+                    return None
+            except ValueError:
+                self._manual_hold = None
+                return None
+        return float(hold["temperature"])
 
     def effective_room_target(self, room: RoomConfig) -> float:
         st = self._room_states.get(room.id, {})
@@ -323,8 +393,13 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         current = self.room_current_temp(room)
         if current is None:
             return False
-        target = self.effective_room_target(room)
-        return current < target - self.config.cold_tolerance
+        return room_calls_for_heat(
+            current,
+            self.effective_room_target(room),
+            was_calling=bool(st.get("needs_heat")),
+            cold_tolerance=self.config.cold_tolerance,
+            hot_tolerance=self.config.hot_tolerance,
+        )
 
     def safety_needs_heat(self) -> bool:
         if not self.config.safety_temp_enabled:
@@ -335,45 +410,35 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return current <= float(self.config.safety_min_temp)
 
     def main_needs_heat(self) -> bool:
-        if self.safety_needs_heat():
-            return True
+        """House call for heat (safety floor handled separately)."""
         if self._main_hvac_mode != "heat" or self.config.summer_mode:
             return False
         if self._any_window_open(self.config.window_sensors):
             return False
         current = self._state_float(self.config.temperature_sensor)
-        if current is None:
-            return False
         target, _ = self.effective_main_target()
-        if early_off_should_idle(
-            true_radiant=self.config.true_radiant,
-            current_temp=current,
-            target_temp=target,
+        return house_calls_for_heat(
+            current,
+            target,
+            was_calling=self._house_calling,
+            cold_tolerance=self.config.cold_tolerance,
             hot_tolerance=self.config.hot_tolerance,
-            warmup=self.intel.state.warmup,
-        ):
-            return False
-        return current < target - self.config.cold_tolerance
-
-    def main_should_idle(self) -> bool:
-        if self.safety_needs_heat():
-            return False
-        current = self._state_float(self.config.temperature_sensor)
-        if current is None:
-            return True
-        target, _ = self.effective_main_target()
-        return early_off_should_idle(
             true_radiant=self.config.true_radiant,
-            current_temp=current,
-            target_temp=target,
-            hot_tolerance=self.config.hot_tolerance,
-            warmup=self.intel.state.warmup,
+            warmup_c_per_hour=self.intel.state.warmup.c_per_hour,
         )
 
     async def _async_set_heater(self, turn_on: bool) -> None:
         heater = self.config.heater
         if not heater:
             return
+        state = self.hass.states.get(heater)
+        if state is None or state.state in ("unknown", "unavailable"):
+            return
+        if self._is_on(heater) == turn_on:
+            return
+        _LOGGER.info(
+            "Neat: turning heater %s %s", heater, "on" if turn_on else "off"
+        )
         domain = heater.split(".", 1)[0]
         if domain == "climate":
             await self.hass.services.async_call(
@@ -400,26 +465,39 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         mode = st.get("hvac_mode", "heat")
         target = self.effective_room_target(room)
         window = self._any_window_open(room.window_sensors)
+        trv = self.hass.states.get(room.trv_entity)
+        if trv is None or trv.state in ("unknown", "unavailable"):
+            return
+        # Only send commands when the TRV differs: TRVs are in our listener
+        # list, so unconditional calls every tick loop back into refreshes
+        # and flood battery Zigbee valves.
         if self.config.summer_mode or window or mode != "heat":
+            if trv.state != "off":
+                await self.hass.services.async_call(
+                    "climate",
+                    "set_hvac_mode",
+                    {"entity_id": room.trv_entity, "hvac_mode": "off"},
+                    blocking=False,
+                )
+            return
+        try:
+            trv_target = float(trv.attributes.get("temperature"))
+        except (TypeError, ValueError):
+            trv_target = None
+        if trv_target is None or abs(trv_target - target) >= 0.05:
+            await self.hass.services.async_call(
+                "climate",
+                "set_temperature",
+                {"entity_id": room.trv_entity, "temperature": target},
+                blocking=False,
+            )
+        if trv.state != "heat":
             await self.hass.services.async_call(
                 "climate",
                 "set_hvac_mode",
-                {"entity_id": room.trv_entity, "hvac_mode": "off"},
+                {"entity_id": room.trv_entity, "hvac_mode": "heat"},
                 blocking=False,
             )
-            return
-        await self.hass.services.async_call(
-            "climate",
-            "set_temperature",
-            {"entity_id": room.trv_entity, "temperature": target},
-            blocking=False,
-        )
-        await self.hass.services.async_call(
-            "climate",
-            "set_hvac_mode",
-            {"entity_id": room.trv_entity, "hvac_mode": "heat"},
-            blocking=False,
-        )
 
     def _track_heat_cycle(self, want_heat: bool) -> None:
         now = datetime.now()
@@ -475,34 +553,14 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._async_sync_room_trv(room)
 
         self._safety_active = self.safety_needs_heat()
-
-        want_heat = self._safety_active or (
-            (not self.config.summer_mode)
-            and (
-                self.main_needs_heat()
-                or any(self.room_needs_heat(r) for r in self.config.rooms)
-            )
+        self._house_calling = self.main_needs_heat()
+        rooms_calling = any(
+            self._room_states.get(r.id, {}).get("needs_heat")
+            for r in self.config.rooms
         )
-        if (
-            not want_heat
-            and self._is_on(self.config.heater)
-            and self._main_hvac_mode == "heat"
-            and not self.config.summer_mode
-            and not self._any_window_open(self.config.window_sensors)
-            and not self.main_should_idle()
-        ):
-            current = self._state_float(self.config.temperature_sensor)
-            target, _ = self.effective_main_target()
-            if current is not None and current < target:
-                want_heat = True
-
-        if (
-            want_heat
-            and not self._safety_active
-            and self.main_should_idle()
-            and not any(self.room_needs_heat(r) for r in self.config.rooms)
-        ):
-            want_heat = False
+        want_heat = self._safety_active or (
+            not self.config.summer_mode and (self._house_calling or rooms_calling)
+        )
 
         self._track_heat_cycle(want_heat)
         if track_heat_interval(self.intel.state.energy, want_heat=want_heat):
@@ -565,7 +623,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
         if self._dirty_intel:
-            await self.intel.async_save()
+            self.intel.async_delay_save()
             self._dirty_intel = False
 
         self.data = self._snapshot()
@@ -577,12 +635,21 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @callback
     def set_main_hvac_mode(self, mode: str) -> None:
         self._main_hvac_mode = mode
+        self._persist_control()
         self.hass.async_create_task(self.async_request_refresh())
 
     @callback
     def set_main_temperature(self, temperature: float) -> None:
         self._main_target = temperature
         self._main_preset = PRESET_NONE
+        if self.config.schedule_enabled:
+            # Nest-style: a dial change holds until the next schedule change.
+            until = next_schedule_change(self.config.schedule, datetime.now())
+            self._manual_hold = {
+                "temperature": temperature,
+                "until": until.isoformat() if until else None,
+            }
+        self._persist_control()
         record_manual_adjustment(self.intel.state, temperature)
         note_comfort_setpoint(self.intel.state.leaf, temperature)
         self._dirty_intel = True
@@ -602,11 +669,14 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._main_target = self.config.boost_temp
         elif preset == PRESET_AWAY:
             self._main_target = self.config.away_temp
+        self._manual_hold = None
+        self._persist_control()
         self.hass.async_create_task(self.async_request_refresh())
 
     @callback
     def set_room_hvac_mode(self, room_id: str, mode: str) -> None:
         self._room_states.setdefault(room_id, {})["hvac_mode"] = mode
+        self._persist_control()
         self.hass.async_create_task(self.async_request_refresh())
 
     @callback
@@ -614,11 +684,13 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         st = self._room_states.setdefault(room_id, {})
         st["target"] = temperature
         st["preset"] = PRESET_NONE
+        self._persist_control()
         self.hass.async_create_task(self.async_request_refresh())
 
     @callback
     def set_room_preset(self, room_id: str, preset: str) -> None:
         self._room_states.setdefault(room_id, {})["preset"] = preset or PRESET_NONE
+        self._persist_control()
         self.hass.async_create_task(self.async_request_refresh())
 
     def get_wall_panel(self, panel_id: str) -> WallPanelConfig | None:
