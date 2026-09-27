@@ -25,6 +25,10 @@ _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}.intelligence"
 
+# Local wall-clock source; the coordinator swaps in HA's configured time zone
+# (the OS clock inside HA is often UTC, an hour out during BST).
+clock: Callable[[], datetime] = datetime.now
+
 DEFAULT_WARMUP_C_PER_HOUR = 1.5
 MIN_WARMUP_C_PER_HOUR = 0.4
 MAX_WARMUP_C_PER_HOUR = 4.0
@@ -240,7 +244,7 @@ def next_upcoming_block(
     look_ahead_hours: int = 18,
 ) -> tuple[ScheduleBlock, datetime] | None:
     """Return next enabled comfort block and its absolute start datetime."""
-    now = now or datetime.now()
+    now = now or clock()
     best: tuple[ScheduleBlock, datetime] | None = None
     horizon = now + timedelta(hours=look_ahead_hours)
 
@@ -301,7 +305,7 @@ def preheat_status(
     """Return preheat status dict when approaching an upcoming block."""
     if not true_radiant or not schedule_enabled or away_eco_active:
         return None
-    now = now or datetime.now()
+    now = now or clock()
     upcoming = next_upcoming_block(schedule, now)
     if upcoming is None:
         return None
@@ -366,7 +370,7 @@ def record_manual_adjustment(
     temperature: float,
     now: datetime | None = None,
 ) -> IntelligenceState:
-    now = now or datetime.now()
+    now = now or clock()
     if state.learning_started_at is None:
         state.learning_started_at = now.isoformat()
     adj = ManualAdjustment(
@@ -401,7 +405,7 @@ def learn_schedule_from_adjustments(
     """Pattern-match recent manual adjustments into schedule setpoints."""
     if not auto_schedule:
         return schedule, False
-    now = now or datetime.now()
+    now = now or clock()
     adjustments = [ManualAdjustment.from_dict(a) for a in state.adjustments]
     if len(adjustments) < 2:
         return schedule, False
@@ -488,7 +492,7 @@ def update_away_tracking(
     now: datetime | None = None,
 ) -> tuple[IntelligenceState, bool]:
     """Track absence; return away_eco_active after delay."""
-    now = now or datetime.now()
+    now = now or clock()
     if anyone_home is None or anyone_home:
         state.away_since = None
         return state, False
@@ -540,7 +544,7 @@ def note_comfort_setpoint(leaf: LeafState, temperature: float) -> LeafState:
 
 def leaf_threshold(leaf: LeafState, now: datetime | None = None) -> float:
     """Personalised Leaf threshold (°C). Stable ~0.5 below baseline; hard floor separate."""
-    now = now or datetime.now()
+    now = now or clock()
     if leaf.baseline is not None and len(leaf.comfort_samples) >= LEAF_BASELINE_SAMPLES_NEEDED:
         return max(LEAF_HARD_FLOOR_C, float(leaf.baseline) - LEAF_CHALLENGE_OFFSET_C)
 
@@ -570,7 +574,7 @@ def evaluate_leaf(
     ``eco_or_away`` is true for Eco/Away presets, presence-away eco, or HVAC off —
     you can't get more efficient than the heat being off.
     """
-    now = now or datetime.now()
+    now = now or clock()
     if leaf.coaching_started_at is None:
         leaf.coaching_started_at = now.isoformat()
 
@@ -601,7 +605,7 @@ def accrue_leaf_minutes(
     default_delta_minutes: float = 0.5,
 ) -> LeafState:
     """While Leaf is active, add minutes. Totals only increase."""
-    now = now or datetime.now()
+    now = now or clock()
     if not leaf_active:
         leaf.last_sample_at = now.isoformat()
         return leaf
@@ -632,7 +636,7 @@ def accrue_leaf_minutes(
 
 def leaf_week_stats(leaf: LeafState, now: datetime | None = None) -> dict[str, Any]:
     """Rolling week display + streak of days that earned meaningful Leaf time."""
-    now = now or datetime.now()
+    now = now or clock()
     week_minutes = 0.0
     for i in range(7):
         day = (now.date() - timedelta(days=i)).isoformat()
@@ -704,7 +708,7 @@ def seasonal_comfort_offset_c(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Ramp comfort offset 0 → SEASONAL_SAVINGS_OFFSET_C over SEASONAL_SAVINGS_DAYS."""
-    now = now or datetime.now()
+    now = now or clock()
     if not seasonal_savings_enabled:
         return {
             "active": False,
@@ -752,7 +756,7 @@ def track_heat_interval(
     now: datetime | None = None,
 ) -> bool:
     """Open/close heat intervals for Energy History. Returns True if state changed."""
-    now = now or datetime.now()
+    now = now or clock()
     changed = False
     day = now.date().isoformat()
 
@@ -793,7 +797,7 @@ def note_setpoint_event(
     now: datetime | None = None,
 ) -> bool:
     """Log effective target change once per distinct value."""
-    now = now or datetime.now()
+    now = now or clock()
     day = now.date().isoformat()
     events = energy.setpoint_events_by_day.setdefault(day, [])
     temp = round(float(temperature), 1)
@@ -817,7 +821,7 @@ def energy_history_payload(
     days: int = 31,
 ) -> dict[str, Any]:
     """Slice for Energy History UI (includes open heat interval as ongoing)."""
-    now = now or datetime.now()
+    now = now or clock()
     out_days: list[dict[str, Any]] = []
     for i in range(days):
         d = (now.date() - timedelta(days=i)).isoformat()

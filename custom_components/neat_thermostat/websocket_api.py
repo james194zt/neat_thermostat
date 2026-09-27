@@ -160,6 +160,7 @@ async def ws_update_schedule(
     updates: dict[str, Any] = {"schedule": msg.get("schedule") or default_schedule()}
     if "schedule_enabled" in msg:
         updates["schedule_enabled"] = msg["schedule_enabled"]
+    coordinator.clear_holds()
     config = await coordinator.async_save_config(updates)
     connection.send_result(msg["id"], {"config": config.to_dict()})
 
