@@ -591,9 +591,12 @@ button {
   font-size: 2.3vmin;
   color: var(--text-muted);
   min-height: 0;
+  /* Shares the "eta" slot with the mode drawer: never swallow its taps. */
+  pointer-events: none;
 }
 
-.footer-eta:empty {
+.footer-eta:empty,
+.mode-drawer:not(.hidden) ~ .footer-eta {
   display: none;
 }
 
