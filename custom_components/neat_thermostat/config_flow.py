@@ -18,13 +18,14 @@ from .const import (
     DEFAULT_ECO_TEMP,
     DEFAULT_TARGET_TEMP,
     DOMAIN,
+    HEATER_DOMAINS,
 )
 from .models import RoomConfig, default_schedule
 
 
 def _heater_selector():
     return selector.EntitySelector(
-        config=selector.EntitySelectorConfig(domain=["switch", "input_boolean", "climate"])
+        config=selector.EntitySelectorConfig(domain=list(HEATER_DOMAINS))
     )
 
 

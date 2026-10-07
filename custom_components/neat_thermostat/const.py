@@ -6,6 +6,7 @@ DOMAIN = "neat_thermostat"
 PLATFORMS = ["climate"]
 
 CONF_HEATER = "heater"
+HEATER_DOMAINS = ("switch", "input_boolean", "climate")
 CONF_TEMPERATURE_SENSOR = "temperature_sensor"
 CONF_WINDOW_SENSORS = "window_sensors"
 CONF_ROOMS = "rooms"

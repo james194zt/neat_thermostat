@@ -89,7 +89,10 @@ def boiler_cycle_guard(
     if want_on == is_on or seconds_in_state is None:
         return want_on, 0.0
     minimum = min_on_seconds if is_on else min_off_seconds
-    remaining = minimum - seconds_in_state
+    if minimum <= 0:
+        return want_on, 0.0
+    # A clock that jumped backwards must not stretch the hold.
+    remaining = minimum - max(0.0, seconds_in_state)
     if remaining > 0:
         return is_on, remaining
     return want_on, 0.0

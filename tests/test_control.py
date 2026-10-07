@@ -92,6 +92,16 @@ class BoilerCycleGuard(unittest.TestCase):
             (True, 0.0),
         )
 
+    def test_zero_minimum_ignores_clock_jump(self):
+        # Relay "changed" in the future (clock moved back): no guard means no hold.
+        self.assertEqual(
+            control.boiler_cycle_guard(True, False, -3600, min_on_seconds=0, min_off_seconds=0),
+            (True, 0.0),
+        )
+
+    def test_clock_jump_holds_at_most_the_minimum(self):
+        self.assertEqual(control.boiler_cycle_guard(True, False, -3600, **GUARD), (False, 300))
+
     def test_unknown_age_does_not_block(self):
         self.assertEqual(control.boiler_cycle_guard(True, False, None, **GUARD), (True, 0.0))
 
