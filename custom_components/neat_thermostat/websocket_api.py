@@ -10,7 +10,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 
-from .const import DOMAIN
+from .const import DOMAIN, HEATER_DOMAINS
 from .models import RoomConfig, WallPanelConfig, default_schedule
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,6 +69,8 @@ async def ws_get_state(
     {
         vol.Required("type"): "neat_thermostat/update_settings",
         vol.Optional("entry_id"): cv.string,
+        vol.Optional("heater"): cv.entity_id,
+        vol.Optional("temperature_sensor"): cv.entity_id,
         vol.Optional("eco_temp"): vol.Coerce(float),
         vol.Optional("boost_temp"): vol.Coerce(float),
         vol.Optional("away_temp"): vol.Coerce(float),
@@ -105,6 +107,8 @@ async def ws_update_settings(
     updates = {
         k: msg[k]
         for k in (
+            "heater",
+            "temperature_sensor",
             "eco_temp",
             "boost_temp",
             "away_temp",
@@ -131,6 +135,11 @@ async def ws_update_settings(
         )
         if k in msg
     }
+    if "heater" in updates and updates["heater"].split(".", 1)[0] not in HEATER_DOMAINS:
+        connection.send_error(
+            msg["id"], "invalid", "heater must be a switch, input_boolean or climate"
+        )
+        return
     if "wall_pin" in updates:
         pin = str(updates["wall_pin"] or "").strip()
         if pin and (not pin.isdigit() or len(pin) != 4):

@@ -54,6 +54,11 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.entry = entry
         self.config = NeatConfig.from_entry_data({**entry.data, **entry.options})
         self._unsubs: list[Any] = []
+        # State-change subscription, rebuilt when the watched entities change.
+        self._state_unsub: Any = None
+        self._watched: tuple[str, ...] = ()
+        # Last seen heater availability, so a dropout is logged once.
+        self._heater_available = True
         self._main_hvac_mode = "heat"
         self._main_preset = PRESET_NONE
         self._main_target = self.config.target_temp
@@ -147,6 +152,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "target": room.target_temp,
                     "needs_heat": False,
                 }
+        # A new heater/sensor must be watched, or its changes go unnoticed
+        # until the next 30s tick.
+        if self._state_unsub is not None:
+            self._subscribe_state_changes()
 
     async def async_save_config(self, updates: dict[str, Any]) -> NeatConfig:
         if updates.get("seasonal_savings") is False:
@@ -154,6 +163,11 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._dirty_intel = True
             await self.intel.async_save()
             self._dirty_intel = False
+        old_heater = self.config.heater
+        new_heater = updates.get("heater")
+        if new_heater and old_heater and new_heater != old_heater:
+            # Don't leave the old relay calling for heat once Neat lets go of it.
+            await self._async_switch_heater(old_heater, False)
         current = {**self.entry.data, **self.entry.options}
         merged = {**current, **updates}
         data_keys = {"heater", "temperature_sensor"}
@@ -471,15 +485,21 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             warmup_c_per_hour=self.intel.state.warmup.c_per_hour,
         )
 
+    def _heater_is_available(self) -> bool:
+        if not self.config.heater:
+            return False
+        state = self.hass.states.get(self.config.heater)
+        return state is not None and state.state not in ("unknown", "unavailable")
+
     async def _async_set_heater(self, turn_on: bool) -> None:
         heater = self.config.heater
-        if not heater:
-            return
-        state = self.hass.states.get(heater)
-        if state is None or state.state in ("unknown", "unavailable"):
+        if not heater or not self._heater_is_available():
             return
         if self._is_on(heater) == turn_on:
             return
+        await self._async_switch_heater(heater, turn_on)
+
+    async def _async_switch_heater(self, heater: str, turn_on: bool) -> None:
         _LOGGER.info(
             "Neat: turning heater %s %s", heater, "on" if turn_on else "off"
         )
@@ -629,8 +649,22 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         want_heat, cycle_wait = self._apply_cycle_guard(demand)
 
-        self._track_heat_cycle(want_heat)
-        if track_heat_interval(self.intel.state.energy, want_heat=want_heat):
+        heater_available = self._heater_is_available()
+        if heater_available != self._heater_available:
+            if heater_available:
+                _LOGGER.info("Neat: heater %s is available again", self.config.heater)
+            else:
+                _LOGGER.warning(
+                    "Neat: heater %s is unavailable — the boiler cannot be switched",
+                    self.config.heater or "(none set)",
+                )
+            self._heater_available = heater_available
+        # An unavailable relay can't be switched: don't report or learn from
+        # heat that never happened.
+        heating = want_heat and heater_available
+
+        self._track_heat_cycle(heating)
+        if track_heat_interval(self.intel.state.energy, want_heat=heating):
             self._dirty_intel = True
 
         await self._async_set_heater(want_heat)
@@ -685,7 +719,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             current_temp=current,
             target_temp=float(target),
             warmup=self.intel.state.warmup,
-            heating=want_heat or preheating,
+            heating=heating or (preheating and heater_available),
             hvac_mode=self._main_hvac_mode,
         )
 
@@ -694,9 +728,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._dirty_intel = False
 
         self.data = self._snapshot()
-        self.data["boiler_on"] = want_heat
+        self.data["boiler_on"] = heating
         self.data["boiler_demand"] = demand
         self.data["boiler_cycle_wait_seconds"] = round(cycle_wait)
+        self.data["heater_available"] = heater_available
         self.data["main"]["effective_target"] = target
         self.data["main"]["schedule_active"] = _sched
         return self.data
@@ -816,7 +851,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             or (self.data or {}).get("time_to_temp_minutes"),
         }
 
-    async def async_setup_listeners(self) -> None:
+    def _tracked_entities(self) -> tuple[str, ...]:
         entities = [self.config.heater, self.config.temperature_sensor]
         entities.extend(self.config.window_sensors)
         entities.extend(self._presence_entities())
@@ -828,16 +863,29 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 entities.append(room.temperature_sensor)
             entities.extend(room.extra_temperature_sensors or [])
             entities.extend(room.window_sensors)
-        entities = [e for e in entities if e]
+        return tuple(sorted({e for e in entities if e}))
+
+    @callback
+    def _subscribe_state_changes(self) -> None:
+        entities = self._tracked_entities()
+        if self._state_unsub is not None and entities == self._watched:
+            return
+        if self._state_unsub is not None:
+            self._state_unsub()
 
         @callback
         def _on_state(_event: Any) -> None:
             self.hass.async_create_task(self.async_request_refresh())
 
-        if entities:
-            self._unsubs.append(
-                async_track_state_change_event(self.hass, entities, _on_state)
-            )
+        self._watched = entities
+        self._state_unsub = (
+            async_track_state_change_event(self.hass, list(entities), _on_state)
+            if entities
+            else (lambda: None)
+        )
+
+    async def async_setup_listeners(self) -> None:
+        self._subscribe_state_changes()
 
         def _tick(_now: Any) -> None:
             self.hass.async_create_task(self.async_request_refresh())
@@ -852,3 +900,6 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+        if self._state_unsub is not None:
+            self._state_unsub()
+            self._state_unsub = None

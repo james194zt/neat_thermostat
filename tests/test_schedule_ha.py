@@ -58,7 +58,10 @@ async def setup(hass):
     entry.add_to_hass(hass)
     coord = NeatThermostatCoordinator(hass, entry)
     await coord.async_initialize_intelligence()
-    return coord, calls
+    yield coord, calls
+    # Cancel listeners and the refresh debouncer, or HA's harness flags lingering timers.
+    await coord.async_unload()
+    await coord.async_shutdown()
 
 
 async def _tick(hass, coord):

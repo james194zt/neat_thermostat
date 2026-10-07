@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.3.9
+ * @version 0.4.0
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.3.9";
+const PANEL_VERSION = "0.4.0";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 
@@ -641,6 +641,8 @@ class NeatThermostatPanel extends HTMLElement {
       weather: "weather.home",
     };
     this._wallPickerMountGen = 0;
+    this._settingsDraft = null;
+    this._settingsPickerMountGen = 0;
     this.attachShadow({ mode: "open" });
   }
 
@@ -766,6 +768,7 @@ class NeatThermostatPanel extends HTMLElement {
   _setView(id) {
     this._view = id;
     this._flash = "";
+    this._settingsDraft = null;
     if (id === "energy") {
       this._loadEnergy().then(() => this._render());
       return;
@@ -784,6 +787,17 @@ class NeatThermostatPanel extends HTMLElement {
   _entityState(entityId) {
     if (!entityId || !this._hass?.states) return null;
     return this._hass.states[entityId] || null;
+  }
+
+  /** Real Neat climate entity ids (HA may have prefixed them, e.g. climate.neat_thermostat_neat_home). */
+  _neatClimateEntities() {
+    const registry = this._hass?.entities || {};
+    const ids = Object.keys(registry).filter(
+      (id) => id.startsWith("climate.") && registry[id]?.platform === "neat_thermostat"
+    );
+    // Only the house entity carries boiler attributes.
+    const home = ids.find((id) => this._entityState(id)?.attributes?.boiler_demand !== undefined) || "";
+    return { home, rooms: ids.filter((id) => id !== home).sort() };
   }
 
   _mainTarget() {
@@ -935,7 +949,14 @@ class NeatThermostatPanel extends HTMLElement {
     const hoursWeek = leaf.hours_week ?? (leaf.minutes_week != null ? (leaf.minutes_week / 60).toFixed(2) : "—");
     const hoursTotal = leaf.hours_total ?? (leaf.minutes_total != null ? (leaf.minutes_total / 60).toFixed(2) : "—");
     const streak = leaf.days_streak ?? 0;
+    const heater = this._cfg().heater || "";
+    const heaterWarning =
+      live.heater_available === false
+        ? `<div class="banner err">Boiler relay <code>${this._escape(heater || "not set")}</code> is unavailable — Neat cannot switch the boiler. Check the device, or pick another relay in Settings.</div>`
+        : "";
+    const neatEntities = this._neatClimateEntities();
     return `
+      ${heaterWarning}
       ${this._renderHero()}
       <div style="height:14px"></div>
       ${chip}
@@ -970,8 +991,9 @@ class NeatThermostatPanel extends HTMLElement {
       <div class="card">
         <p class="card-title">Entities</p>
         <p class="muted" style="margin:0;line-height:1.5">
-          Primary: <code>climate.neat_home</code><br />
-          Rooms: <code>climate.neat_&lt;room&gt;</code>
+          House: <code>${this._escape(neatEntities.home || "—")}</code><br />
+          Rooms: ${neatEntities.rooms.length ? neatEntities.rooms.map((e) => `<code>${this._escape(e)}</code>`).join(", ") : "—"}<br />
+          Boiler relay: <code>${this._escape(heater || "—")}</code>
         </p>
       </div>
     `;
@@ -1524,11 +1546,155 @@ class NeatThermostatPanel extends HTMLElement {
     return this._wallDraft;
   }
 
+  async _mountSettingsPickers() {
+    if (this._view !== "settings" || !this._hass) return;
+    const gen = ++this._settingsPickerMountGen;
+    const hosts = [...(this.shadowRoot?.querySelectorAll("[data-settings-picker]") || [])];
+    if (!hosts.length) return;
+    for (const host of hosts) {
+      if (!host.querySelector("ha-entity-picker, ha-entities-picker, input")) {
+        host.innerHTML = `<p class="entity-picker-loading">Loading entity picker…</p>`;
+      }
+    }
+    try {
+      await ensureHaEntityPickerLoaded();
+    } catch (err) {
+      if (gen !== this._settingsPickerMountGen) return;
+      for (const host of hosts) {
+        host.innerHTML = `<p class="entity-picker-error">${this._escape(err?.message || "Entity picker unavailable")}</p>`;
+      }
+      return;
+    }
+    if (gen !== this._settingsPickerMountGen || this._view !== "settings") return;
+    const draft = this._settingsDraft;
+
+    const mountSingle = (key, { domains, filter, label }) => {
+      const host = this.shadowRoot.querySelector(`[data-settings-picker="${key}"]`);
+      if (!host) return;
+      let picker = host.querySelector("ha-entity-picker");
+      if (!picker) {
+        host.replaceChildren();
+        picker = document.createElement("ha-entity-picker");
+        picker.setAttribute("allow-custom-entity", "");
+        if (this._hass.userData?.showEntityIdPicker) picker.setAttribute("show-entity-id", "");
+        if (label) picker.label = label;
+        picker.includeDomains = domains;
+        if (filter) picker.entityFilter = filter;
+        picker.addEventListener("value-changed", (ev) => {
+          draft[key] = ev.detail?.value || "";
+        });
+        host.appendChild(picker);
+      }
+      picker.hass = this._hass;
+      const value = draft[key] || "";
+      if (picker.value !== value) picker.value = value || undefined;
+    };
+
+    const mountMulti = (key, { domains, label }) => {
+      const host = this.shadowRoot.querySelector(`[data-settings-picker="${key}"]`);
+      if (!host) return;
+      if (!customElements.get("ha-entities-picker")) {
+        // Multi-picker missing: fall back to a comma-separated list.
+        let input = host.querySelector("input");
+        if (!input) {
+          host.replaceChildren();
+          input = document.createElement("input");
+          input.placeholder = domains.map((d) => `${d}.example`).join(", ");
+          input.addEventListener("change", () => {
+            draft[key] = input.value.split(",").map((s) => s.trim()).filter(Boolean);
+          });
+          host.appendChild(input);
+        }
+        input.value = (draft[key] || []).join(", ");
+        return;
+      }
+      let multi = host.querySelector("ha-entities-picker");
+      if (!multi) {
+        host.replaceChildren();
+        multi = document.createElement("ha-entities-picker");
+        multi.includeDomains = domains;
+        multi.label = label;
+        multi.addEventListener("value-changed", (ev) => {
+          const val = ev.detail?.value;
+          draft[key] = Array.isArray(val) ? val.filter(Boolean) : [];
+        });
+        host.appendChild(multi);
+      }
+      multi.hass = this._hass;
+      multi.value = draft[key] || [];
+    };
+
+    mountSingle("heater", { domains: ["switch", "input_boolean", "climate"], label: "Boiler relay" });
+    mountSingle("temperature_sensor", {
+      domains: ["sensor"],
+      filter: temperatureSensorFilter,
+      label: "House temperature",
+    });
+    mountSingle("outdoor_temp_sensor", {
+      domains: ["sensor"],
+      filter: temperatureSensorFilter,
+      label: "Outdoor temperature",
+    });
+    mountMulti("window_sensors", { domains: ["binary_sensor"], label: "Window sensors" });
+    mountMulti("presence_entities", { domains: ["person", "device_tracker"], label: "Presence" });
+  }
+
+  _readSettingsPickerValues() {
+    const draft = this._settingsDraft || this._settingsDraftFromCfg();
+    for (const key of ["heater", "temperature_sensor", "outdoor_temp_sensor"]) {
+      const picker = this.shadowRoot.querySelector(`[data-settings-picker="${key}"] ha-entity-picker`);
+      if (picker?.value != null) draft[key] = String(picker.value || "");
+    }
+    for (const key of ["window_sensors", "presence_entities"]) {
+      const multi = this.shadowRoot.querySelector(`[data-settings-picker="${key}"] ha-entities-picker`);
+      if (multi?.value != null) draft[key] = Array.isArray(multi.value) ? multi.value.filter(Boolean) : [];
+    }
+    return draft;
+  }
+
+  _settingsDraftFromCfg() {
+    const cfg = this._cfg();
+    const presence = [...(cfg.presence_entities || [])];
+    if (cfg.person_entity && !presence.includes(cfg.person_entity)) presence.unshift(cfg.person_entity);
+    return {
+      heater: cfg.heater || "",
+      temperature_sensor: cfg.temperature_sensor || "",
+      outdoor_temp_sensor: cfg.outdoor_temp_sensor || "",
+      window_sensors: [...(cfg.window_sensors || [])],
+      presence_entities: presence,
+    };
+  }
+
   _renderSettings() {
     const cfg = this._cfg();
-    const presence = (cfg.presence_entities || []).join(", ");
+    if (!this._settingsDraft) this._settingsDraft = this._settingsDraftFromCfg();
     return `
       ${this._pageHeader("Settings", "House-wide temperatures, Nest intelligence, and modes.")}
+      <div class="card">
+        <p class="card-title">Devices</p>
+        <div class="row">
+          <label class="field">Boiler relay (heater)
+            <div class="entity-picker-host" data-settings-picker="heater"></div>
+          </label>
+          <label class="field">House temperature sensor
+            <div class="entity-picker-host" data-settings-picker="temperature_sensor"></div>
+          </label>
+        </div>
+        <div class="row">
+          <label class="field">Outdoor temperature sensor (optional)
+            <div class="entity-picker-host" data-settings-picker="outdoor_temp_sensor"></div>
+          </label>
+        </div>
+        <div class="row">
+          <label class="field">Window sensors (optional)
+            <div class="entity-picker-host" data-settings-picker="window_sensors"></div>
+          </label>
+          <label class="field">Presence — people / trackers (optional)
+            <div class="entity-picker-host" data-settings-picker="presence_entities"></div>
+          </label>
+        </div>
+        <p class="muted">The boiler relay is what Neat switches on and off. Changing it turns the old relay off first. The house sensor is the temperature Neat heats to. Away needs every presence entity to be away.</p>
+      </div>
       <div class="card">
         <p class="card-title">Temperatures</p>
         <div class="row">
@@ -1575,12 +1741,6 @@ class NeatThermostatPanel extends HTMLElement {
           </label>
         </div>
         <div class="row">
-          <label class="field">Outdoor temp sensor
-            <input id="outdoorSensor" value="${this._escape(cfg.outdoor_temp_sensor || "")}" placeholder="sensor.home_temperature" />
-          </label>
-          <label class="field">Presence entities (comma-separated)
-            <input id="presenceEntities" value="${this._escape(presence || cfg.person_entity || "")}" placeholder="person.you, person.partner" />
-          </label>
           <label class="field">Wall PIN (4 digits)
             <input id="wallPin" type="password" inputmode="numeric" maxlength="4" value="${this._escape(cfg.wall_pin || "")}" placeholder="1234" />
           </label>
@@ -1615,11 +1775,6 @@ class NeatThermostatPanel extends HTMLElement {
               <option value="true" ${cfg.summer_mode ? "selected" : ""}>On</option>
             </select>
           </label>
-        </div>
-        <div class="row">
-          <label class="field">Person (legacy)<input id="personEntity" value="${this._escape(cfg.person_entity || "")}" placeholder="person.you" /></label>
-          <label class="field">Heater<input value="${this._escape(cfg.heater || "")}" disabled /></label>
-          <label class="field">House sensor<input value="${this._escape(cfg.temperature_sensor || "")}" disabled /></label>
         </div>
         <button class="primary" id="saveSettings">Save settings</button>
       </div>
@@ -1686,6 +1841,9 @@ class NeatThermostatPanel extends HTMLElement {
     }
     if (this._view === "wall_panels") {
       void this._mountWallPickers();
+    }
+    if (this._view === "settings") {
+      void this._mountSettingsPickers();
     }
   }
 
@@ -1805,8 +1963,20 @@ class NeatThermostatPanel extends HTMLElement {
     const saveSettings = this.shadowRoot.getElementById("saveSettings");
     if (saveSettings) {
       saveSettings.addEventListener("click", async () => {
+        const devices = this._readSettingsPickerValues();
+        if (!devices.heater || !devices.temperature_sensor) {
+          this._showToast("Pick a boiler relay and a house temperature sensor", "err");
+          return;
+        }
         try {
           await this._ws("neat_thermostat/update_settings", {
+            heater: devices.heater,
+            temperature_sensor: devices.temperature_sensor,
+            outdoor_temp_sensor: devices.outdoor_temp_sensor || "",
+            window_sensors: devices.window_sensors || [],
+            presence_entities: devices.presence_entities || [],
+            // Presence picker now holds everyone; clear the old single-person field.
+            person_entity: "",
             eco_temp: Number(this.shadowRoot.getElementById("ecoTemp").value),
             boost_temp: Number(this.shadowRoot.getElementById("boostTemp").value),
             away_temp: Number(this.shadowRoot.getElementById("awayTemp").value),
@@ -1815,7 +1985,6 @@ class NeatThermostatPanel extends HTMLElement {
             min_on_minutes: Number(this.shadowRoot.getElementById("minOnMin").value),
             min_off_minutes: Number(this.shadowRoot.getElementById("minOffMin").value),
             summer_mode: this.shadowRoot.getElementById("summerMode").value === "true",
-            person_entity: this.shadowRoot.getElementById("personEntity").value.trim(),
             true_radiant: this.shadowRoot.getElementById("trueRadiant").value === "true",
             auto_schedule: this.shadowRoot.getElementById("autoSchedule").value === "true",
             leaf_enabled: this.shadowRoot.getElementById("leafEnabled").value === "true",
@@ -1825,13 +1994,8 @@ class NeatThermostatPanel extends HTMLElement {
             safety_min_temp: Number(this.shadowRoot.getElementById("safetyMin").value),
             wall_pin: this.shadowRoot.getElementById("wallPin").value.trim(),
             away_delay_minutes: Number(this.shadowRoot.getElementById("awayDelay").value),
-            outdoor_temp_sensor: this.shadowRoot.getElementById("outdoorSensor").value.trim(),
-            presence_entities: this.shadowRoot
-              .getElementById("presenceEntities")
-              .value.split(",")
-              .map((s) => s.trim())
-              .filter(Boolean),
           });
+          this._settingsDraft = null;
           await this._loadState();
           this._showToast("Settings saved");
         } catch (e) {
