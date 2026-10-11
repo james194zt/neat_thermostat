@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.5.1
+ * @version 0.5.2
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.5.1";
+const PANEL_VERSION = "0.5.2";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -523,7 +523,7 @@ table.data tbody tr.room-row.selected {
 
 /* —— Overview hero —— */
 .hero {
-  --hero-tint: var(--nt-accent-hi);
+  --hero-tint: #FFB74D;
   position: relative;
   display: grid;
   grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
@@ -627,6 +627,11 @@ table.data tbody tr.room-row.selected {
   font-size: 13px; font-weight: 600; color: var(--secondary-text-color);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.hero-room-off {
+  flex-shrink: 0; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  background: color-mix(in srgb, var(--nt-red) 16%, transparent); color: var(--nt-red);
+}
+.hero-room-target .hero-room-off { display: inline-block; margin-top: 2px; }
 .hero-room-flame { width: 16px; height: 16px; color: var(--nt-heat-soft); flex-shrink: 0; }
 .hero-room-temp { font-size: 30px; font-weight: 400; letter-spacing: -0.03em; line-height: 1.15; font-variant-numeric: tabular-nums; }
 .hero-room-temp.unknown { color: var(--secondary-text-color); }
@@ -1336,11 +1341,12 @@ class NeatThermostatPanel extends HTMLElement {
     const lo = Number(home?.attributes?.min_temp ?? 7);
     const hi = Number(home?.attributes?.max_temp ?? 30);
     const pos = (t) => (t == null || !Number.isFinite(Number(t)) ? null : (Number(t) - lo) / (hi - lo));
+    // Warm, Nest-like: amber in Heat, deep orange while heating, grey when off (same as the card).
     const color = off
-      ? ["#6b7177", "#9aa0a6"]
+      ? ["#5f656b", "#8a9096"]
       : heating
         ? ["#FFB74D", "#F4511E"]
-        : ["#19D4DE", "#08979C"];
+        : ["#FFD180", "#FF9800"];
     const eta = heating ? this._formatEta(live.time_to_temp_minutes) : null;
 
     const heroClass = `hero${heating ? " heating" : ""}${off ? " off" : ""}`;
@@ -1350,14 +1356,18 @@ class NeatThermostatPanel extends HTMLElement {
         const set = formatTemp(this._roomDisplayTemp(room));
         const heat = this._roomHeating(room);
         const selected = this._focusZone === room.id;
+        const trv = this._entityState(room.trv_entity);
+        const offline = Boolean(room.trv_entity) && (!trv || trv.state === "unavailable" || trv.state === "unknown");
         return `
-          <button type="button" class="hero-room${heat ? " heat" : ""}${selected ? " selected" : ""}" data-zone="${this._escape(room.id)}">
+          <button type="button" class="hero-room${heat ? " heat" : ""}${selected ? " selected" : ""}${offline ? " offline" : ""}" data-zone="${this._escape(room.id)}" ${offline ? `title="${this._escape(room.name)} — TRV offline"` : ""}>
             <span class="hero-room-top">
               <span class="hero-room-name">${this._escape(room.name)}</span>
-              ${heat ? `<span class="hero-room-flame" title="Calling for heat">${flameSvg()}</span>` : ""}
+              ${!offline && heat ? `<span class="hero-room-flame" title="Calling for heat">${flameSvg()}</span>` : ""}
             </span>
             <span class="hero-room-temp${now == null ? " unknown" : ""}">${now == null ? "—" : `${this._escape(formatTemp(Math.round(now * 10) / 10))}°`}</span>
-            <span class="hero-room-target">${heat ? "Heating to" : "Set"} ${this._escape(set ?? "—")}°</span>
+            ${offline
+              ? `<span class="hero-room-target"><span class="hero-room-off">Offline</span></span>`
+              : `<span class="hero-room-target">${heat ? "Heating to" : "Set"} ${this._escape(set ?? "—")}°</span>`}
           </button>`;
       })
       .join("");

@@ -3,7 +3,7 @@
  * Loaded automatically by the integration; pick "Neat Thermostat" in the card list.
  * Everything comes from the Neat climate entities, so it updates live with no polling.
  */
-const NEAT_CARD_VERSION = "0.5.0";
+const NEAT_CARD_VERSION = "0.5.2";
 
 const NC_STYLES = `
 :host { display: block; }
@@ -38,16 +38,23 @@ ha-card { overflow: hidden; }
 .nc-dial { position: relative; width: 100%; max-width: 260px; aspect-ratio: 1; touch-action: none; user-select: none; -webkit-user-select: none; }
 .nc-dial > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .nc-dial .track { stroke: color-mix(in srgb, var(--primary-text-color) 10%, transparent); }
+.nc-dial { cursor: default; }
 .nc-dial .ring { cursor: grab; }
 .nc-dial.dragging .ring { cursor: grabbing; }
-.nc-dial .knob { fill: #fff; stroke: color-mix(in srgb, #000 20%, transparent); stroke-width: 1; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.35)); }
-.nc-dial .now-dot { fill: var(--card-background-color, var(--ha-card-background, #fff)); stroke: var(--primary-text-color); stroke-width: 3; }
+.nc-dial .knob {
+  fill: #fff; stroke: color-mix(in srgb, #000 22%, transparent); stroke-width: 1; cursor: grab;
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,0.4)); transition: r 0.12s ease;
+}
+.nc-dial.dragging .knob { cursor: grabbing; }
+.nc.heating .nc-dial .knob { filter: drop-shadow(0 0 6px rgba(255,120,30,0.85)); }
+/* Indoor temperature: a small dot on the track, so it doesn't look like a handle. */
+.nc-dial .now-dot { fill: var(--primary-text-color); opacity: 0.75; pointer-events: none; }
 .nc-core { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; text-align: center; }
 .nc-caption { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--secondary-text-color); }
 .nc.heating .nc-caption { color: var(--nc-heat-soft); }
 .nc-target { font-size: 60px; font-weight: 300; line-height: 1; letter-spacing: -0.04em; margin: 4px 0; font-variant-numeric: tabular-nums; }
 .nc-target sup { font-size: 0.36em; font-weight: 400; vertical-align: top; position: relative; top: 0.35em; margin-left: 2px; }
-.nc-target.pending { color: var(--nc-teal-hi); }
+.nc-target.pending { color: var(--nc-heat-soft); }
 .nc-sub { font-size: 13px; color: var(--secondary-text-color); }
 .nc-eta { font-size: 12px; font-weight: 600; color: var(--nc-heat-soft); margin-top: 2px; }
 .nc-steps { position: absolute; left: 50%; bottom: 2%; transform: translateX(-50%); display: flex; gap: 44px; }
@@ -89,6 +96,11 @@ ha-card { overflow: hidden; }
 .nc-room-top { display: flex; justify-content: space-between; align-items: center; gap: 4px; }
 .nc-room-name { font-size: 12px; font-weight: 600; color: var(--secondary-text-color); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nc-room-top svg { width: 13px; height: 13px; color: var(--nc-heat-soft); flex-shrink: 0; }
+.nc-off {
+  flex-shrink: 0; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 700;
+  background: color-mix(in srgb, var(--nc-red) 16%, transparent); color: var(--nc-red);
+}
+.nc-room-set .nc-off { display: inline-block; margin-top: 2px; }
 .nc-room-temp { font-size: 22px; font-weight: 400; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .nc-room-temp.unknown { color: var(--secondary-text-color); }
 .nc-room-set { font-size: 11px; color: var(--secondary-text-color); }
@@ -197,8 +209,8 @@ class NeatThermostatCard extends HTMLElement {
           <path class="track" d="${NC_ARC}" fill="none" stroke-width="12" stroke-linecap="round"/>
           <path class="fill" d="${NC_ARC}" pathLength="100" fill="none" stroke="url(#ncGrad)" stroke-width="12" stroke-linecap="round"/>
           <path class="ring" d="${NC_ARC}" fill="none" stroke="transparent" stroke-width="40"/>
-          <circle class="now-dot" r="6"/>
-          <circle class="knob" r="9"/>
+          <circle class="now-dot" r="3.5"/>
+          <circle class="knob" r="10"/>
         </svg>
         <div class="nc-core">
           <div class="nc-caption"></div>
@@ -266,36 +278,52 @@ class NeatThermostatCard extends HTMLElement {
     const dial = root.querySelector(".nc-dial");
     const ring = root.querySelector(".ring");
     const knob = root.querySelector(".knob");
-    const fromPointer = (ev) => {
+    void ring;
+    const local = (ev) => {
       const r = dial.getBoundingClientRect();
-      const x = ((ev.clientX - r.left) / r.width) * 200 - 100;
-      const y = ((ev.clientY - r.top) / r.height) * 200 - 100;
+      return { x: ((ev.clientX - r.left) / r.width) * 200 - 100, y: ((ev.clientY - r.top) / r.height) * 200 - 100 };
+    };
+    const fromPointer = (ev) => {
+      const { x, y } = local(ev);
       let rel = ((Math.atan2(y, x) * 180) / Math.PI - 135 + 720) % 360;
-      if (rel > 270) rel = rel > 315 ? 0 : 270; // in the open gap: snap to the nearer end
+      // In the open gap at the bottom, stay at the end the drag came from — snapping to the
+      // nearer end made the value flip between min and max on tiny movements.
+      if (rel > 270) rel = (this._dragRel ?? 135) > 135 ? 270 : 0;
+      this._dragRel = rel;
       const { lo, hi, step } = this._limits();
       return Math.min(hi, Math.max(lo, Math.round((lo + (rel / 270) * (hi - lo)) / step) * step));
     };
-    const start = (ev) => {
-      if (ev.button !== undefined && ev.button !== 0) return;
+    dial.addEventListener("pointerdown", (ev) => {
+      if ((ev.button !== undefined && ev.button !== 0) || ev.target.closest(".nc-step")) return;
+      // Only the ring band (and the handle) starts a drag, not the numbers in the middle.
+      const { x, y } = local(ev);
+      const dist = Math.hypot(x, y);
+      if (ev.target !== knob && (dist < 62 || dist > 104)) return;
       ev.preventDefault();
+      const { lo, hi } = this._limits();
+      const cur = Number(this._shownTarget() ?? lo);
+      this._dragRel = ((cur - lo) / (hi - lo)) * 270;
       this._dragging = true;
       dial.classList.add("dragging");
+      knob.setAttribute("r", "13");
       try {
         dial.setPointerCapture(ev.pointerId);
       } catch {
         // pointer already gone
       }
       this._setPending(fromPointer(ev), false);
-    };
-    ring.addEventListener("pointerdown", start);
-    knob.addEventListener("pointerdown", start);
+    });
     dial.addEventListener("pointermove", (ev) => {
-      if (this._dragging) this._setPending(fromPointer(ev), false);
+      if (!this._dragging) return;
+      const value = fromPointer(ev);
+      if (value !== this._pending) this._setPending(value, false);
     });
     const end = () => {
       if (!this._dragging) return;
       this._dragging = false;
       dial.classList.remove("dragging");
+      knob.setAttribute("r", "10");
+      this._update(true);
       this._queueSend(0);
     };
     dial.addEventListener("pointerup", end);
@@ -308,11 +336,17 @@ class NeatThermostatCard extends HTMLElement {
   }
 
   _shownTarget() {
-    const reported = this._hass?.states[this._entityId]?.attributes?.temperature;
+    const home = this._hass?.states[this._entityId];
+    const reported = home?.attributes?.temperature;
     if (this._pending != null) {
-      const settled = reported != null && Number(reported) === this._pending && !this._sendTimer && !this._dragging;
-      if (settled || (!this._dragging && Date.now() - this._pendingAt > 15000)) this._pending = null;
-      else return this._pending;
+      const idle = !this._sendTimer && !this._dragging && !this._sending;
+      const matches = reported != null && Number(reported) === this._pending;
+      // HA wrote a new state after our call: show what Neat actually set (no 15 s wait then jump).
+      const echoed = this._sentStamp != null && home?.last_updated !== this._sentStamp;
+      if (idle && (matches || echoed || Date.now() - this._pendingAt > 15000)) {
+        this._pending = null;
+        this._sentStamp = null;
+      } else return this._pending;
     }
     return reported;
   }
@@ -326,7 +360,7 @@ class NeatThermostatCard extends HTMLElement {
   _setPending(value, send) {
     this._pending = value;
     this._pendingAt = Date.now();
-    this._update(true);
+    this._update(true, this._dragging);
     if (send) this._queueSend(700);
   }
 
@@ -335,11 +369,16 @@ class NeatThermostatCard extends HTMLElement {
     this._sendTimer = setTimeout(async () => {
       this._sendTimer = null;
       if (this._pending == null) return;
+      this._sending = true;
+      this._sentStamp = this._hass?.states[this._entityId]?.last_updated ?? null;
       try {
         await this._call("set_temperature", { temperature: this._pending }, false);
         this._pendingAt = Date.now();
       } catch {
         this._pending = null;
+        this._sentStamp = null;
+      } finally {
+        this._sending = false;
         this._update(true);
       }
     }, delay);
@@ -370,14 +409,22 @@ class NeatThermostatCard extends HTMLElement {
     );
   }
 
-  _update(force = false) {
+  _update(force = false, dialOnly = false) {
     if (!this._config || !this._hass || !this.shadowRoot.querySelector(".nc")) return;
     const id = this._entityId;
     const home = this._hass.states[id];
     const roomIds = this._config.show_rooms ? this._roomIds(home) : [];
     // Only redraw when something we show changed (hass updates arrive constantly).
-    const key = [home?.last_updated, ...roomIds.map((r) => this._hass.states[r]?.last_updated)].join("|");
+    const key = [
+      home?.last_updated,
+      ...roomIds.map((r) => {
+        const st = this._hass.states[r];
+        const trv = st?.attributes?.trv_entity;
+        return `${st?.last_updated}/${trv ? this._hass.states[trv]?.state : ""}`;
+      }),
+    ].join("|");
     if (!force && key === this._lastKey) return;
+    if (!force && this._dragging) return; // don't fight the user's drag
     this._lastKey = key;
 
     const root = this.shadowRoot;
@@ -408,11 +455,12 @@ class NeatThermostatCard extends HTMLElement {
     root.querySelector(".nc-status").textContent = status;
 
     // Dial
-    const fill = off ? 0 : (pos(target) ?? 0) * 100;
+    const fill = (pos(target) ?? 0) * 100;
     const fillEl = root.querySelector(".fill");
     fillEl.setAttribute("stroke-dasharray", `${fill.toFixed(1)} 100`);
     fillEl.style.display = fill > 0 ? "" : "none";
-    const [c0, c1] = off ? ["#6b7177", "#9aa0a6"] : heating ? ["#FFB74D", "#F4511E"] : ["#19D4DE", "#08979C"];
+    // Warm, Nest-like: amber in Heat, deep orange while actually heating, grey when off.
+    const [c0, c1] = off ? ["#5f656b", "#8a9096"] : heating ? ["#FFB74D", "#F4511E"] : ["#FFD180", "#FF9800"];
     root.querySelector(".g0").setAttribute("stop-color", c0);
     root.querySelector(".g1").setAttribute("stop-color", c1);
     const place = (el, p) => {
@@ -426,7 +474,7 @@ class NeatThermostatCard extends HTMLElement {
       el.setAttribute("cy", (100 + 84 * Math.sin(ang)).toFixed(1));
     };
     place(root.querySelector(".now-dot"), pos(a.current_temperature));
-    place(root.querySelector(".knob"), off ? null : pos(target));
+    place(root.querySelector(".knob"), pos(target));
 
     root.querySelector(".nc-caption").textContent = off ? "Off" : a.preheating ? "Preheating to" : heating ? "Heating to" : "Set to";
     const t = root.querySelector(".nc-target");
@@ -441,6 +489,8 @@ class NeatThermostatCard extends HTMLElement {
     const [minus, plus] = root.querySelectorAll(".nc-step");
     minus.disabled = target != null && Number(target) <= lo;
     plus.disabled = target != null && Number(target) >= hi;
+
+    if (dialOnly) return;
 
     // Modes
     root.querySelectorAll("[data-hvac]").forEach((b) => b.classList.toggle("active", b.dataset.hvac === home.state));
@@ -458,13 +508,14 @@ class NeatThermostatCard extends HTMLElement {
       if (a.away_mode) pill("warn", "Away");
       if (a.window_open) pill("warn", "Window open");
       if (a.summer_mode) pill("warn", "Summer");
-      pills.innerHTML = out.join("");
+      const html = out.join("");
+      if (pills.innerHTML !== html) pills.innerHTML = html; // unchanged → leave the DOM alone (no flicker)
     }
 
     // Rooms
     const rooms = root.querySelector(".nc-rooms");
     if (rooms) {
-      rooms.innerHTML = roomIds
+      const html = roomIds
         .map((rid) => {
           const st = this._hass.states[rid];
           if (!st) return "";
@@ -473,14 +524,22 @@ class NeatThermostatCard extends HTMLElement {
           const cur = ncFmt(ra.current_temperature);
           const set = ncFmt(ra.temperature);
           const heat = ra.hvac_action === "heating";
+          const trv = ra.trv_entity ? this._hass.states[ra.trv_entity] : null;
+          const offline = st.state === "unavailable" || (ra.trv_entity && (!trv || trv.state === "unavailable" || trv.state === "unknown"));
           return `
-            <button class="nc-room${heat ? " heat" : ""}" data-entity="${ncEsc(rid)}" title="${ncEsc(name)}">
-              <span class="nc-room-top"><span class="nc-room-name">${ncEsc(name)}</span>${heat ? NC_ICONS.flame : ""}</span>
+            <button class="nc-room${heat ? " heat" : ""}${offline ? " offline" : ""}" data-entity="${ncEsc(rid)}" title="${ncEsc(offline ? `${name} — TRV offline` : name)}">
+              <span class="nc-room-top"><span class="nc-room-name">${ncEsc(name)}</span>${!offline && heat ? NC_ICONS.flame : ""}</span>
               <span class="nc-room-temp${cur == null ? " unknown" : ""}">${cur == null ? "—" : `${ncEsc(cur)}°`}</span>
-              <span class="nc-room-set">${st.state === "off" ? "Off" : `${heat ? "Heating to" : "Set"} ${ncEsc(set ?? "—")}°`}</span>
+              ${offline
+                ? `<span class="nc-room-set"><span class="nc-off">Offline</span></span>`
+                : `<span class="nc-room-set">${st.state === "off" ? "Off" : `${heat ? "Heating to" : "Set"} ${ncEsc(set ?? "—")}°`}</span>`}
             </button>`;
         })
         .join("");
+      if (html !== this._roomsHtml) {
+        rooms.innerHTML = html;
+        this._roomsHtml = html;
+      }
       rooms.style.display = roomIds.length ? "" : "none";
     }
   }
