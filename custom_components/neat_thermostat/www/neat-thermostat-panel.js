@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.4.7
+ * @version 0.4.8
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.4.7";
+const PANEL_VERSION = "0.4.8";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -266,7 +266,9 @@ const STYLES = `
 .set-remove:hover { background: color-mix(in srgb, var(--nt-red) 14%, transparent); color: var(--nt-red); }
 .set-add { margin-bottom: 4px; }
 /* —— Page header with an action button —— */
-.page-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+/* The row owns the gap below it, so it's the same whether the button sits beside the title or wraps under it. */
+.page-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px 16px; flex-wrap: wrap; margin-bottom: 18px; }
+.page-head-row > .header { margin-bottom: 0; }
 .page-head-row > button { margin-top: 4px; }
 button.primary svg, button.secondary svg { vertical-align: -4px; margin: 0 6px 0 -4px; }
 .empty-state { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
