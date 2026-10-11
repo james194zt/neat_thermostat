@@ -802,6 +802,19 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return panel
         return None
 
+    # Live control values: entities read these so a change shows at once,
+    # not after the next (debounced) coordinator refresh.
+    @property
+    def main_hvac_mode(self) -> str:
+        return self._main_hvac_mode
+
+    @property
+    def main_preset(self) -> str:
+        return self._main_preset
+
+    def room_control(self, room_id: str) -> dict[str, Any]:
+        return self._room_states.get(room_id, {})
+
     def neat_entity_id(self, unique_id: str) -> str | None:
         """Real entity id of a Neat climate. HA picks the id (e.g. climate.neat_thermostat_neat_home),
         so never assume climate.neat_<x> — that name can belong to some other integration."""

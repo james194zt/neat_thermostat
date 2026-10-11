@@ -33,6 +33,24 @@ Copy `custom_components/neat_thermostat` into your HA `config/custom_components/
    - **Energy** — heat runtime history + Leaf days
    - **Wall panels** — one entry per physical NSPanel (optional temperature lock)
 
+## Dashboard card
+
+The integration loads its own card — no resource to add. On a dashboard choose **Add card → Neat Thermostat**.
+
+- Dial: tap **− / +** or drag the knob round the arc to change the setpoint
+- Heat / Off, and Eco / Boost / Away (tap an active preset again to clear it)
+- Status pills (boiler, Leaf, Away, window, summer) and room tiles in your Rooms order — tap a room for its controls
+- **Compact** layout for small spaces; every section can be hidden in the card editor
+
+```yaml
+type: custom:neat-thermostat-card
+entity: climate.neat_thermostat_neat_home  # optional — found automatically
+layout: full        # or compact
+show_status: true
+show_modes: true
+show_rooms: true
+```
+
 ## NSPanel / wall UI
 
 | Folder | Purpose |

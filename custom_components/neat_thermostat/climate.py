@@ -102,8 +102,7 @@ class NeatHomeClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
 
     @property
     def hvac_mode(self) -> HVACMode:
-        mode = self.coordinator.data.get("main", {}).get("hvac_mode", "heat")
-        return HVACMode.HEAT if mode == "heat" else HVACMode.OFF
+        return HVACMode.HEAT if self.coordinator.main_hvac_mode == "heat" else HVACMode.OFF
 
     @property
     def hvac_action(self) -> HVACAction | None:
@@ -121,7 +120,7 @@ class NeatHomeClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
     def preset_mode(self) -> str | None:
         if self.coordinator.data.get("away"):
             return PRESET_AWAY
-        return self.coordinator.data.get("main", {}).get("preset", PRESET_NONE)
+        return self.coordinator.main_preset or PRESET_NONE
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -152,6 +151,13 @@ class NeatHomeClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
                 "boiler_cycle_wait_seconds"
             ),
             "warmup_c_per_hour": self.coordinator.intel.state.warmup.c_per_hour,
+            # Neat room climates in the user's order (the dashboard card lists them).
+            "room_entities": [
+                entity_id
+                for room in self.coordinator.config.rooms
+                if room.enabled is not False
+                and (entity_id := self.coordinator.neat_entity_id(f"neat_{room.id}"))
+            ],
         }
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
@@ -159,14 +165,17 @@ class NeatHomeClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
         if temperature is None:
             return
         self.coordinator.set_main_temperature(float(temperature))
+        self.async_write_ha_state()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         self.coordinator.set_main_hvac_mode(
             "heat" if hvac_mode == HVACMode.HEAT else "off"
         )
+        self.async_write_ha_state()
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         self.coordinator.set_main_preset(preset_mode)
+        self.async_write_ha_state()
 
     async def async_turn_on(self) -> None:
         await self.async_set_hvac_mode(HVACMode.HEAT)
@@ -231,11 +240,7 @@ class NeatRoomClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
 
     @property
     def hvac_mode(self) -> HVACMode:
-        mode = (
-            self.coordinator.data.get("rooms", {})
-            .get(self.room.id, {})
-            .get("hvac_mode", "heat")
-        )
+        mode = self.coordinator.room_control(self.room.id).get("hvac_mode", "heat")
         return HVACMode.HEAT if mode == "heat" else HVACMode.OFF
 
     @property
@@ -256,11 +261,7 @@ class NeatRoomClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
 
     @property
     def preset_mode(self) -> str | None:
-        return (
-            self.coordinator.data.get("rooms", {})
-            .get(self.room.id, {})
-            .get("preset", PRESET_NONE)
-        )
+        return self.coordinator.room_control(self.room.id).get("preset", PRESET_NONE)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -269,6 +270,8 @@ class NeatRoomClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
                 self.room.window_sensors
             ),
             ATTR_SUMMER_MODE: bool(self.coordinator.config.summer_mode),
+            "room_id": self.room.id,
+            "room_name": self.room.name,
             "trv_entity": self.room.trv_entity,
             "needs_heat": bool(
                 self.coordinator.data.get("rooms", {})
@@ -282,14 +285,17 @@ class NeatRoomClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
         if temperature is None:
             return
         self.coordinator.set_room_temperature(self.room.id, float(temperature))
+        self.async_write_ha_state()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         self.coordinator.set_room_hvac_mode(
             self.room.id, "heat" if hvac_mode == HVACMode.HEAT else "off"
         )
+        self.async_write_ha_state()
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         self.coordinator.set_room_preset(self.room.id, preset_mode)
+        self.async_write_ha_state()
 
     async def async_turn_on(self) -> None:
         await self.async_set_hvac_mode(HVACMode.HEAT)

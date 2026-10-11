@@ -22,8 +22,10 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 PANEL_JS_FILE = "neat-thermostat-panel.js"
+CARD_JS_FILE = "neat-thermostat-card.js"
 WWW_DIR = Path(__file__).parent / "www"
 _STATIC_DATA_KEY = "_neat_thermostat_static_registered"
+_CARD_DATA_KEY = "_neat_thermostat_card_registered"
 
 
 def panel_js_path() -> Path:
@@ -111,6 +113,13 @@ async def async_register_panel(hass: HomeAssistant) -> None:
         return
 
     names = await hass.async_add_executor_job(_sync_versioned_panel_js)
+
+    # Dashboard card: loaded on every frontend page, so "Neat Thermostat" shows in the
+    # card picker without adding a resource by hand. Version in the URL busts caches.
+    if not hass.data.get(_CARD_DATA_KEY) and (WWW_DIR / CARD_JS_FILE).is_file():
+        version = await hass.async_add_executor_job(_panel_js_version)
+        frontend.add_extra_js_url(hass, f"{PANEL_STATIC_URL}/{CARD_JS_FILE}?v={version}")
+        hass.data[_CARD_DATA_KEY] = True
 
     config = {
         **build_panel_config(hass, names),

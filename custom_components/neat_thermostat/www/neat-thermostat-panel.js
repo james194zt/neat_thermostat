@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.4.8
+ * @version 0.5.0
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.4.8";
+const PANEL_VERSION = "0.5.0";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -542,11 +542,26 @@ table.data tbody tr.room-row.selected {
 .hero.off { --hero-tint: #9aa0a6; }
 .hero-dial {
   position: relative; width: 100%; max-width: 260px; aspect-ratio: 1; margin: 0 auto;
-  background: transparent; border: 0; padding: 0; cursor: pointer; color: inherit; font-family: inherit;
+  background: transparent; border: 0; padding: 0; color: inherit; font-family: inherit;
   border-radius: 50%;
 }
-.hero-dial:focus-visible { outline: 2px solid var(--nt-nest-tab); outline-offset: 4px; }
-.hero-dial svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.dial-steps {
+  position: absolute; left: 50%; bottom: 3%; transform: translateX(-50%);
+  display: flex; gap: 44px; z-index: 1;
+}
+.dial-step {
+  width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--primary-text-color) 14%, transparent);
+  background: color-mix(in srgb, var(--primary-text-color) 6%, var(--card-background-color));
+  color: var(--primary-text-color); transition: background 0.15s ease, transform 0.1s ease;
+}
+.dial-step svg { width: 22px; height: 22px; }
+.dial-step:hover { background: color-mix(in srgb, var(--primary-text-color) 12%, var(--card-background-color)); }
+.dial-step:active { transform: scale(0.92); }
+.dial-step:focus-visible { outline: 2px solid var(--nt-accent-hi); outline-offset: 2px; }
+.dial-step:disabled { opacity: 0.35; cursor: default; }
+.hero.heating .dial-step { border-color: color-mix(in srgb, var(--nt-heat) 40%, transparent); }
+.hero-dial > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .hero-dial .track { stroke: color-mix(in srgb, var(--primary-text-color) 9%, transparent); }
 .hero-dial .fill { transition: stroke-dasharray 0.6s ease; }
 .hero-dial .now-dot { fill: var(--card-background-color); stroke: var(--primary-text-color); stroke-width: 3; }
@@ -620,7 +635,7 @@ table.data tbody tr.room-row.selected {
 .hero-empty { font-size: 13px; color: var(--secondary-text-color); margin: 0; }
 @media (max-width: 720px) {
   .hero { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 20px 16px; }
-  .hero-dial { max-width: 220px; margin-bottom: -28px; }
+  .hero-dial { max-width: 220px; }
   .hero-dial-temp { font-size: 56px; }
   .hero-head { flex-direction: column; align-items: center; text-align: center; }
   .hero-pill { white-space: normal; }
@@ -1195,7 +1210,45 @@ class NeatThermostatPanel extends HTMLElement {
   _mainTarget() {
     const live = this._live().main || {};
     const cfg = this._cfg();
-    return live.target ?? cfg.target_temp ?? null;
+    const reported = this._entityState(this._neatClimateEntities().home)?.attributes?.temperature ?? live.target ?? cfg.target_temp ?? null;
+    if (this._pendingTarget != null) {
+      const settled = reported != null && Number(reported) === this._pendingTarget && !this._sendTimer;
+      if (settled || Date.now() - this._pendingAt > 15000) this._pendingTarget = null;
+      else return this._pendingTarget;
+    }
+    return reported;
+  }
+
+  /** − / + on the dial: update at once, send to HA when the taps stop. */
+  _stepTarget(direction) {
+    const home = this._neatClimateEntities().home;
+    if (!home) {
+      this._showToast("Neat's house thermostat isn't available", "err");
+      return;
+    }
+    const attrs = this._entityState(home)?.attributes || {};
+    const step = Number(attrs.target_temp_step) || 0.5;
+    const lo = Number(attrs.min_temp ?? 7);
+    const hi = Number(attrs.max_temp ?? 30);
+    const base = Number(this._mainTarget() ?? 20);
+    const next = Math.min(hi, Math.max(lo, Math.round((base + step * direction) / step) * step));
+    this._pendingTarget = next;
+    this._pendingAt = Date.now();
+    this._render();
+    clearTimeout(this._sendTimer);
+    this._sendTimer = setTimeout(async () => {
+      this._sendTimer = null;
+      const value = this._pendingTarget;
+      if (value == null) return;
+      try {
+        await this._hass.callService("climate", "set_temperature", { entity_id: home, temperature: value });
+        this._pendingAt = Date.now();
+      } catch (e) {
+        this._pendingTarget = null;
+        this._showToast(`Couldn't change the temperature: ${e?.message || e}`, "err");
+        this._render();
+      }
+    }, 700);
   }
 
   _mainCurrent() {
@@ -1311,7 +1364,7 @@ class NeatThermostatPanel extends HTMLElement {
 
     return `
       <section class="${heroClass}">
-        <button type="button" class="hero-dial" data-zone="home" title="Home">
+        <div class="hero-dial">
           ${dialSvg({ fill: off ? 0 : pos(targetNum) ?? 0, now: pos(currentNum), color })}
           <span class="hero-dial-core">
             <span class="hero-dial-caption">${this._escape(caption)}</span>
@@ -1319,7 +1372,15 @@ class NeatThermostatPanel extends HTMLElement {
             ${current != null ? `<span class="hero-dial-sub">Indoor ${this._escape(current)}°</span>` : ""}
             ${eta ? `<span class="hero-dial-eta">${this._escape(eta)} to go</span>` : ""}
           </span>
-        </button>
+          <span class="dial-steps">
+            <button type="button" class="dial-step" data-step="-1" aria-label="Lower the temperature" ${targetNum != null && targetNum <= lo ? "disabled" : ""}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 13H5v-2h14z"/></svg>
+            </button>
+            <button type="button" class="dial-step" data-step="1" aria-label="Raise the temperature" ${targetNum != null && targetNum >= hi ? "disabled" : ""}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            </button>
+          </span>
+        </div>
         <div class="hero-side">
           <div class="hero-head">
             <div>
@@ -2750,6 +2811,9 @@ class NeatThermostatPanel extends HTMLElement {
       }
     });
 
+    this.shadowRoot.querySelectorAll(".dial-step").forEach((btn) => {
+      btn.addEventListener("click", () => this._stepTarget(Number(btn.dataset.step)));
+    });
     this.shadowRoot.querySelectorAll("[data-zone]").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (this._suppressZoneClick) return; // the click that ends a drag
