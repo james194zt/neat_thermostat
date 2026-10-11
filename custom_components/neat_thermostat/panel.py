@@ -35,28 +35,19 @@ def _panel_js_version() -> str:
         return json.load(mf).get("version", "0")
 
 
-def _panel_js_fingerprint() -> str:
-    path = panel_js_path()
-    if not path.is_file():
-        return "missing"
-    return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+def _sync_versioned_panel_js() -> dict[str, str]:
+    """Copy the panel JS to a versioned, content-hashed name; return the names to register.
 
-
-def _panel_js_cache_name() -> str:
+    Blocking file I/O — run in the executor, never the event loop.
+    """
     ver = _panel_js_version().replace(".", "_")
-    return f"neat-thermostat-panel.v{ver}.{_panel_js_fingerprint()}.js"
-
-
-def _panel_component_name() -> str:
-    return f"{PANEL_COMPONENT}-{_panel_js_version().replace('.', '_')}"
-
-
-def _sync_versioned_panel_js() -> None:
+    names = {"component": f"{PANEL_COMPONENT}-{ver}"}
     src = panel_js_path()
     if not src.is_file():
-        return
-    dest = WWW_DIR / _panel_js_cache_name()
+        names["module_url"] = f"{PANEL_STATIC_URL}/neat-thermostat-panel.v{ver}.missing.js"
+        return names
     data = src.read_bytes()
+    dest = WWW_DIR / f"neat-thermostat-panel.v{ver}.{hashlib.sha256(data).hexdigest()[:12]}.js"
     if not dest.is_file() or dest.read_bytes() != data:
         dest.write_bytes(data)
     for old in WWW_DIR.glob("neat-thermostat-panel.v*.js"):
@@ -65,10 +56,8 @@ def _sync_versioned_panel_js() -> None:
                 old.unlink()
             except OSError:
                 pass
-
-
-def _panel_js_module_url() -> str:
-    return f"{PANEL_STATIC_URL}/{_panel_js_cache_name()}"
+    names["module_url"] = f"{PANEL_STATIC_URL}/{dest.name}"
+    return names
 
 
 def _panel_exists(hass: HomeAssistant) -> bool:
@@ -80,7 +69,7 @@ def _panel_exists(hass: HomeAssistant) -> bool:
     return PANEL_URL_PATH in panels
 
 
-def build_panel_config(hass: HomeAssistant) -> dict[str, Any]:
+def build_panel_config(hass: HomeAssistant, names: dict[str, str]) -> dict[str, Any]:
     entries = []
     for entry_id, data in hass.data.get(DOMAIN, {}).items():
         if not isinstance(data, dict) or "coordinator" not in data:
@@ -95,8 +84,8 @@ def build_panel_config(hass: HomeAssistant) -> dict[str, Any]:
     return {
         "entries": entries,
         "brand_domain": DOMAIN,
-        "panel_element": _panel_component_name(),
-        "panel_js_module_url": _panel_js_module_url(),
+        "panel_element": names["component"],
+        "panel_js_module_url": names["module_url"],
     }
 
 
@@ -121,15 +110,15 @@ async def async_register_panel(hass: HomeAssistant) -> None:
     if not await _async_ensure_static_paths(hass):
         return
 
-    await hass.async_add_executor_job(_sync_versioned_panel_js)
+    names = await hass.async_add_executor_job(_sync_versioned_panel_js)
 
     config = {
-        **build_panel_config(hass),
+        **build_panel_config(hass, names),
         "_panel_custom": {
-            "name": _panel_component_name(),
+            "name": names["component"],
             "embed_iframe": False,
             "trust_external": False,
-            "module_url": _panel_js_module_url(),
+            "module_url": names["module_url"],
         },
     }
 
@@ -150,5 +139,5 @@ async def async_register_panel(hass: HomeAssistant) -> None:
     _LOGGER.info(
         "Neat Thermostat panel registered at /%s (%s)",
         PANEL_URL_PATH,
-        _panel_js_module_url(),
+        names["module_url"],
     )
