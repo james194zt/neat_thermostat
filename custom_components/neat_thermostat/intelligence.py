@@ -638,9 +638,18 @@ def leaf_week_stats(leaf: LeafState, now: datetime | None = None) -> dict[str, A
     """Rolling week display + streak of days that earned meaningful Leaf time."""
     now = now or clock()
     week_minutes = 0.0
-    for i in range(7):
+    week_days: list[dict[str, Any]] = []
+    for i in range(6, -1, -1):
         day = (now.date() - timedelta(days=i)).isoformat()
-        week_minutes += float(leaf.minutes_by_day.get(day, 0.0))
+        minutes = float(leaf.minutes_by_day.get(day, 0.0))
+        week_minutes += minutes
+        week_days.append(
+            {
+                "date": day,
+                "minutes": round(minutes, 1),
+                "earned": minutes >= LEAF_DAY_MEANINGFUL_MINUTES,
+            }
+        )
 
     streak = 0
     for i in range(60):
@@ -659,6 +668,8 @@ def leaf_week_stats(leaf: LeafState, now: datetime | None = None) -> dict[str, A
         "minutes_total": round(float(leaf.minutes_total), 1),
         "hours_total": round(float(leaf.minutes_total) / 60.0, 2),
         "days_streak": streak,
+        # Oldest first, today last — the panel's Leaf week chart.
+        "week_days": week_days,
     }
 
 

@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.4.4
+ * @version 0.4.5
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.4.4";
+const PANEL_VERSION = "0.4.5";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -165,8 +165,24 @@ const STYLES = `
 .stat.heat .value, .stat.warn .value { color: var(--tone); }
 
 /* —— Overview detail cards —— */
-.ov-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; margin-bottom: 14px; align-items: start; }
-.ov-grid > .card { margin-bottom: 0; }
+.ov-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; margin-bottom: 14px; }
+.ov-grid > .card { margin-bottom: 0; display: flex; flex-direction: column; }
+.leaf-week { flex: 1; display: flex; flex-direction: column; margin-top: 18px; min-height: 120px; }
+.leaf-week-title { display: flex; justify-content: space-between; font-size: 12px; color: var(--secondary-text-color); margin-bottom: 10px; }
+.leaf-week-bars { flex: 1; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; align-items: end; }
+.leaf-day { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; }
+.leaf-day-track {
+  flex: 1; width: 100%; max-width: 34px; min-height: 60px; position: relative; border-radius: 8px;
+  background: color-mix(in srgb, var(--primary-text-color) 5%, transparent);
+}
+.leaf-day-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; border-radius: 8px; min-height: 4px;
+  background: color-mix(in srgb, var(--primary-text-color) 22%, transparent);
+}
+.leaf-day.earned .leaf-day-bar { background: linear-gradient(180deg, #7BE05A, var(--nt-green)); }
+.leaf-day-label { font-size: 11px; color: var(--secondary-text-color); font-weight: 500; }
+.leaf-day.today .leaf-day-label { color: var(--primary-text-color); font-weight: 700; }
+.leaf-day.today .leaf-day-track { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary-text-color) 25%, transparent); }
 .card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
 .card-head .card-title { margin: 0; }
 .card-head-text { flex: 1; min-width: 0; }
@@ -178,6 +194,118 @@ const STYLES = `
 .card-icon svg { width: 20px; height: 20px; }
 .card-icon.leaf { color: var(--nt-green); background: color-mix(in srgb, var(--nt-green) 14%, transparent); }
 .card-icon.intel { color: var(--nt-accent-hi); background: color-mix(in srgb, var(--nt-accent) 16%, transparent); }
+.card-icon.heat { color: var(--nt-heat-soft); background: color-mix(in srgb, var(--nt-heat) 14%, transparent); }
+.card-icon.warn { color: var(--nt-amber); background: color-mix(in srgb, var(--nt-amber) 14%, transparent); }
+
+/* —— Settings —— */
+.set-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.set-field { min-width: 0; }
+.set-field-label { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.set-field .set-row-desc { margin-top: 6px; }
+.set-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 12px 0; border-top: 1px solid var(--divider-color);
+}
+.card-head + .set-row { border-top: 0; padding-top: 0; }
+.set-row-text { min-width: 0; }
+.set-row-name { font-size: 14px; font-weight: 500; }
+.set-row-desc { font-size: 12px; color: var(--secondary-text-color); margin-top: 2px; line-height: 1.4; }
+.set-row-control { flex-shrink: 0; }
+.num-input {
+  display: inline-flex; align-items: center; border-radius: 10px; overflow: hidden;
+  border: 1px solid var(--divider-color); background: var(--card-background-color);
+}
+.num-input input { width: 76px; border: 0; border-radius: 0; text-align: right; padding: 8px 10px; background: transparent; }
+.num-input input:focus { outline: none; }
+.num-input:focus-within { border-color: var(--nt-accent-hi); }
+.num-input span { padding: 0 10px 0 0; font-size: 13px; color: var(--secondary-text-color); }
+.switch { position: relative; display: inline-block; width: 44px; height: 26px; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.switch span {
+  position: absolute; inset: 0; border-radius: 999px; pointer-events: none;
+  background: color-mix(in srgb, var(--primary-text-color) 22%, transparent); transition: background 0.15s ease;
+}
+.switch span::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.3); transition: transform 0.15s ease;
+}
+.switch input:checked + span { background: var(--nt-accent); }
+.switch input:checked + span::after { transform: translateX(18px); }
+.switch input:focus-visible + span { outline: 2px solid var(--nt-accent-hi); outline-offset: 2px; }
+.set-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.set-list-empty { margin: 0 0 10px; font-size: 13px; color: var(--secondary-text-color); }
+.set-list-item {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px;
+  background: color-mix(in srgb, var(--primary-text-color) 4%, transparent);
+}
+.set-avatar {
+  flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%; object-fit: cover;
+  display: grid; place-items: center; font-size: 14px; font-weight: 700; color: #fff;
+  background: linear-gradient(145deg, var(--nt-accent-hi), var(--nt-accent));
+}
+.set-avatar.icon { background: color-mix(in srgb, var(--primary-text-color) 8%, transparent); color: var(--secondary-text-color); border-radius: 10px; }
+.set-avatar.icon svg { width: 18px; height: 18px; }
+.set-list-text { flex: 1; min-width: 0; }
+.set-list-name { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-list-text code {
+  display: block; padding: 0; background: none; font-size: 11px; color: var(--secondary-text-color);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.set-state {
+  flex-shrink: 0; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: color-mix(in srgb, var(--primary-text-color) 7%, transparent); color: var(--secondary-text-color);
+}
+.set-state.good { background: color-mix(in srgb, var(--nt-green) 16%, transparent); color: var(--nt-green); }
+.set-state.away { background: color-mix(in srgb, var(--nt-accent) 16%, transparent); color: var(--nt-accent-hi); }
+.set-state.warn { background: color-mix(in srgb, var(--nt-amber) 16%, transparent); color: var(--nt-amber); }
+.set-state.bad { background: color-mix(in srgb, var(--nt-red) 16%, transparent); color: var(--nt-red); }
+.set-remove {
+  flex-shrink: 0; width: 32px; height: 32px; border: 0; border-radius: 50%; display: grid; place-items: center;
+  background: transparent; color: var(--secondary-text-color); cursor: pointer;
+}
+.set-remove:hover { background: color-mix(in srgb, var(--nt-red) 14%, transparent); color: var(--nt-red); }
+.set-add { margin-bottom: 4px; }
+/* —— Rooms —— */
+.room-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.room-card {
+  display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; cursor: pointer;
+  background: var(--card-background-color); border-radius: var(--nt-radius);
+  border: 1px solid var(--divider-color, transparent);
+  box-shadow: var(--ha-card-box-shadow, 0 1px 2px rgba(0,0,0,0.06));
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.room-card:hover { border-color: color-mix(in srgb, var(--primary-text-color) 22%, transparent); }
+.room-card:focus-visible { outline: 2px solid var(--nt-nest-tab); outline-offset: 2px; }
+.room-card.selected { border-color: var(--nt-accent-hi); }
+.room-card.heat { background: color-mix(in srgb, var(--nt-heat) 7%, var(--card-background-color)); }
+.room-grid.reorderable .room-card { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.room-card.dragging {
+  cursor: grabbing; position: relative; z-index: 2; transform: scale(1.03); opacity: 0.94;
+  border-color: var(--nt-accent-hi); box-shadow: 0 12px 28px rgba(0,0,0,0.35);
+}
+.room-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
+.room-card-name { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.heat-badge { display: inline-flex; align-items: center; gap: 4px; background: color-mix(in srgb, var(--nt-heat) 16%, transparent); color: var(--nt-heat-soft); }
+.heat-badge svg { width: 12px; height: 12px; }
+.room-card-temps { display: flex; align-items: baseline; gap: 10px; }
+.room-card-now { font-size: 34px; font-weight: 400; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+.room-card-now.unknown { color: var(--secondary-text-color); }
+.room-card-target { font-size: 13px; color: var(--secondary-text-color); }
+.room-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.room-card-sensors { font-size: 12px; color: var(--secondary-text-color); }
+.room-card-calls {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding-top: 10px; border-top: 1px solid var(--divider-color); font-size: 13px; font-weight: 500;
+}
+.form-actions { display: flex; align-items: center; gap: 10px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--divider-color); flex-wrap: wrap; }
+.save-bar {
+  position: sticky; bottom: 12px; z-index: 5; margin-top: 14px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 16px; border-radius: var(--nt-radius);
+  background: color-mix(in srgb, var(--card-background-color) 92%, transparent);
+  border: 1px solid var(--divider-color); box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  backdrop-filter: blur(8px);
+}
 .badge {
   flex-shrink: 0; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
   background: color-mix(in srgb, var(--primary-text-color) 7%, transparent); color: var(--secondary-text-color);
@@ -563,7 +691,7 @@ table.data tbody tr.room-row.selected {
 .eh-total-value { font-size: 22px; font-weight: 500; letter-spacing: -0.02em; }
 .eh-legend { display: flex; gap: 16px; font-size: 12px; color: var(--secondary-text-color); align-items: center; }
 .eh-legend i { display: inline-block; width: 14px; height: 8px; border-radius: 4px; background: var(--nt-heat); margin-right: 6px; vertical-align: middle; }
-.eh-legend b { display: inline-block; width: 2px; height: 10px; background: var(--secondary-text-color); margin-right: 6px; vertical-align: middle; }
+.eh-legend b { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: var(--nt-heat); margin-right: 6px; vertical-align: middle; }
 .eh-legend svg { width: 14px; height: 14px; color: var(--nt-green); margin-right: 4px; vertical-align: middle; }
 .eh-grid-row { display: grid; grid-template-columns: 84px minmax(0, 1fr) 64px; gap: 14px; align-items: center; }
 .eh-axis-row { padding: 10px 0 6px; border-bottom: 1px solid var(--divider-color); }
@@ -579,16 +707,20 @@ table.data tbody tr.room-row.selected {
 .eh-day:last-child { border-bottom: 0; }
 .eh-day-label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; white-space: nowrap; }
 .eh-day-label svg { width: 14px; height: 14px; color: var(--nt-green); flex-shrink: 0; }
-.eh-timeline { position: relative; height: 40px; }
+.eh-timeline { position: relative; height: 50px; }
+/* Nest-style setpoint bubbles, in their own lane above the track (never over the row above). */
 .eh-sp {
-  position: absolute; top: 0; height: 22px; transform: translateX(-50%);
-  display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
-  font-size: 11px; font-weight: 600; color: var(--primary-text-color); font-variant-numeric: tabular-nums;
+  position: absolute; top: 0; z-index: 1;
+  width: 26px; height: 26px; margin-left: -13px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--nt-heat); color: #fff;
+  font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 2px var(--card-background-color), 0 2px 6px rgba(0,0,0,0.25);
+  cursor: default;
 }
-.eh-sp::after { content: ""; width: 2px; height: 5px; margin-top: 2px; border-radius: 1px; background: var(--secondary-text-color); }
-.eh-sp.minor .eh-sp-text { visibility: hidden; }
+.eh-sp:hover { z-index: 2; transform: scale(1.12); }
 .eh-track {
-  position: absolute; left: 0; right: 0; top: 24px; height: 12px; border-radius: 6px; overflow: hidden;
+  position: absolute; left: 0; right: 0; top: 34px; height: 12px; border-radius: 6px; overflow: hidden;
   background:
     linear-gradient(90deg, transparent calc(25% - 0.5px), var(--divider-color) calc(25% - 0.5px), var(--divider-color) calc(25% + 0.5px), transparent calc(25% + 0.5px),
       transparent calc(50% - 0.5px), var(--divider-color) calc(50% - 0.5px), var(--divider-color) calc(50% + 0.5px), transparent calc(50% + 0.5px),
@@ -601,7 +733,7 @@ table.data tbody tr.room-row.selected {
 @media (max-width: 720px) {
   .eh-grid-row { grid-template-columns: 58px minmax(0, 1fr) 48px; gap: 8px; }
   .eh-day-label { font-size: 12px; }
-  .eh-sp.phone-minor .eh-sp-text { visibility: hidden; }
+  .eh-sp { width: 22px; height: 22px; margin-left: -11px; font-size: 9px; }
   .eh-axis span.half { display: none; }
 }
 .toast {
@@ -685,6 +817,10 @@ const ICONS = {
   sun: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`,
   home: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`,
   sparkle: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10 2l1.9 5.6L17.5 9.5l-5.6 1.9L10 17l-1.9-5.6L2.5 9.5l5.6-1.9zM18 13l1 2.9 3 1.1-3 1-1 3-1-3-3-1 3-1.1z"/></svg>`,
+  people: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16 11c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 3-1.34 3-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>`,
+  shield: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-1 15-4-4 1.41-1.41L11 13.17l5.59-5.59L18 9l-7 7z"/></svg>`,
+  gauge: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M5.6 18.4a9 9 0 1 1 12.8 0M12 13l4-4"/><circle cx="12" cy="13" r="1.6" fill="currentColor"/></svg>`,
+  thermo: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15 13V5a3 3 0 0 0-6 0v8a5 5 0 1 0 6 0zm-3 7a3 3 0 0 1-1.5-5.6l.5-.29V5a1 1 0 0 1 2 0v9.11l.5.29A3 3 0 0 1 12 20z"/></svg>`,
   link: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>`,
 };
 
@@ -796,6 +932,20 @@ class NeatThermostatPanel extends HTMLElement {
     this._settingsDraft = null;
     this._settingsPickerMountGen = 0;
     this.attachShadow({ mode: "open" });
+    // Settings lists (presence, windows) redraw in place, so remove buttons are delegated.
+    this.shadowRoot.addEventListener("click", (ev) => {
+      const btn = ev.target.closest?.("[data-remove-key]");
+      if (!btn) return;
+      const key = btn.dataset.removeKey;
+      if (key === "room_extras") {
+        this._roomDraft.extras = (this._roomDraft.extras || []).filter((id) => id !== btn.dataset.removeId);
+        this._refreshRoomExtras();
+        return;
+      }
+      if (!this._settingsDraft) return;
+      this._settingsDraft[key] = (this._settingsDraft[key] || []).filter((id) => id !== btn.dataset.removeId);
+      this._refreshSettingsList(key);
+    });
   }
 
   set hass(hass) {
@@ -824,6 +974,8 @@ class NeatThermostatPanel extends HTMLElement {
   disconnectedCallback() {
     this._previewResize?.disconnect();
     this._previewResize = null;
+    this._ehResize?.disconnect();
+    this._ehResize = null;
     if (this._liveTimer) {
       window.clearInterval(this._liveTimer);
       this._liveTimer = null;
@@ -1162,6 +1314,7 @@ class NeatThermostatPanel extends HTMLElement {
             <div class="metric"><div class="metric-value">${this._escape(hours(leaf.hours_total, leaf.minutes_total))}<small>h</small></div><div class="metric-label">All time</div></div>
             <div class="metric"><div class="metric-value">${this._escape(streak)}<small>day${streak === 1 ? "" : "s"}</small></div><div class="metric-label">Streak</div></div>
           </div>
+          ${this._renderLeafWeek(leaf.week_days)}
           <p class="card-foot">Leaf time only adds up — turning the heat up hides the leaf but never takes earned time away.</p>
         </div>
         <div class="card">
@@ -1184,6 +1337,33 @@ class NeatThermostatPanel extends HTMLElement {
       </div>
       ${this._renderEntitiesCard(heater)}
     `;
+  }
+
+  /** Last 7 days of Leaf time as bars; green = a Leaf day. Older backends send no week_days. */
+  _renderLeafWeek(days) {
+    if (!Array.isArray(days) || !days.length) return "";
+    // Scale to the best day, but never below 2 h so a few minutes don't look like a full bar.
+    const max = Math.max(120, ...days.map((d) => Number(d.minutes) || 0));
+    const earnedCount = days.filter((d) => d.earned).length;
+    const bars = days
+      .map((d, i) => {
+        const mins = Number(d.minutes) || 0;
+        const date = new Date(`${d.date}T12:00:00`);
+        const name = date.toLocaleDateString([], { weekday: "short" });
+        const today = i === days.length - 1;
+        const tip = `${name} ${date.getDate()} · ${mins ? `${this._ehDuration(mins)} Leaf time` : "no Leaf time"}${d.earned ? " · Leaf day" : ""}`;
+        return `
+          <div class="leaf-day${d.earned ? " earned" : ""}${today ? " today" : ""}" title="${this._escape(tip)}">
+            <div class="leaf-day-track"><div class="leaf-day-bar" style="height:${mins ? Math.max(4, (mins / max) * 100) : 0}%"></div></div>
+            <span class="leaf-day-label">${today ? "Today" : this._escape(name.slice(0, 3))}</span>
+          </div>`;
+      })
+      .join("");
+    return `
+      <div class="leaf-week">
+        <div class="leaf-week-title"><span>Last 7 days</span><span>${earnedCount} of 7 Leaf days</span></div>
+        <div class="leaf-week-bars">${bars}</div>
+      </div>`;
   }
 
   _renderEntitiesCard(heater) {
@@ -1269,21 +1449,13 @@ class NeatThermostatPanel extends HTMLElement {
         return `<div class="eh-seg" style="left:${left}%;width:${Math.max(0, right - left)}%" title="Heating ${span}"></div>`;
       })
       .join("");
-    // Setpoint labels: hide text that would collide with the previous visible label
-    // (desktop needs ~5% of the day apart, phones ~12%); the tick and tooltip stay.
-    let lastWide = -100;
-    let lastNarrow = -100;
+    // Setpoint bubbles; clamped so ones near midnight stay inside the timeline.
     const points = [...(day.setpoints || [])]
       .sort((a, b) => String(a.ts).localeCompare(String(b.ts)))
       .map((sp) => {
         const left = this._ehPct(sp.ts, day.date);
         const temp = formatTemp(sp.temperature) ?? "—";
-        const cls = [];
-        if (left - lastWide < 5) cls.push("minor");
-        else lastWide = left;
-        if (left - lastNarrow < 12) cls.push("phone-minor");
-        else lastNarrow = left;
-        return `<div class="eh-sp ${cls.join(" ")}" style="left:${left}%" title="Set to ${this._escape(temp)}° at ${this._ehClock(sp.ts)}"><span class="eh-sp-text">${this._escape(temp)}°</span></div>`;
+        return `<div class="eh-sp" data-pct="${left}" style="left:clamp(13px, ${left}%, calc(100% - 13px))" title="Set to ${this._escape(temp)}° at ${this._ehClock(sp.ts)}">${this._escape(temp)}</div>`;
       })
       .join("");
     const mins = this._ehHeatMinutes(day);
@@ -1296,6 +1468,38 @@ class NeatThermostatPanel extends HTMLElement {
         </div>
         <div class="eh-day-total${mins > 0 ? "" : " none"}" title="Boiler running time">${this._ehDuration(mins)}</div>
       </div>`;
+  }
+
+  /**
+   * Nudge setpoint bubbles apart so close changes sit side by side instead of on top of
+   * each other (time is exact in each bubble's tooltip). Re-runs when the card resizes.
+   */
+  _layoutEnergyBubbles() {
+    this._ehResize?.disconnect();
+    this._ehResize = null;
+    const card = this.shadowRoot.querySelector(".eh-timeline")?.closest(".card");
+    if (!card) return;
+    const pack = () => {
+      card.querySelectorAll(".eh-timeline").forEach((line) => {
+        const width = line.clientWidth;
+        const bubbles = [...line.querySelectorAll(".eh-sp")];
+        if (!width || !bubbles.length) return;
+        const size = bubbles[0].offsetWidth || 26;
+        const gap = size + 2;
+        const half = size / 2;
+        const xs = bubbles.map((b) => Math.min(width - half, Math.max(half, (Number(b.dataset.pct) / 100) * width)));
+        for (let i = 1; i < xs.length; i++) xs[i] = Math.max(xs[i], xs[i - 1] + gap);
+        // Pushed past the end: pull the tail back, keeping the spacing.
+        if (xs[xs.length - 1] > width - half) {
+          xs[xs.length - 1] = width - half;
+          for (let i = xs.length - 2; i >= 0; i--) xs[i] = Math.min(xs[i], xs[i + 1] - gap);
+        }
+        bubbles.forEach((b, i) => (b.style.left = `${xs[i]}px`));
+      });
+    };
+    pack();
+    this._ehResize = new ResizeObserver(pack);
+    this._ehResize.observe(card);
   }
 
   _ehClock(ts) {
@@ -1342,7 +1546,7 @@ class NeatThermostatPanel extends HTMLElement {
                 <div class="eh-total-label">Boiler running time · last ${hist.length} days</div>
                 <div class="eh-total-value">${this._ehDuration(totalMins)}${leafDays ? ` <span class="muted" style="font-size:13px">· ${leafDays} Leaf day${leafDays === 1 ? "" : "s"}</span>` : ""}</div>
               </div>
-              <div class="eh-legend"><span><i></i>Heating</span><span><b></b>Setpoint change</span><span>${leafSvg()}Leaf day</span></div>
+              <div class="eh-legend"><span><i></i>Heating</span><span><b></b>Setpoint</span><span>${leafSvg()}Leaf day</span></div>
             </div>
             <div class="eh-axis-row eh-grid-row"><span></span><div class="eh-axis">${axis}</div><span></span></div>
             ${rows}`
@@ -1435,74 +1639,98 @@ class NeatThermostatPanel extends HTMLElement {
   _renderRooms() {
     const rooms = this._cfg().rooms || [];
     const editing = this._editingRoomId;
-    const rows = rooms
+    const editingRoom = editing ? rooms.find((r) => r.id === editing) : null;
+    const cards = rooms
       .map((r) => {
         const live = (this._live().rooms || {})[r.id] || {};
-        const extras = (r.extra_temperature_sensors || []).join(", ");
         const calls = r.calls_for_heat !== false;
-        const selected = editing === r.id ? " selected" : "";
-        return `<tr class="room-row${selected}" data-room-id="${this._escape(r.id)}" title="Click to edit">
-          <td>${this._escape(r.name)}</td>
-          <td><code>${this._escape(r.trv_entity)}</code></td>
-          <td><code>${this._escape(r.temperature_sensor || "—")}</code>${extras ? `<div class="muted">${this._escape(extras)}</div>` : ""}</td>
-          <td>${this._escape(live.target ?? r.target_temp)}°</td>
-          <td>
-            <button type="button" class="call-heat-btn ${calls ? "on" : "off"}" data-toggle-calls="${this._escape(r.id)}" title="Toggle call for heat">
-              ${calls ? "On" : "Off"}
-            </button>
-          </td>
-          <td>${live.needs_heat ? "Yes" : "No"}</td>
-        </tr>`;
+        const now = this._roomCurrent(r);
+        const target = formatTemp(live.target ?? r.target_temp);
+        const trv = this._entityState(r.trv_entity);
+        const trvBad = !trv || trv.state === "unavailable" || trv.state === "unknown";
+        const sensors = [r.temperature_sensor, ...(r.extra_temperature_sensors || [])].filter(Boolean).length;
+        return `
+          <div class="room-card${editing === r.id ? " selected" : ""}${live.needs_heat ? " heat" : ""}" data-room-id="${this._escape(r.id)}" role="button" tabindex="0" title="Click to edit · drag to reorder">
+            <div class="room-card-top">
+              <span class="room-card-name">${this._escape(r.name)}</span>
+              ${live.needs_heat ? `<span class="set-state heat-badge">${flameSvg()}Heating</span>` : ""}
+            </div>
+            <div class="room-card-temps">
+              <span class="room-card-now${now == null ? " unknown" : ""}">${now == null ? "—" : `${this._escape(formatTemp(Math.round(now * 10) / 10))}°`}</span>
+              <span class="room-card-target">Set ${this._escape(target ?? "—")}°</span>
+            </div>
+            <div class="room-card-meta">
+              <span class="set-state ${trvBad ? "bad" : "good"}" title="${this._escape(r.trv_entity)}">TRV ${trvBad ? (trv ? trv.state : "missing") : "online"}</span>
+              <span class="room-card-sensors">${sensors ? `${sensors} sensor${sensors === 1 ? "" : "s"}` : "TRV temperature"}</span>
+            </div>
+            <div class="room-card-calls">
+              <span>Calls boiler</span>
+              <label class="switch" title="Let this room turn the boiler on"><input type="checkbox" data-toggle-calls="${this._escape(r.id)}" ${calls ? "checked" : ""} /><span></span></label>
+            </div>
+          </div>`;
       })
       .join("");
-    const formTitle = editing ? "Edit room" : "Add room";
+    const head = (icon, cls, title, sub) => `
+      <div class="card-head">
+        <span class="card-icon ${cls}">${icon}</span>
+        <div class="card-head-text"><p class="card-title">${title}</p><p class="card-sub">${sub}</p></div>
+      </div>`;
     return `
-      ${this._pageHeader("Rooms", "Each room has its own Neat climate. Enable Call for heat so a cold TRV can demand the boiler.")}
-      <div class="card">
-        <p class="card-title">Configured rooms</p>
-        <table class="data">
-          <thead><tr><th>Room</th><th>TRV</th><th>Sensors</th><th>Target</th><th>Call boiler</th><th>Needs heat</th></tr></thead>
-          <tbody>${rows || `<tr><td colspan="6" class="muted">No rooms yet — add one below.</td></tr>`}</tbody>
-        </table>
-        <p class="muted" style="margin:8px 0 0">Click a room to load it into the form. <strong>Call boiler</strong> must be on for that room to turn the boiler on when it is cold.</p>
-      </div>
-      <div class="card">
-        <p class="card-title">${formTitle}</p>
-        <div class="row">
-          <label class="field">Name<input id="roomName" placeholder="Kitchen" /></label>
-        </div>
-        <div class="row">
-          <label class="field">TRV climate
+      ${this._pageHeader("Rooms", "Each room has its own Neat climate, driven by its TRV.")}
+      ${rooms.length
+        ? `<div class="room-grid${rooms.length > 1 ? " reorderable" : ""}">${cards}</div>
+           <p class="hero-rooms-hint" style="margin:8px 0 14px">Click a room to edit it · drag to reorder</p>`
+        : `<div class="card"><p class="muted" style="margin:0">No rooms yet — add your first one below.</p></div>`}
+      <div class="card" id="roomFormCard">
+        ${head(editing ? ICONS.tune : ICONS.home, editing ? "intel" : "", editing ? `Edit ${this._escape(editingRoom?.name || "room")}` : "Add a room", editing ? "Change the TRV, sensors or boiler behaviour." : "Pick the room's TRV; sensors are optional.")}
+        <div class="set-fields">
+          <div class="set-field">
+            <div class="set-field-label">Name</div>
+            <input id="roomName" placeholder="e.g. Kitchen" />
+          </div>
+          <div class="set-field">
+            <div class="set-field-label">TRV</div>
             <div class="entity-picker-host" data-room-picker="trv"></div>
-          </label>
-        </div>
-        <div class="row">
-          <label class="field">Temp sensor (optional)
+            <div class="set-row-desc">The radiator valve Neat controls.</div>
+          </div>
+          <div class="set-field">
+            <div class="set-field-label">Temperature sensor</div>
             <div class="entity-picker-host" data-room-picker="sensor"></div>
-          </label>
+            <div class="set-row-desc">Optional — otherwise the TRV's own reading is used.</div>
+          </div>
         </div>
-        <div class="row">
-          <label class="field">Extra temp sensors (optional)
-            <div class="entity-picker-host" data-room-picker="extras"></div>
-          </label>
+        <div class="set-field" style="margin-top:16px">
+          <div class="set-field-label">Extra sensors</div>
+          <div class="set-row-desc" style="margin:0 0 8px">Optional — averaged with the sensor above.</div>
+          <div class="set-list" data-room-extras-list>${this._renderRoomExtras()}</div>
+          <div class="entity-picker-host set-add" data-room-picker="extras"></div>
         </div>
-        <div class="row">
-          <label class="field field-toggle">
-            <span class="toggle-label">Call for heat (boiler)</span>
-            <select id="roomCallsForHeat">
-              <option value="true" ${this._roomDraft.calls_for_heat !== false ? "selected" : ""}>On — cold room can turn the boiler on</option>
-              <option value="false" ${this._roomDraft.calls_for_heat === false ? "selected" : ""}>Off — TRV only, never demands boiler</option>
-            </select>
-          </label>
+        <div class="set-row" style="margin-top:8px">
+          <div class="set-row-text">
+            <div class="set-row-name">Call for heat</div>
+            <div class="set-row-desc">Lets this room turn the boiler on when it's cold. Leave on for most TRVs — otherwise the valve can open with no hot water.</div>
+          </div>
+          <div class="set-row-control"><label class="switch"><input type="checkbox" id="roomCallsForHeat" ${this._roomDraft.calls_for_heat !== false ? "checked" : ""} /><span></span></label></div>
         </div>
-        <p class="muted">Most TRV installs need Call for heat <strong>On</strong>, otherwise the valve can open with no hot water from the boiler. Turn it Off only if that room must not fire the boiler.</p>
-        <div class="row" style="gap:10px;align-items:center">
-          <button class="primary" id="saveRoom">${editing ? "Update room" : "Save room"}</button>
-          ${editing ? `<button class="secondary" id="clearRoomForm" type="button">New room</button>
-          <button class="danger" id="deleteRoom" type="button">Delete room</button>` : ""}
+        <div class="form-actions">
+          ${editing ? `<button class="danger" id="deleteRoom" type="button">Delete room</button>` : ""}
+          <span style="flex:1"></span>
+          ${editing ? `<button class="secondary" id="clearRoomForm" type="button">Cancel</button>` : ""}
+          <button class="primary" id="saveRoom">${editing ? "Save changes" : "Add room"}</button>
         </div>
       </div>
     `;
+  }
+
+  _renderRoomExtras() {
+    const ids = this._roomDraft.extras || [];
+    if (!ids.length) return "";
+    return this._renderEntityRows(ids, "sensor", "room_extras");
+  }
+
+  _refreshRoomExtras() {
+    const box = this.shadowRoot.querySelector("[data-room-extras-list]");
+    if (box) box.innerHTML = this._renderRoomExtras();
   }
 
   _clearRoomForm() {
@@ -1523,8 +1751,7 @@ class NeatThermostatPanel extends HTMLElement {
     this._render();
     const nameEl = this.shadowRoot?.getElementById("roomName");
     if (nameEl) nameEl.value = room.name || "";
-    const callsEl = this.shadowRoot?.getElementById("roomCallsForHeat");
-    if (callsEl) callsEl.value = room.calls_for_heat !== false ? "true" : "false";
+    this.shadowRoot?.getElementById("roomFormCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   async _mountRoomPickers() {
@@ -1533,7 +1760,7 @@ class NeatThermostatPanel extends HTMLElement {
     const hosts = [...(this.shadowRoot?.querySelectorAll("[data-room-picker]") || [])];
     if (!hosts.length) return;
     for (const host of hosts) {
-      if (!host.querySelector("ha-entity-picker, ha-entities-picker")) {
+      if (!host.querySelector("ha-entity-picker")) {
         host.innerHTML = `<p class="entity-picker-loading">Loading entity picker…</p>`;
       }
     }
@@ -1548,107 +1775,45 @@ class NeatThermostatPanel extends HTMLElement {
     }
     if (gen !== this._roomPickerMountGen || this._view !== "rooms") return;
 
-    const mountSingle = (key, { domains, filter, label }) => {
+    const make = (key, { domains, filter, placeholder }) => {
       const host = this.shadowRoot.querySelector(`[data-room-picker="${key}"]`);
-      if (!host) return;
-      let picker = host.querySelector("ha-entity-picker");
-      if (!picker) {
-        host.replaceChildren();
-        picker = document.createElement("ha-entity-picker");
-        picker.setAttribute("allow-custom-entity", "");
-        if (this._hass.userData?.showEntityIdPicker) picker.setAttribute("show-entity-id", "");
-        if (label) picker.label = label;
-        picker.includeDomains = domains;
-        if (filter) picker.entityFilter = filter;
-        picker.addEventListener("value-changed", (ev) => {
-          this._roomDraft[key] = ev.detail?.value || "";
-        });
-        host.appendChild(picker);
-      }
+      if (!host) return null;
+      host.replaceChildren();
+      const picker = document.createElement("ha-entity-picker");
+      picker.setAttribute("allow-custom-entity", "");
+      if (this._hass.userData?.showEntityIdPicker) picker.setAttribute("show-entity-id", "");
+      picker.includeDomains = domains;
+      if (filter) picker.entityFilter = filter;
+      if (placeholder) picker.placeholder = placeholder;
       picker.hass = this._hass;
-      const value = this._roomDraft[key] || "";
-      if (picker.value !== value) picker.value = value || undefined;
+      host.appendChild(picker);
+      return picker;
     };
 
-    mountSingle("trv", { domains: ["climate"], label: "TRV climate" });
-    mountSingle("sensor", {
-      domains: ["sensor"],
-      filter: temperatureSensorFilter,
-      label: "Temperature sensor",
-    });
-
-    const extrasHost = this.shadowRoot.querySelector(`[data-room-picker="extras"]`);
-    if (extrasHost) {
-      if (customElements.get("ha-entities-picker")) {
-        let multi = extrasHost.querySelector("ha-entities-picker");
-        if (!multi) {
-          extrasHost.replaceChildren();
-          multi = document.createElement("ha-entities-picker");
-          multi.includeDomains = ["sensor"];
-          multi.entityFilter = temperatureSensorFilter;
-          multi.label = "Extra temperature sensors";
-          multi.addEventListener("value-changed", (ev) => {
-            const val = ev.detail?.value;
-            this._roomDraft.extras = Array.isArray(val) ? val.filter(Boolean) : [];
-          });
-          extrasHost.appendChild(multi);
-        }
-        multi.hass = this._hass;
-        const extras = this._roomDraft.extras || [];
-        multi.value = extras;
-      } else {
-        // Fallback: single picker that appends to extras list
-        let picker = extrasHost.querySelector("ha-entity-picker");
-        if (!picker) {
-          extrasHost.replaceChildren();
-          const hint = document.createElement("p");
-          hint.className = "muted";
-          hint.style.margin = "0 0 8px";
-          hint.textContent = "Pick sensors one at a time (multi-picker unavailable).";
-          extrasHost.appendChild(hint);
-          const list = document.createElement("div");
-          list.id = "roomExtrasList";
-          list.className = "muted";
-          list.style.marginBottom = "8px";
-          extrasHost.appendChild(list);
-          picker = document.createElement("ha-entity-picker");
-          picker.setAttribute("allow-custom-entity", "");
-          picker.includeDomains = ["sensor"];
-          picker.entityFilter = temperatureSensorFilter;
-          picker.label = "Add extra sensor";
-          picker.addEventListener("value-changed", (ev) => {
-            const id = ev.detail?.value || "";
-            if (!id) return;
-            if (!this._roomDraft.extras.includes(id)) {
-              this._roomDraft.extras = [...this._roomDraft.extras, id];
-            }
-            this._refreshRoomExtrasFallbackList();
-            picker.value = undefined;
-          });
-          extrasHost.appendChild(picker);
-        }
-        picker.hass = this._hass;
-        this._refreshRoomExtrasFallbackList();
-      }
+    for (const [key, opts] of [
+      ["trv", { domains: ["climate"] }],
+      ["sensor", { domains: ["sensor"], filter: temperatureSensorFilter }],
+    ]) {
+      const picker = make(key, opts);
+      if (!picker) continue;
+      picker.value = this._roomDraft[key] || undefined;
+      picker.addEventListener("value-changed", (ev) => {
+        this._roomDraft[key] = ev.detail?.value || "";
+      });
     }
-  }
 
-  _refreshRoomExtrasFallbackList() {
-    const list = this.shadowRoot?.getElementById("roomExtrasList");
-    if (!list) return;
-    const extras = this._roomDraft.extras || [];
-    list.textContent = extras.length ? `Selected: ${extras.join(", ")}` : "None selected yet";
+    const extras = make("extras", { domains: ["sensor"], filter: temperatureSensorFilter, placeholder: "Add a temperature sensor" });
+    extras?.addEventListener("value-changed", (ev) => {
+      const id = ev.detail?.value;
+      if (!id) return;
+      if (!this._roomDraft.extras.includes(id)) this._roomDraft.extras = [...this._roomDraft.extras, id];
+      this._refreshRoomExtras();
+      setTimeout(() => (extras.value = undefined), 0);
+    });
   }
 
   _readRoomPickerValues() {
-    const trvPicker = this.shadowRoot.querySelector('[data-room-picker="trv"] ha-entity-picker');
-    const sensorPicker = this.shadowRoot.querySelector('[data-room-picker="sensor"] ha-entity-picker');
-    const multi = this.shadowRoot.querySelector('[data-room-picker="extras"] ha-entities-picker');
-    if (trvPicker?.value != null) this._roomDraft.trv = String(trvPicker.value || "");
-    if (sensorPicker?.value != null) this._roomDraft.sensor = String(sensorPicker.value || "");
-    if (multi?.value != null) {
-      this._roomDraft.extras = Array.isArray(multi.value) ? multi.value.filter(Boolean) : [];
-    }
+    // Pickers write into the draft as they change.
     return this._roomDraft;
   }
 
@@ -1806,8 +1971,13 @@ class NeatThermostatPanel extends HTMLElement {
    * Mouse: drag after a few px. Touch: press and hold, then drag (so scrolling still works).
    */
   _bindRoomDrag() {
-    const grid = this.shadowRoot.querySelector(".hero-rooms.reorderable");
-    if (!grid) return;
+    const hero = this.shadowRoot.querySelector(".hero-rooms.reorderable");
+    if (hero) this._bindRoomDragGrid(hero, ".hero-room", "zone");
+    const page = this.shadowRoot.querySelector(".room-grid.reorderable");
+    if (page) this._bindRoomDragGrid(page, ".room-card", "roomId");
+  }
+
+  _bindRoomDragGrid(grid, tileSel, idKey) {
     let drag = null; // { tile, pointerId, x, y, started, timer }
 
     const begin = () => {
@@ -1833,7 +2003,7 @@ class NeatThermostatPanel extends HTMLElement {
       grid.classList.remove("is-dragging");
       this._suppressZoneClick = true;
       setTimeout(() => (this._suppressZoneClick = false), 0);
-      const order = [...grid.querySelectorAll(".hero-room")].map((t) => t.dataset.zone);
+      const order = [...grid.querySelectorAll(tileSel)].map((t) => t.dataset[idKey]);
       if (!commit || order.join() === before) {
         if (!commit) this._render();
         this._dragging = false;
@@ -1843,12 +2013,12 @@ class NeatThermostatPanel extends HTMLElement {
       this._dragging = false;
     };
 
-    grid.querySelectorAll(".hero-room").forEach((tile) => {
+    grid.querySelectorAll(tileSel).forEach((tile) => {
       tile.addEventListener("pointerdown", (ev) => {
-        if (ev.button !== 0 || drag) return;
+        if (ev.button !== 0 || drag || ev.target.closest(".switch")) return;
         drag = {
           tile, pointerId: ev.pointerId, x: ev.clientX, y: ev.clientY, started: false, timer: null,
-          before: [...grid.querySelectorAll(".hero-room")].map((t) => t.dataset.zone).join(),
+          before: [...grid.querySelectorAll(tileSel)].map((t) => t.dataset[idKey]).join(),
         };
         if (ev.pointerType !== "mouse") drag.timer = setTimeout(begin, 350);
       });
@@ -1874,13 +2044,13 @@ class NeatThermostatPanel extends HTMLElement {
         return;
       }
       // Move the lifted tile into the slot under the pointer.
-      const target = [...grid.querySelectorAll(".hero-room")].find((t) => {
+      const target = [...grid.querySelectorAll(tileSel)].find((t) => {
         if (t === drag.tile) return false;
         const r = t.getBoundingClientRect();
         return ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
       });
       if (!target) return;
-      const tiles = [...grid.querySelectorAll(".hero-room")];
+      const tiles = [...grid.querySelectorAll(tileSel)];
       const from = tiles.indexOf(drag.tile);
       const to = tiles.indexOf(target);
       grid.insertBefore(drag.tile, from < to ? target.nextSibling : target);
@@ -2070,7 +2240,7 @@ class NeatThermostatPanel extends HTMLElement {
     const hosts = [...(this.shadowRoot?.querySelectorAll("[data-settings-picker]") || [])];
     if (!hosts.length) return;
     for (const host of hosts) {
-      if (!host.querySelector("ha-entity-picker, ha-entities-picker, input")) {
+      if (!host.querySelector("ha-entity-picker")) {
         host.innerHTML = `<p class="entity-picker-loading">Loading entity picker…</p>`;
       }
     }
@@ -2086,88 +2256,58 @@ class NeatThermostatPanel extends HTMLElement {
     if (gen !== this._settingsPickerMountGen || this._view !== "settings") return;
     const draft = this._settingsDraft;
 
-    const mountSingle = (key, { domains, filter, label }) => {
-      const host = this.shadowRoot.querySelector(`[data-settings-picker="${key}"]`);
-      if (!host) return;
-      let picker = host.querySelector("ha-entity-picker");
-      if (!picker) {
-        host.replaceChildren();
-        picker = document.createElement("ha-entity-picker");
-        picker.setAttribute("allow-custom-entity", "");
-        if (this._hass.userData?.showEntityIdPicker) picker.setAttribute("show-entity-id", "");
-        if (label) picker.label = label;
-        picker.includeDomains = domains;
-        if (filter) picker.entityFilter = filter;
-        picker.addEventListener("value-changed", (ev) => {
-          draft[key] = ev.detail?.value || "";
-        });
-        host.appendChild(picker);
-      }
+    const makePicker = (host, { domains, filter, placeholder }) => {
+      host.replaceChildren();
+      const picker = document.createElement("ha-entity-picker");
+      picker.setAttribute("allow-custom-entity", "");
+      if (this._hass.userData?.showEntityIdPicker) picker.setAttribute("show-entity-id", "");
+      picker.includeDomains = domains;
+      if (filter) picker.entityFilter = filter;
+      if (placeholder) picker.placeholder = placeholder;
       picker.hass = this._hass;
-      const value = draft[key] || "";
-      if (picker.value !== value) picker.value = value || undefined;
+      host.appendChild(picker);
+      return picker;
     };
 
-    const mountMulti = (key, { domains, label }) => {
+    // Single entities: the picker is the value.
+    const single = (key, opts) => {
       const host = this.shadowRoot.querySelector(`[data-settings-picker="${key}"]`);
       if (!host) return;
-      if (!customElements.get("ha-entities-picker")) {
-        // Multi-picker missing: fall back to a comma-separated list.
-        let input = host.querySelector("input");
-        if (!input) {
-          host.replaceChildren();
-          input = document.createElement("input");
-          input.placeholder = domains.map((d) => `${d}.example`).join(", ");
-          input.addEventListener("change", () => {
-            draft[key] = input.value.split(",").map((s) => s.trim()).filter(Boolean);
-          });
-          host.appendChild(input);
-        }
-        input.value = (draft[key] || []).join(", ");
-        return;
-      }
-      let multi = host.querySelector("ha-entities-picker");
-      if (!multi) {
-        host.replaceChildren();
-        multi = document.createElement("ha-entities-picker");
-        multi.includeDomains = domains;
-        multi.label = label;
-        multi.addEventListener("value-changed", (ev) => {
-          const val = ev.detail?.value;
-          draft[key] = Array.isArray(val) ? val.filter(Boolean) : [];
-        });
-        host.appendChild(multi);
-      }
-      multi.hass = this._hass;
-      multi.value = draft[key] || [];
+      const picker = host.querySelector("ha-entity-picker") || makePicker(host, opts);
+      picker.addEventListener("value-changed", (ev) => {
+        draft[key] = ev.detail?.value || "";
+      });
+      picker.hass = this._hass;
+      picker.value = draft[key] || undefined;
     };
 
-    mountSingle("heater", { domains: ["switch", "input_boolean", "climate"], label: "Boiler relay" });
-    mountSingle("temperature_sensor", {
-      domains: ["sensor"],
-      filter: temperatureSensorFilter,
-      label: "House temperature",
-    });
-    mountSingle("outdoor_temp_sensor", {
-      domains: ["sensor"],
-      filter: temperatureSensorFilter,
-      label: "Outdoor temperature",
-    });
-    mountMulti("window_sensors", { domains: ["binary_sensor"], label: "Window sensors" });
-    mountMulti("presence_entities", { domains: ["person", "device_tracker"], label: "Presence" });
+    // Lists (presence, windows): our own list above an "add" picker that empties after each pick.
+    const list = (key, opts) => {
+      const host = this.shadowRoot.querySelector(`[data-settings-picker="${key}"]`);
+      if (!host) return;
+      const picker = host.querySelector("ha-entity-picker") || makePicker(host, opts);
+      picker.hass = this._hass;
+      picker.value = undefined;
+      picker.addEventListener("value-changed", (ev) => {
+        const id = ev.detail?.value;
+        if (!id) return;
+        if (!draft[key].includes(id)) draft[key] = [...draft[key], id];
+        this._refreshSettingsList(key);
+        // Clear for the next pick (after HA's own update settles).
+        setTimeout(() => (picker.value = undefined), 0);
+      });
+    };
+
+    single("heater", { domains: ["switch", "input_boolean", "climate"] });
+    single("temperature_sensor", { domains: ["sensor"], filter: temperatureSensorFilter });
+    single("outdoor_temp_sensor", { domains: ["sensor"], filter: temperatureSensorFilter });
+    list("presence_entities", { domains: ["person", "device_tracker"], placeholder: "Add a person or tracker" });
+    list("window_sensors", { domains: ["binary_sensor"], placeholder: "Add a window or door sensor" });
   }
 
   _readSettingsPickerValues() {
-    const draft = this._settingsDraft || this._settingsDraftFromCfg();
-    for (const key of ["heater", "temperature_sensor", "outdoor_temp_sensor"]) {
-      const picker = this.shadowRoot.querySelector(`[data-settings-picker="${key}"] ha-entity-picker`);
-      if (picker?.value != null) draft[key] = String(picker.value || "");
-    }
-    for (const key of ["window_sensors", "presence_entities"]) {
-      const multi = this.shadowRoot.querySelector(`[data-settings-picker="${key}"] ha-entities-picker`);
-      if (multi?.value != null) draft[key] = Array.isArray(multi.value) ? multi.value.filter(Boolean) : [];
-    }
-    return draft;
+    // Pickers write into the draft as they change; lists are only ever edited in the draft.
+    return this._settingsDraft || this._settingsDraftFromCfg();
   }
 
   _settingsDraftFromCfg() {
@@ -2183,117 +2323,150 @@ class NeatThermostatPanel extends HTMLElement {
     };
   }
 
+  /** Settings list for a draft key, with an empty-state line. */
+  _renderSettingsList(key) {
+    const ids = this._settingsDraft?.[key] || [];
+    const presence = key === "presence_entities";
+    if (!ids.length) {
+      return `<p class="set-list-empty">${presence ? "Nobody added yet — Away mode is off until you add someone." : "No sensors added."}</p>`;
+    }
+    return this._renderEntityRows(ids, presence ? "presence" : "window", key);
+  }
+
+  /** One row per entity: picture/initial or icon, name, live state, remove. mode: presence | window | sensor. */
+  _renderEntityRows(ids, mode, removeKey) {
+    const presence = mode === "presence";
+    return ids
+      .map((id) => {
+        const st = this._entityState(id);
+        const name = st?.attributes?.friendly_name || id;
+        let stateText = st ? st.state : "missing";
+        let tone = "";
+        if (!st || st.state === "unavailable" || st.state === "unknown") tone = "bad";
+        else if (presence) {
+          tone = st.state === "home" ? "good" : "away";
+          stateText = st.state === "home" ? "Home" : st.state === "not_home" ? "Away" : st.state;
+        } else if (mode === "window") {
+          tone = st.state === "on" ? "warn" : "good";
+          stateText = st.state === "on" ? "Open" : "Closed";
+        } else {
+          stateText = `${st.state}${st.attributes?.unit_of_measurement || ""}`;
+        }
+        const pic = st?.attributes?.entity_picture;
+        const avatar = presence
+          ? pic
+            ? `<img class="set-avatar" src="${this._escape(pic)}" alt="" />`
+            : `<span class="set-avatar">${this._escape(String(name).trim().charAt(0).toUpperCase() || "?")}</span>`
+          : `<span class="set-avatar icon">${mode === "window" ? ICONS.window : ICONS.thermo}</span>`;
+        return `
+          <div class="set-list-item">
+            ${avatar}
+            <div class="set-list-text">
+              <div class="set-list-name">${this._escape(name)}</div>
+              <code>${this._escape(id)}</code>
+            </div>
+            <span class="set-state ${tone}">${this._escape(stateText)}</span>
+            <button type="button" class="set-remove" data-remove-key="${removeKey}" data-remove-id="${this._escape(id)}" aria-label="Remove ${this._escape(name)}" title="Remove">
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </div>`;
+      })
+      .join("");
+  }
+
+  _refreshSettingsList(key) {
+    const box = this.shadowRoot.querySelector(`[data-settings-list="${key}"]`);
+    if (box) box.innerHTML = this._renderSettingsList(key);
+    const count = this.shadowRoot.querySelector(`[data-settings-count="${key}"]`);
+    if (count) count.textContent = String((this._settingsDraft?.[key] || []).length);
+  }
+
   _renderSettings() {
+    // Building the form before the config arrives would save blanks over the real settings.
+    if (!this._state?.config) {
+      return `${this._pageHeader("Settings", "How Neat heats your home.")}<p class="muted">Loading settings…</p>`;
+    }
     const cfg = this._cfg();
     if (!this._settingsDraft) this._settingsDraft = this._settingsDraftFromCfg();
+    const row = (name, desc, control) => `
+      <div class="set-row">
+        <div class="set-row-text"><div class="set-row-name">${name}</div>${desc ? `<div class="set-row-desc">${desc}</div>` : ""}</div>
+        <div class="set-row-control">${control}</div>
+      </div>`;
+    const toggle = (id, on) => `<label class="switch"><input type="checkbox" id="${id}" ${on ? "checked" : ""} /><span></span></label>`;
+    const num = (id, value, unit, attrs = "") =>
+      `<div class="num-input"><input id="${id}" type="number" value="${this._escape(value)}" ${attrs} />${unit ? `<span>${unit}</span>` : ""}</div>`;
+    const head = (icon, cls, title, sub, extra = "") => `
+      <div class="card-head">
+        <span class="card-icon ${cls}">${icon}</span>
+        <div class="card-head-text"><p class="card-title">${title}</p><p class="card-sub">${sub}</p></div>
+        ${extra}
+      </div>`;
+    const field = (label, key, hint) => `
+      <div class="set-field">
+        <div class="set-field-label">${label}</div>
+        <div class="entity-picker-host" data-settings-picker="${key}"></div>
+        ${hint ? `<div class="set-row-desc">${hint}</div>` : ""}
+      </div>`;
+    const count = (key) => `<span class="badge" data-settings-count="${key}">${(this._settingsDraft[key] || []).length}</span>`;
+
     return `
-      ${this._pageHeader("Settings", "House-wide temperatures, Nest intelligence, and modes.")}
+      ${this._pageHeader("Settings", "How Neat heats your home.")}
       <div class="card">
-        <p class="card-title">Devices</p>
-        <div class="row">
-          <label class="field">Boiler relay (heater)
-            <div class="entity-picker-host" data-settings-picker="heater"></div>
-          </label>
-          <label class="field">House temperature sensor
-            <div class="entity-picker-host" data-settings-picker="temperature_sensor"></div>
-          </label>
-        </div>
-        <div class="row">
-          <label class="field">Outdoor temperature sensor (optional)
-            <div class="entity-picker-host" data-settings-picker="outdoor_temp_sensor"></div>
-          </label>
-        </div>
-        <div class="row">
-          <label class="field">Window sensors (optional)
-            <div class="entity-picker-host" data-settings-picker="window_sensors"></div>
-          </label>
-          <label class="field">Presence — people / trackers (optional)
-            <div class="entity-picker-host" data-settings-picker="presence_entities"></div>
-          </label>
-        </div>
-        <p class="muted">The boiler relay is what Neat switches on and off. Changing it turns the old relay off first. The house sensor is the temperature Neat heats to. Away needs every presence entity to be away.</p>
-      </div>
-      <div class="card">
-        <p class="card-title">Temperatures</p>
-        <div class="row">
-          <label class="field">Eco °C<input id="ecoTemp" type="number" step="0.5" value="${this._escape(cfg.eco_temp ?? 16)}" /></label>
-          <label class="field">Boost °C<input id="boostTemp" type="number" step="0.5" value="${this._escape(cfg.boost_temp ?? 22)}" /></label>
-          <label class="field">Away °C<input id="awayTemp" type="number" step="0.5" value="${this._escape(cfg.away_temp ?? 15)}" /></label>
+        ${head(flameSvg(), "heat", "Heating devices", "The relay Neat switches and the sensors it heats to.")}
+        <div class="set-fields">
+          ${field("Boiler relay", "heater", "Changing it turns the old relay off first.")}
+          ${field("House temperature", "temperature_sensor", "The temperature Neat heats the house to.")}
+          ${field("Outdoor temperature", "outdoor_temp_sensor", "Optional — used by Adaptive Comfort.")}
         </div>
       </div>
-      <div class="card">
-        <p class="card-title">Nest intelligence (house only)</p>
-        <div class="row">
-          <label class="field">True Radiant
-            <select id="trueRadiant">
-              <option value="true" ${cfg.true_radiant !== false ? "selected" : ""}>On</option>
-              <option value="false" ${cfg.true_radiant === false ? "selected" : ""}>Off (on schedule)</option>
-            </select>
-          </label>
-          <label class="field">Auto-Schedule
-            <select id="autoSchedule">
-              <option value="false" ${!cfg.auto_schedule ? "selected" : ""}>Off</option>
-              <option value="true" ${cfg.auto_schedule ? "selected" : ""}>On</option>
-            </select>
-          </label>
-          <label class="field">Away delay (min)
-            <input id="awayDelay" type="number" min="0" max="180" value="${this._escape(cfg.away_delay_minutes ?? 20)}" />
-          </label>
-          <label class="field">Leaf coaching
-            <select id="leafEnabled">
-              <option value="true" ${cfg.leaf_enabled !== false ? "selected" : ""}>On</option>
-              <option value="false" ${cfg.leaf_enabled === false ? "selected" : ""}>Off</option>
-            </select>
-          </label>
-          <label class="field">Seasonal Savings
-            <select id="seasonalSavings">
-              <option value="false" ${!cfg.seasonal_savings ? "selected" : ""}>Off</option>
-              <option value="true" ${cfg.seasonal_savings ? "selected" : ""}>On</option>
-            </select>
-          </label>
-          <label class="field">Adaptive Comfort
-            <select id="adaptiveComfort">
-              <option value="false" ${!cfg.adaptive_comfort ? "selected" : ""}>Off</option>
-              <option value="true" ${cfg.adaptive_comfort ? "selected" : ""}>On</option>
-            </select>
-          </label>
+      <div class="ov-grid">
+        <div class="card">
+          ${head(ICONS.people, "intel", "Presence", "Who lives here. Neat switches to Away once everyone has left.", count("presence_entities"))}
+          <div class="set-list" data-settings-list="presence_entities">${this._renderSettingsList("presence_entities")}</div>
+          <div class="entity-picker-host set-add" data-settings-picker="presence_entities"></div>
+          ${row("Away delay", "How long everyone must be gone before Away (Eco) starts.", num("awayDelay", cfg.away_delay_minutes ?? 20, "min", 'min="0" max="180" step="5"'))}
         </div>
-        <div class="row">
-          <label class="field">Wall PIN (4 digits)
-            <input id="wallPin" type="password" inputmode="numeric" maxlength="4" value="${this._escape(cfg.wall_pin || "")}" placeholder="1234" />
-          </label>
+        <div class="card">
+          ${head(ICONS.window, "", "Windows & doors", "While any of these is open, the house stops calling for heat.", count("window_sensors"))}
+          <div class="set-list" data-settings-list="window_sensors">${this._renderSettingsList("window_sensors")}</div>
+          <div class="entity-picker-host set-add" data-settings-picker="window_sensors"></div>
         </div>
-        <p class="muted">True Radiant preheats on time. Auto-Schedule learns from Home dial changes. Seasonal Savings gently lowers comfort over 21 days. Adaptive Comfort nudges Eco from outdoor temp. Wall PIN unlocks locked NSPanels only.</p>
       </div>
-      <div class="card">
-        <p class="card-title">Safety Temperatures</p>
-        <div class="row">
-          <label class="field">Enabled
-            <select id="safetyEnabled">
-              <option value="true" ${cfg.safety_temp_enabled !== false ? "selected" : ""}>On</option>
-              <option value="false" ${cfg.safety_temp_enabled === false ? "selected" : ""}>Off</option>
-            </select>
-          </label>
-          <label class="field">Min house °C
-            <input id="safetyMin" type="number" step="0.5" min="5" max="12" value="${this._escape(cfg.safety_min_temp ?? 7)}" />
-          </label>
+      <div class="ov-grid">
+        <div class="card">
+          ${head(ICONS.tune, "", "Temperatures & modes", "Setpoints for each preset.")}
+          ${row("Eco", "Energy-saving setpoint.", num("ecoTemp", cfg.eco_temp ?? 16, "°C", 'step="0.5"'))}
+          ${row("Boost", "Quick warm-up setpoint.", num("boostTemp", cfg.boost_temp ?? 22, "°C", 'step="0.5"'))}
+          ${row("Away", "Used while everyone is out.", num("awayTemp", cfg.away_temp ?? 15, "°C", 'step="0.5"'))}
+          ${row("Summer mode", "Never calls for heat (the safety floor still applies).", toggle("summerMode", cfg.summer_mode))}
         </div>
-        <p class="muted">If the house sensor drops to this floor, Neat forces heat even when Away / Eco / Off would otherwise leave it cold.</p>
+        <div class="card">
+          ${head(ICONS.sparkle, "intel", "Nest intelligence", "Learning and comfort features for the house.")}
+          ${row("True Radiant", "Starts heating early so it's warm when a schedule block begins.", toggle("trueRadiant", cfg.true_radiant !== false))}
+          ${row("Auto-Schedule", "Learns schedule changes from your manual adjustments.", toggle("autoSchedule", cfg.auto_schedule))}
+          ${row("Leaf coaching", "Shows the leaf when you're saving energy.", toggle("leafEnabled", cfg.leaf_enabled !== false))}
+          ${row("Seasonal Savings", "Gently lowers comfort over 21 days.", toggle("seasonalSavings", cfg.seasonal_savings))}
+          ${row("Adaptive Comfort", "Nudges Eco using the outdoor temperature.", toggle("adaptiveComfort", cfg.adaptive_comfort))}
+        </div>
       </div>
-      <div class="card">
-        <p class="card-title">Behaviour</p>
-        <div class="row">
-          <label class="field">Cold tolerance<input id="coldTol" type="number" step="0.1" value="${this._escape(cfg.cold_tolerance ?? 0.3)}" /></label>
-          <label class="field">Hot tolerance<input id="hotTol" type="number" step="0.1" value="${this._escape(cfg.hot_tolerance ?? 0.3)}" /></label>
-          <label class="field">Min boiler on (min)<input id="minOnMin" type="number" step="1" min="0" max="30" value="${this._escape(cfg.min_on_minutes ?? 1)}" /></label>
-          <label class="field">Min boiler off (min)<input id="minOffMin" type="number" step="1" min="0" max="30" value="${this._escape(cfg.min_off_minutes ?? 1)}" /></label>
-          <label class="field">Summer mode
-            <select id="summerMode">
-              <option value="false" ${!cfg.summer_mode ? "selected" : ""}>Off</option>
-              <option value="true" ${cfg.summer_mode ? "selected" : ""}>On</option>
-            </select>
-          </label>
+      <div class="ov-grid">
+        <div class="card">
+          ${head(ICONS.shield, "warn", "Safety temperature", "Frost and pipe protection.")}
+          ${row("Enabled", "Forces heat even in Away, Eco or Off if the house gets this cold.", toggle("safetyEnabled", cfg.safety_temp_enabled !== false))}
+          ${row("Minimum house temperature", "", num("safetyMin", cfg.safety_min_temp ?? 7, "°C", 'step="0.5" min="5" max="12"'))}
+          ${row("Wall panel PIN", "Unlocks NSPanels that have Temperature lock on.", `<div class="num-input"><input id="wallPin" type="password" inputmode="numeric" maxlength="4" value="${this._escape(cfg.wall_pin || "")}" placeholder="••••" /></div>`)}
         </div>
+        <div class="card">
+          ${head(ICONS.gauge, "", "Boiler behaviour", "Fine-tuning. The defaults suit most homes.")}
+          ${row("Cold tolerance", "Heat starts this far below the target.", num("coldTol", cfg.cold_tolerance ?? 0.3, "°C", 'step="0.1" min="0"'))}
+          ${row("Hot tolerance", "Heat stops this far above the target.", num("hotTol", cfg.hot_tolerance ?? 0.3, "°C", 'step="0.1" min="0"'))}
+          ${row("Minimum on time", "Shortest boiler run.", num("minOnMin", cfg.min_on_minutes ?? 1, "min", 'step="1" min="0" max="30"'))}
+          ${row("Minimum off time", "Shortest rest between runs.", num("minOffMin", cfg.min_off_minutes ?? 1, "min", 'step="1" min="0" max="30"'))}
+        </div>
+      </div>
+      <div class="save-bar">
+        <span class="muted">Changes apply when you save.</span>
         <button class="primary" id="saveSettings">Save settings</button>
       </div>
     `;
@@ -2337,7 +2510,7 @@ class NeatThermostatPanel extends HTMLElement {
               <div class="panel-brand-mark" aria-hidden="true">${logoSvg()}</div>
               <div>
                 <div class="panel-brand-title">Neat Thermostat</div>
-                <div class="panel-brand-sub">Intelligent heating control</div>
+                <div class="panel-brand-sub">Intelligent Heating Control</div>
               </div>
             </div>
           </div>
@@ -2356,6 +2529,7 @@ class NeatThermostatPanel extends HTMLElement {
     this._bind();
     this._bindWallPreview();
     this._bindRoomDrag();
+    this._layoutEnergyBubbles();
     // Overview re-renders every few seconds; keep the Entities section as the user left it.
     this.shadowRoot.getElementById("ovEntities")?.addEventListener("toggle", (ev) => {
       this._entitiesOpen = ev.target.open;
@@ -2509,13 +2683,13 @@ class NeatThermostatPanel extends HTMLElement {
             hot_tolerance: Number(this.shadowRoot.getElementById("hotTol").value),
             min_on_minutes: Number(this.shadowRoot.getElementById("minOnMin").value),
             min_off_minutes: Number(this.shadowRoot.getElementById("minOffMin").value),
-            summer_mode: this.shadowRoot.getElementById("summerMode").value === "true",
-            true_radiant: this.shadowRoot.getElementById("trueRadiant").value === "true",
-            auto_schedule: this.shadowRoot.getElementById("autoSchedule").value === "true",
-            leaf_enabled: this.shadowRoot.getElementById("leafEnabled").value === "true",
-            seasonal_savings: this.shadowRoot.getElementById("seasonalSavings").value === "true",
-            adaptive_comfort: this.shadowRoot.getElementById("adaptiveComfort").value === "true",
-            safety_temp_enabled: this.shadowRoot.getElementById("safetyEnabled").value === "true",
+            summer_mode: this.shadowRoot.getElementById("summerMode").checked,
+            true_radiant: this.shadowRoot.getElementById("trueRadiant").checked,
+            auto_schedule: this.shadowRoot.getElementById("autoSchedule").checked,
+            leaf_enabled: this.shadowRoot.getElementById("leafEnabled").checked,
+            seasonal_savings: this.shadowRoot.getElementById("seasonalSavings").checked,
+            adaptive_comfort: this.shadowRoot.getElementById("adaptiveComfort").checked,
+            safety_temp_enabled: this.shadowRoot.getElementById("safetyEnabled").checked,
             safety_min_temp: Number(this.shadowRoot.getElementById("safetyMin").value),
             wall_pin: this.shadowRoot.getElementById("wallPin").value.trim(),
             away_delay_minutes: Number(this.shadowRoot.getElementById("awayDelay").value),
@@ -2539,8 +2713,7 @@ class NeatThermostatPanel extends HTMLElement {
         const trv = String(draft.trv || "").trim();
         const sensor = String(draft.sensor || "").trim();
         const extras = (draft.extras || []).map((s) => String(s).trim()).filter(Boolean);
-        const callsForHeat =
-          this.shadowRoot.getElementById("roomCallsForHeat")?.value === "true";
+        const callsForHeat = this.shadowRoot.getElementById("roomCallsForHeat")?.checked !== false;
         if (!name || !trv) {
           this._error = "Room name and TRV required";
           this._showToast(this._error, "err");
@@ -2555,8 +2728,10 @@ class NeatThermostatPanel extends HTMLElement {
             .toLowerCase()
             .replace(/\s+/g, "_")
             .replace(/[^a-z0-9_]/g, "");
-        const rooms = [...(this._cfg().rooms || [])].filter((r) => r.id !== id);
-        rooms.push({
+        const rooms = [...(this._cfg().rooms || [])];
+        // Replace in place (keeps the user's room order); new rooms go at the end.
+        const at = rooms.findIndex((r) => r.id === id);
+        const room = {
           id,
           name,
           trv_entity: trv,
@@ -2568,7 +2743,9 @@ class NeatThermostatPanel extends HTMLElement {
           eco_temp: existing?.eco_temp,
           boost_temp: existing?.boost_temp,
           window_sensors: existing?.window_sensors || [],
-        });
+        };
+        if (at >= 0) rooms[at] = room;
+        else rooms.push(room);
         try {
           await this._ws("neat_thermostat/update_rooms", { rooms });
           this._editingRoomId = null;
@@ -2582,17 +2759,24 @@ class NeatThermostatPanel extends HTMLElement {
         }
       });
 
-      this.shadowRoot.querySelectorAll("tr.room-row[data-room-id]").forEach((row) => {
-        row.addEventListener("click", (ev) => {
-          if (ev.target.closest("[data-toggle-calls]")) return;
-          const room = (this._cfg().rooms || []).find((r) => r.id === row.dataset.roomId);
+      this.shadowRoot.querySelectorAll(".room-card[data-room-id]").forEach((card) => {
+        const open = () => {
+          const room = (this._cfg().rooms || []).find((r) => r.id === card.dataset.roomId);
           this._loadRoomIntoForm(room);
+        };
+        card.addEventListener("click", (ev) => {
+          if (this._suppressZoneClick || ev.target.closest(".switch")) return;
+          open();
+        });
+        card.addEventListener("keydown", (ev) => {
+          if (ev.target !== card || (ev.key !== "Enter" && ev.key !== " ")) return;
+          ev.preventDefault();
+          open();
         });
       });
 
       this.shadowRoot.querySelectorAll("[data-toggle-calls]").forEach((btn) => {
-        btn.addEventListener("click", async (ev) => {
-          ev.stopPropagation();
+        btn.addEventListener("change", async () => {
           const id = btn.dataset.toggleCalls;
           const rooms = (this._cfg().rooms || []).map((r) =>
             r.id === id ? { ...r, calls_for_heat: r.calls_for_heat === false } : { ...r }
@@ -2636,7 +2820,7 @@ class NeatThermostatPanel extends HTMLElement {
       });
 
       this.shadowRoot.getElementById("roomCallsForHeat")?.addEventListener("change", (ev) => {
-        this._roomDraft.calls_for_heat = ev.target.value === "true";
+        this._roomDraft.calls_for_heat = ev.target.checked;
       });
     }
 
