@@ -1,4 +1,4 @@
-"""The integration's copy of the wall app must match nspanel-thermostat-v2/.
+"""The integration's copy of the wall app must match nspanel-thermostat/.
 
 Fix a failure with: python scripts/sync_wall_app.py
 """

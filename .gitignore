@@ -15,3 +15,9 @@ nspanel-thermostat/apk/build/
 nspanel-thermostat/apk/app/build/
 nspanel-thermostat/node_modules/
 nspanel-thermostat/dist/
+deprecated/nspanel-thermostat-v1/config.json
+deprecated/nspanel-thermostat-v1/apk/.gradle/
+deprecated/nspanel-thermostat-v1/apk/build/
+deprecated/nspanel-thermostat-v1/apk/app/build/
+deprecated/nspanel-thermostat-v1/node_modules/
+deprecated/nspanel-thermostat-v1/dist/

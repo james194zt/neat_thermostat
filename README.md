@@ -53,20 +53,22 @@ show_rooms: true
 
 ## NSPanel / wall UI
 
-| Folder | Purpose |
-|--------|---------|
-| [`nspanel-thermostat/`](nspanel-thermostat/) | **Stable fallback** — Neat-wired copy of the working wall UI. Leave this alone for rollback. |
-| [`nspanel-thermostat-v2/`](nspanel-thermostat-v2/) | **Restyle fork** — redesign / restyle work happens here. |
-| `HADashboard/nspanel-thermostat` | **Live production panels** — do not change unless deliberately redeploying. |
+The wall panel app lives in [`nspanel-thermostat/`](nspanel-thermostat/) and **ships with the
+integration** — HACS updates it, nothing to copy into `/config/www`. Set each panel's kiosk
+browser to:
 
-Neat wiring (both copies):
+```
+http://<home-assistant>:8123/neat_thermostat/static/wall/index.html?device=<panel id>
+```
 
-1. Define wall panels in the Neat sidebar
-2. Setup page → connect to HA → **select which wall panel this screen is**
+Panels reload themselves within a minute of a Neat update.
+
+1. Add the panel in the Neat sidebar → **Wall panels** (the Preview shows exactly what it will look like)
+2. Open the URL on the panel; enter the HA URL + token once on the setup page
 3. Full config loads from Neat via `neat_thermostat/get_wall_panel_config`
 4. Locked panels prompt for the house **Wall PIN** before setpoint/mode changes; unlock lasts until screensaver/idle
 
-Deploy **v2** only when ready; keep **v1** (`nspanel-thermostat/`) available as fallback.
+The original v1 app is retired and kept only for reference in [`deprecated/`](deprecated/).
 ## Neat Intelligence (house only)
 
 Intelligence applies to **`climate.neat_home` / the boiler**, not per-room TRV learning.

@@ -1,0 +1,331 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body.setup-body {
+  margin: 0;
+  min-height: 100vh;
+  background: #12171c;
+  color: #ffffff;
+}
+
+.manager {
+  width: min(1100px, 100%);
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+}
+
+.manager-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.manager-header h1 {
+  margin: 0 0 8px;
+  font-size: 28px;
+}
+
+.lead {
+  margin: 0;
+  max-width: 62ch;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.header-link {
+  flex-shrink: 0;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.setup-section {
+  margin-bottom: 18px;
+  padding: 16px;
+  border-radius: 16px;
+  background: #1b2228;
+}
+
+.setup-section h2,
+.nested-section h3 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.nested-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 12px;
+}
+
+label {
+  display: block;
+  margin: 10px 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+input {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.22);
+  color: #ffffff;
+  font: inherit;
+  font-size: 14px;
+}
+
+input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.connection-status {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.connection-status.ok {
+  color: #7dffb3;
+}
+
+.connection-status.err {
+  color: #ff8f8f;
+}
+
+.manager-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.sidebar-head,
+.sidebar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sidebar-actions {
+  flex-direction: column;
+  margin-top: 12px;
+}
+
+.device-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.device-list button {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.device-list button.active {
+  border-color: rgba(37, 177, 246, 0.55);
+  background: rgba(37, 177, 246, 0.14);
+}
+
+.device-list .id {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.room-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.room-row {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 8px;
+}
+
+.setup-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+button,
+.file-button {
+  display: block;
+  width: 100%;
+  padding: 14px;
+  border: 0;
+  border-radius: 12px;
+  text-align: center;
+  text-decoration: none;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+button.primary {
+  background: #25b1f6;
+  color: #041018;
+}
+
+button.danger {
+  background: rgba(255, 92, 92, 0.2);
+  color: #ffb4b4;
+}
+
+button.compact {
+  width: auto;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.setup-status {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(37, 177, 246, 0.15);
+  color: #9edcff;
+  font-size: 13px;
+  grid-column: 1 / -1;
+}
+
+.setup-status.hidden {
+  display: none;
+}
+
+.setup-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+  line-height: 1.35;
+}
+
+code {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+@media (max-width: 860px) {
+  .manager-layout,
+  .field-grid,
+  .setup-actions,
+  .room-row {
+    grid-template-columns: 1fr;
+  }
+
+  .manager-header {
+    flex-direction: column;
+  }
+}
+
+/* Keep old narrow panel usable if opened on the NSPanel itself */
+@media (max-width: 520px) {
+  .manager {
+    padding: 12px;
+  }
+
+  .manager-header h1 {
+    font-size: 22px;
+  }
+}
+
+.picker-manager {
+  width: min(640px, 100%);
+}
+
+.panel-pick-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.panel-pick-empty {
+  color: rgba(255, 255, 255, 0.6);
+  padding: 8px 0;
+}
+
+.panel-pick-btn {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: #12171c;
+  color: #fff;
+  cursor: pointer;
+}
+
+.panel-pick-btn:hover {
+  border-color: rgba(37, 177, 246, 0.55);
+}
+
+.panel-pick-btn.selected {
+  border-color: #25b1f6;
+  background: rgba(37, 177, 246, 0.12);
+}
+
+.panel-pick-label {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.panel-pick-id {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  font-family: ui-monospace, Consolas, monospace;
+}

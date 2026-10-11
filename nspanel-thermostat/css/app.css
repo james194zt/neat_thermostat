@@ -1,19 +1,19 @@
 :root {
-  --bg-idle: #2b333a;
-  --bg-heating: #d37c35;
-  --bg-cooling: #0055ff;
-  --bg-eco: #2d6a4f;
-  --bg-boost: #c1121f;
+  --bg: #2a2e33;
+  --bg-deep: #1e2226;
+  --face: #32363c;
+  --face-hi: #3a3f46;
   --text: #ffffff;
-  --text-muted: rgba(255, 255, 255, 0.75);
-  --surface: rgba(0, 0, 0, 0.18);
-  --surface-strong: rgba(0, 0, 0, 0.28);
-  --accent: #25b1f6;
+  --text-muted: rgba(255, 255, 255, 0.55);
+  --ring-red: #e53935;
+  --ring-orange: #ff9800;
+  --ring-amber: #ffc107;
+  --humidity: #42a5f5;
+  --outdoor: #66bb6a;
   --danger: #ff5c5c;
-  --radius: 18px;
-  --pad: 2.5vmin;
-  --gap: 2vmin;
-  font-family: "Segoe UI", system-ui, sans-serif;
+  --pad: 2.2vmin;
+  --gap: 1.6vmin;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 
 * {
@@ -29,11 +29,7 @@ body {
   height: 100%;
   overflow: hidden;
   color: var(--text);
-  background: var(--bg-idle);
-}
-
-body {
-  transition: background 0.35s ease;
+  background: var(--bg);
 }
 
 button {
@@ -44,456 +40,730 @@ button {
   cursor: pointer;
 }
 
-/* Same vertical rhythm as before weather — weather is overlaid, not in flow. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+.hidden {
+  display: none !important;
+}
+
 .app {
   width: 100%;
   height: 100%;
   display: grid;
-  grid-template-rows:
-    auto
-    auto
-    minmax(0, 1fr)
-    auto
-    auto
-    auto
-    auto
-    auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "header"
+    "banner"
+    "stage"
+    "eta"
+    "rooms";
   padding: var(--pad);
   gap: var(--gap);
   overflow: hidden;
+  background: radial-gradient(ellipse at 50% 35%, #343940 0%, var(--bg) 55%, var(--bg-deep) 100%);
 }
 
-.banner {
-  padding: 1.5vmin 2vmin;
-  border-radius: 2vmin;
-  background: rgba(0, 0, 0, 0.28);
-  text-align: center;
-  font-size: 2.8vmin;
-  font-weight: 600;
-}
-
-.status-row {
-  display: flex;
-  justify-content: center;
-}
-
-.status-row.hidden {
-  display: none;
-}
-
-.top-bar {
-  position: relative;
-  z-index: 3;
+/* —— Header —— */
+.ring-header {
+  grid-area: header;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto auto 1fr auto;
+  grid-template-areas: "back zone mid conn";
   align-items: center;
-  gap: var(--gap);
-}
-
-.app.room-view .top-bar {
-  grid-template-columns: auto 1fr auto;
-}
-
-.top-left {
+  gap: 1vmin;
   position: relative;
-  justify-self: start;
-  min-width: 0;
+  z-index: 2;
 }
 
-.app.room-view .top-left {
-  justify-self: center;
+.zone-pill {
+  grid-area: zone;
+  justify-self: start;
+  padding: 1.1vmin 3.5vmin;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  font-size: 2.6vmin;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .top-back {
-  padding: 1.5vmin 2.5vmin;
+  grid-area: back;
+  justify-self: start;
+  padding: 1.2vmin 2.4vmin;
   border-radius: 999px;
-  background: var(--surface-strong);
+  background: rgba(0, 0, 0, 0.35);
+  font-size: 2.4vmin;
+  font-weight: 700;
+}
+
+.conn-dot {
+  grid-area: conn;
+  justify-self: end;
+  width: 2vmin;
+  height: 2vmin;
+  border-radius: 50%;
+  background: #6b7280;
+  box-shadow: 0 0 0 0.4vmin rgba(0, 0, 0, 0.2);
+}
+
+.conn-dot.online {
+  background: #52c41a;
+}
+
+.conn-dot.offline {
+  background: var(--danger);
+}
+
+.banner {
+  grid-area: banner;
+  padding: 1.4vmin 2vmin;
+  border-radius: 2vmin;
+  background: rgba(0, 0, 0, 0.35);
+  text-align: center;
+  font-size: 2.6vmin;
+  font-weight: 600;
+}
+
+.banner.warn {
+  color: #ffd666;
+}
+
+/* Stack both banners into the same row when visible */
+#windowBanner {
+  grid-area: banner;
+}
+
+#summerPill {
+  grid-area: banner;
+}
+
+/* —— Ring stage —— */
+.ring-stage {
+  grid-area: stage;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  overflow: visible;
+}
+
+.thermo-ring {
+  /* Prefer filling stage height so the dial sits large with cards below */
+  --gauge-accent: #9aa0a6;
+  position: relative;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: 0 2vmin 6vmin rgba(0, 0, 0, 0.35);
+  overflow: visible;
+}
+
+.ring-gauge {
+  position: absolute;
+  /* Extend past the dial so callout labels aren't clipped */
+  inset: -12%;
+  width: 124%;
+  height: 124%;
+  z-index: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.ring-gauge .tick {
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  transition: stroke 0.25s ease, stroke-width 0.25s ease;
+}
+
+.ring-gauge .tick.major {
+  stroke: rgba(255, 255, 255, 0.28);
+  stroke-width: 1.6;
+}
+
+.ring-gauge .tick.active {
+  stroke: var(--gauge-accent);
+  stroke-width: 2.35;
+}
+
+.ring-callout {
+  fill: var(--gauge-accent);
+  font-size: 10px;
+  font-weight: 700;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+.ring-callout-line {
+  display: none;
+}
+
+.thermo-ring[data-state="heating"] {
+  --gauge-accent: #ff9800;
+  box-shadow:
+    0 0 0 0.45vmin rgba(255, 152, 0, 0.22),
+    0 2vmin 6vmin rgba(0, 0, 0, 0.35);
+}
+
+.thermo-ring[data-state="eco"] {
+  --gauge-accent: #66bb6a;
+}
+
+.thermo-ring[data-state="boost"] {
+  --gauge-accent: #ff5252;
+}
+
+.thermo-ring[data-state="off"] {
+  --gauge-accent: #6b7280;
+}
+
+.thermo-ring[data-state="idle"] {
+  --gauge-accent: #9aa0a6;
+}
+
+.thermo-ring[data-state="off"] .tick.active,
+.thermo-ring[data-state="idle"] .tick.active {
+  filter: none;
+}
+
+.ring-face {
+  position: absolute;
+  inset: 7.5%;
+  z-index: 1;
+  border-radius: 50%;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.06) 0%, transparent 42%),
+    radial-gradient(circle at 50% 40%, var(--face-hi) 0%, var(--face) 70%, #282c31 100%);
+  overflow: hidden;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.ring-face-inner {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  align-content: stretch;
+  padding: 5% 5% 11%;
+  gap: 0.6vmin;
+}
+
+.ring-sheen {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  /* Soft top highlight only — no hard diagonal band across the setpoint */
+  background: radial-gradient(
+    ellipse 80% 55% at 50% 0%,
+    rgba(255, 255, 255, 0.06) 0%,
+    transparent 70%
+  );
+  transform: none;
+}
+
+.ring-top {
+  position: relative;
+  z-index: 1;
+  grid-row: 1;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Icon column + value column, then centre the whole block */
+.stat-row {
+  display: grid;
+  grid-template-columns: 5vmin max-content;
+  column-gap: 1.4vmin;
+  row-gap: 1.2vmin;
+  align-items: center;
+  justify-items: start;
+  margin: 0 auto;
+}
+
+.stat-line {
+  display: contents;
+}
+
+.stat-icon {
+  width: 5vmin;
+  height: 5vmin;
+  grid-column: 1;
+  justify-self: center;
+}
+
+.stat-line > span {
+  grid-column: 2;
+  font-size: 4.8vmin;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  min-width: 4.5ch;
+}
+
+.outdoor-icon,
+.stat-line.outdoor > span {
+  color: var(--outdoor);
+}
+
+.humidity-icon,
+.stat-line.humidity > span {
+  color: var(--humidity);
+}
+
+.ring-mid {
+  /* Span the full face; buttons pin to left/right edges, setpoint centres independently */
+  grid-row: 1 / -1;
+  grid-column: 1;
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+
+.ring-mid .temp-btn,
+.ring-mid .current-temp {
+  pointer-events: auto;
+}
+
+.temp-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+  width: clamp(48px, 12.5vmin, 76px);
+  height: clamp(48px, 12.5vmin, 76px);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  line-height: 0;
+}
+
+#tempDown {
+  left: 5%;
+}
+
+#tempUp {
+  right: 5%;
+}
+
+.temp-btn:active {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.temp-btn-glyph {
+  display: block;
+  font-size: clamp(28px, 7vmin, 44px);
+  font-weight: 400;
+  line-height: 1;
+  transform: translateY(-0.06em);
+}
+
+.current-temp {
+  /* Centre on the integer only — decimal is out-of-flow so it can't shift or hit + */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+  display: block;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+  width: max-content;
+  overflow: visible;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.current-temp.is-empty .temp-int {
+  font-size: clamp(4.2rem, 22vmin, 9.5rem);
+  opacity: 0.35;
+  letter-spacing: 0.02em;
+}
+
+.current-temp.is-off .temp-int {
+  font-size: clamp(2.6rem, 12vmin, 5.2rem);
+  letter-spacing: 0.12em;
+  min-width: unset;
+  font-weight: 700;
+  opacity: 0.92;
+}
+
+.temp-int {
+  display: block;
+  min-width: 2ch;
+  text-align: center;
+  font-size: clamp(4.4rem, 23vmin, 10rem);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.temp-dec {
+  position: absolute;
+  left: 100%;
+  top: 0.08em;
+  display: block;
+  font-size: clamp(1.35rem, 6.2vmin, 2.8rem);
+  font-weight: 600;
+  opacity: 0.92;
+  margin-left: 0.04em;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.ring-divider {
+  position: relative;
+  z-index: 1;
+  grid-row: 3;
+  height: 1px;
+  margin: 0 4% 0.6vmin;
+  background: rgba(255, 255, 255, 0.22);
+  flex-shrink: 0;
+}
+
+.ring-bottom {
+  position: relative;
+  z-index: 1;
+  grid-row: 4;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: flex-start;
+  padding: 0 4% 1%;
+  flex-shrink: 0;
+  min-height: 3.6em;
+}
+
+.meta-block {
+  text-align: center;
+  min-width: clamp(56px, 14vmin, 88px);
+}
+
+.ring-bottom > .meta-block:first-child {
+  justify-self: center;
+}
+
+.ring-bottom > .mode-btn-face {
+  justify-self: center;
+}
+
+/* Sit on the face itself (not the inner grid) so it can't steal MODE's place */
+.ring-leaf {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: 3.5%;
+  transform: translateX(-50%);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: clamp(26px, 6.5vmin, 40px);
+  height: clamp(26px, 6.5vmin, 40px);
+  color: #66bb6a;
+  pointer-events: none;
+}
+
+.ring-leaf.is-active {
+  display: flex;
+}
+
+.ring-leaf svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.meta-label {
+  font-size: clamp(10px, 2.1vmin, 14px);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.5vmin;
+}
+
+.meta-value {
+  font-size: clamp(18px, 4.6vmin, 30px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.mode-btn-face {
+  display: block;
+  width: auto;
+  padding: 0;
+}
+
+.mode-icon {
+  color: var(--ring-orange);
+  font-size: clamp(16px, 3.8vmin, 24px);
+  min-height: 1.2em;
+  line-height: 0;
+}
+
+.mode-icon[data-mode="eco"],
+.mode-icon[data-mode="away"] {
+  color: var(--outdoor);
+}
+
+.mode-icon[data-mode="off"] {
+  color: var(--text-muted);
+}
+
+.mode-icon svg {
+  width: clamp(22px, 4.8vmin, 32px);
+  height: clamp(22px, 4.8vmin, 32px);
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.mode-icon .mode-icon-img {
+  width: clamp(26px, 6.2vmin, 40px);
+  height: clamp(26px, 6.2vmin, 40px);
+  object-fit: contain;
+  display: inline-block;
+  vertical-align: middle;
+  pointer-events: none;
+  background: transparent;
+  /* Drop any residual black plate on the dark dial face */
+  mix-blend-mode: lighten;
+}
+
+/* —— Mode drawer —— */
+.mode-drawer {
+  grid-area: eta;
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 1.5vmin;
+}
+
+.mode-btn {
+  padding: 1.6vmin 3.2vmin;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
   font-size: 2.6vmin;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  white-space: nowrap;
-}
-
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 1vmin;
-  padding: 1.2vmin 2vmin;
-  border-radius: 999px;
-  background: var(--surface);
-  font-size: 2.5vmin;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-#actionPill {
-  justify-self: end;
-}
-
-/* Sits under Connected without pushing thermostat layout down. */
-.weather-block {
-  position: absolute;
-  top: calc(100% + 1vmin);
-  left: 1.2vmin;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.6vmin;
-  min-width: 0;
-  pointer-events: none;
-}
-
-.weather-block[hidden] {
-  display: none;
-}
-
-.weather-main {
-  display: flex;
-  align-items: center;
-  gap: 1.4vmin;
-  line-height: 1.15;
-  min-width: 0;
-}
-
-.weather-icon {
-  width: 5vmin;
-  height: 5vmin;
-  flex-shrink: 0;
-  display: block;
-  object-fit: contain;
-}
-
-.weather-temp {
-  font-size: 3.6vmin;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-}
-
-.weather-label {
-  font-size: 3.1vmin;
-  font-weight: 500;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.weather-sun {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 2.2vmin;
-  font-size: 2.5vmin;
-  font-weight: 500;
-  color: var(--text-muted);
-  line-height: 1.15;
-}
-
-.sun-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.7vmin;
-  white-space: nowrap;
-}
-
-.sun-icon {
-  width: 2.9vmin;
-  height: 2.9vmin;
-  flex-shrink: 0;
-  display: block;
-  color: var(--accent);
-}
-
-.status-dot {
-  width: 1.6vmin;
-  height: 1.6vmin;
-  border-radius: 50%;
-  background: #7dffb3;
-}
-
-.status-dot.offline {
-  background: var(--danger);
-}
-
-.main-stage {
-  display: contents;
-}
-
-.hero {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.hero-label {
-  font-size: 3vmin;
-  color: var(--text-muted);
-  margin-bottom: 0.5vmin;
-  max-width: 100%;
-  padding: 0 2vmin;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.hero-temp {
-  font-size: 16vmin;
-  line-height: 0.95;
-  font-weight: 300;
-  letter-spacing: -0.04em;
-}
-
-.hero-target {
-  margin-top: 1vmin;
-  font-size: 2.8vmin;
-  color: var(--text-muted);
-  max-width: 100%;
-  padding: 0 2vmin;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.temp-controls {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  column-gap: 2vmin;
-}
-
-.temp-btn {
-  width: 14vmin;
-  height: 14vmin;
-  border-radius: 50%;
-  background: var(--surface-strong);
-  font-size: 8vmin;
-  line-height: 1;
-  display: grid;
-  place-items: center;
-}
-
-#tempDown {
-  justify-self: end;
-}
-
-#tempUp {
-  justify-self: start;
-}
-
-.temp-btn:active,
-.mode-btn:active,
-.room-chip:active,
-.top-back:active {
-  transform: scale(0.96);
-}
-
-.target-display {
-  text-align: center;
-}
-
-.target-display .label {
-  font-size: 2.5vmin;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.target-display .value {
-  font-size: 8vmin;
-  font-weight: 500;
-}
-
-.mode-row {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--gap);
-}
-
-.mode-btn {
-  padding: 2.5vmin 1vmin;
-  border-radius: 2.5vmin;
-  background: var(--surface);
-  font-size: 2.8vmin;
-  font-weight: 600;
-  text-transform: uppercase;
 }
 
 .mode-btn.active {
-  background: rgba(255, 255, 255, 0.22);
-  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
 }
 
-.info-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--gap);
-}
-
-.info-card {
-  padding: 2vmin 1vmin;
-  border-radius: 2vmin;
-  background: var(--surface);
+.footer-eta {
+  grid-area: eta;
+  margin: 0;
   text-align: center;
-}
-
-.info-card .label {
   font-size: 2.3vmin;
   color: var(--text-muted);
-  text-transform: uppercase;
+  min-height: 0;
+  /* Shares the "eta" slot with the mode drawer: never swallow its taps. */
+  pointer-events: none;
 }
 
-.info-card .value {
-  margin-top: 0.5vmin;
-  font-size: 3.8vmin;
-  font-weight: 600;
+.footer-eta:empty,
+.mode-drawer:not(.hidden) ~ .footer-eta {
+  display: none;
 }
 
+/* —— Rooms —— */
 .bottom-panel {
-  display: grid;
-  gap: 1vmin;
-}
-
-.panel-title {
-  font-size: 2.5vmin;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
+  grid-area: rooms;
+  min-height: 0;
+  flex-shrink: 0;
 }
 
 .room-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--gap);
+  gap: 1.4vmin;
+  padding: 0.2vmin 0 0;
+}
+
+.room-strip.room-strip--few {
+  grid-template-columns: repeat(auto-fit, minmax(18vmin, 1fr));
+  justify-content: center;
 }
 
 .room-chip {
   min-width: 0;
-  padding: 2vmin 1vmin;
+  padding: 1.8vmin 1.2vmin;
   border-radius: 2vmin;
-  background: var(--surface);
+  background: rgba(0, 0, 0, 0.32);
   text-align: center;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 
 .room-chip.active {
-  background: rgba(255, 255, 255, 0.22);
-  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.4);
 }
 
 .room-chip .name {
-  font-size: 2.4vmin;
+  font-size: 2.2vmin;
+  font-weight: 600;
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  margin-bottom: 0.4vmin;
 }
 
 .room-chip .temp {
-  margin-top: 0.5vmin;
-  font-size: 3.5vmin;
-  font-weight: 600;
+  font-size: 3.4vmin;
+  font-weight: 700;
   line-height: 1.1;
+  font-variant-numeric: tabular-nums;
 }
 
-.room-chip .state {
+.room-chip .meta {
   display: none;
 }
 
+/* —— Overlays / screensaver (kept usable) —— */
 .overlay {
   position: fixed;
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(0, 0, 0, 0.55);
-  padding: 24px;
-}
-
-.overlay.hidden {
-  display: none;
+  background: rgba(0, 0, 0, 0.72);
+  z-index: 30;
+  padding: 4vmin;
 }
 
 .error-card {
-  width: 100%;
-  max-width: 420px;
-  padding: 20px;
-  border-radius: var(--radius);
-  background: #1b2228;
-  color: var(--text);
+  width: min(92vw, 520px);
+  background: #2c3138;
+  border-radius: 3vmin;
+  padding: 4vmin;
+  box-shadow: 0 2vmin 5vmin rgba(0, 0, 0, 0.4);
 }
 
 .error-card h1 {
-  margin: 0 0 8px;
-  font-size: 22px;
+  margin: 0 0 1.5vmin;
+  font-size: 4vmin;
 }
 
-.error-card p {
-  margin: 0 0 14px;
+.error-card p,
+.error-card label {
+  margin: 0 0 2vmin;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 2.6vmin;
   line-height: 1.4;
 }
 
+.error-card input {
+  width: 100%;
+  margin-bottom: 2vmin;
+  padding: 2vmin;
+  border-radius: 1.5vmin;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.25);
+  color: #fff;
+  font-size: 2.8vmin;
+}
+
 .error-card button {
-  margin-top: 16px;
-  width: 100%;
-  padding: 14px;
-  border-radius: 12px;
-  background: var(--accent);
-  color: #041018;
-  font-weight: 700;
-}
-
-.device-card label {
   display: block;
-  margin: 14px 0 6px;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
+  width: 100%;
+  margin-top: 1.5vmin;
+  padding: 2vmin;
+  border-radius: 1.5vmin;
+  background: #ff9800;
+  color: #1a1a1a;
+  font-weight: 700;
+  font-size: 2.8vmin;
 }
 
-.device-card input {
-  width: 100%;
-  padding: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.22);
-  color: var(--text);
-  font: inherit;
+.error-card .secondary-link {
+  background: transparent;
+  color: var(--text-muted);
+  margin-top: 1vmin;
 }
 
 .device-pick-list {
-  display: grid;
-  gap: 8px;
-  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.2vmin;
+  margin-bottom: 2vmin;
+  max-height: 40vmin;
+  overflow: auto;
 }
 
 .device-pick-list button {
-  margin-top: 0;
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--text);
   text-align: left;
+  padding: 2vmin;
+  border-radius: 1.5vmin;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 2.6vmin;
 }
 
-.device-pick-list .id {
-  display: block;
-  margin-top: 4px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-muted);
+.pin-display {
+  font-size: 8vmin;
+  letter-spacing: 0.35em;
+  text-align: center;
+  margin: 12px 0 18px;
+  font-weight: 600;
 }
 
-.secondary-link {
-  margin-top: 10px !important;
-  background: rgba(255, 255, 255, 0.1) !important;
-  color: var(--text) !important;
+.pin-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
 }
 
-.hidden {
-  display: none !important;
+.pin-pad button {
+  min-height: 56px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.12);
+  color: white;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.pin-pad button[data-digit="ok"] {
+  background: #42a5f5;
+  color: #0a1620;
+}
+
+.pin-error {
+  color: var(--danger);
+  text-align: center;
+  margin: 12px 0 0;
 }
 
 .screensaver {
@@ -527,41 +797,39 @@ button {
   letter-spacing: 0.08em;
 }
 
-.pin-card {
-  max-width: 420px;
-  width: min(92vw, 420px);
-}
-
-.pin-display {
-  font-size: 8vmin;
-  letter-spacing: 0.35em;
-  text-align: center;
-  margin: 12px 0 18px;
-  font-weight: 600;
-}
-
-.pin-pad {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-}
-
-.pin-pad button {
-  min-height: 56px;
-  border: none;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.12);
-  color: white;
-  font-size: 22px;
-  font-weight: 600;
-}
-
-.pin-pad button[data-digit="ok"] {
-  background: var(--accent);
-}
-
-.pin-error {
-  color: var(--danger);
-  text-align: center;
-  margin: 12px 0 0;
+@media (max-height: 520px) {
+  .temp-int {
+    font-size: clamp(3.8rem, 21vmin, 8.5rem);
+  }
+  .current-temp.is-empty .temp-int {
+    font-size: clamp(3.6rem, 20vmin, 8rem);
+  }
+  .temp-dec {
+    font-size: clamp(1.5rem, 7vmin, 3.2rem);
+  }
+  .temp-btn {
+    width: clamp(44px, 11.5vmin, 68px);
+    height: clamp(44px, 11.5vmin, 68px);
+  }
+  .temp-btn-glyph {
+    font-size: clamp(26px, 6.5vmin, 40px);
+  }
+  #tempDown {
+    left: 4%;
+  }
+  #tempUp {
+    right: 4%;
+  }
+  .ring-face {
+    inset: 7.5%;
+  }
+  .ring-face-inner {
+    padding: 4% 4% 10%;
+  }
+  .ring-divider {
+    margin: 0 3% 0.5vmin;
+  }
+  .ring-bottom {
+    min-height: 3.2em;
+  }
 }

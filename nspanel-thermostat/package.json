@@ -1,8 +1,8 @@
 {
   "name": "nspanel-thermostat",
-  "version": "1.0.0",
+  "version": "2.0.0-dev",
   "private": true,
-  "description": "NSPanel Pro Gen2 thermostat app for Home Assistant",
+  "description": "Neat Thermostat wall panel app (NSPanel)",
   "scripts": {
     "cap:sync": "npx cap sync android",
     "cap:open": "npx cap open android",

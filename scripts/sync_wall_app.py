@@ -2,7 +2,7 @@
 
 The integration serves them at /neat_thermostat/static/wall/ (the Neat panel's
 Wall panels preview loads them from there). Run after changing
-nspanel-thermostat-v2/, then commit both; tests/test_wall_app_bundle.py fails
+nspanel-thermostat/, then commit both; tests/test_wall_app_bundle.py fails
 if they drift.
 
     python scripts/sync_wall_app.py
@@ -14,7 +14,7 @@ import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "nspanel-thermostat-v2"
+SRC = ROOT / "nspanel-thermostat"
 DEST = ROOT / "custom_components" / "neat_thermostat" / "www" / "wall"
 
 # Runtime files only: no APK/Capacitor build bits, and never config.json

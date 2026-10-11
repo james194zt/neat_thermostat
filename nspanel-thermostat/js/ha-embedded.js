@@ -1,3 +1,12 @@
+/**
+ * Runs the wall app inside Home Assistant (e.g. the Neat panel's preview iframe),
+ * borrowing the parent page's logged-in `hass` instead of a token.
+ *
+ * `hass.connection` is home-assistant-js-websocket's Connection: it has
+ * subscribeEvents / sendMessagePromise, but no subscribeEntities (that is a
+ * separate library function). HA also swaps in a new `hass` object on every
+ * update, so always read the parent's current one.
+ */
 export class EmbeddedHomeAssistantClient {
   constructor({ onStateChange, onConnectionChange }) {
     this.onStateChange = onStateChange;
@@ -13,29 +22,37 @@ export class EmbeddedHomeAssistantClient {
       throw new Error("Could not connect to Home Assistant dashboard session");
     }
 
-    this.unsubscribe = this.hass.connection.subscribeEntities((entities) => {
-      for (const [entityId, state] of Object.entries(entities)) {
-        this.onStateChange?.(entityId, state);
-      }
-    });
+    const unsub = await this.hass.connection.subscribeEvents((event) => {
+      const { entity_id: entityId, new_state: state } = event?.data || {};
+      if (entityId && state) this.onStateChange?.(entityId, state);
+    }, "state_changed");
+    this.unsubscribe = unsub;
 
     this.setConnected(true);
-    for (const [entityId, state] of Object.entries(this.hass.states)) {
+    for (const [entityId, state] of Object.entries(this.currentHass().states)) {
       this.onStateChange?.(entityId, state);
     }
+  }
+
+  parentHass() {
+    try {
+      const hass = window.parent?.document?.querySelector("home-assistant")?.hass;
+      return hass?.states ? hass : null;
+    } catch {
+      // Cross-origin parent: not embedded in HA after all.
+      return null;
+    }
+  }
+
+  currentHass() {
+    return this.parentHass() || this.hass;
   }
 
   async waitForParentHass(timeoutMs = 15000) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      try {
-        const homeAssistant = window.parent?.document?.querySelector("home-assistant");
-        if (homeAssistant?.hass?.states) {
-          return homeAssistant.hass;
-        }
-      } catch {
-        // Ignore cross-origin access errors while the parent frame loads.
-      }
+      const hass = this.parentHass();
+      if (hass) return hass;
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
     return null;
@@ -48,15 +65,15 @@ export class EmbeddedHomeAssistantClient {
   }
 
   getState(entityId) {
-    return this.hass?.states?.[entityId] ?? null;
+    return this.currentHass()?.states?.[entityId] ?? null;
   }
 
   listEntityIds() {
-    return Object.keys(this.hass?.states ?? {});
+    return Object.keys(this.currentHass()?.states ?? {});
   }
 
   async getUserData(key) {
-    const result = await this.hass.connection.sendMessagePromise({
+    const result = await this.currentHass().connection.sendMessagePromise({
       type: "frontend/get_user_data",
       key,
     });
@@ -64,7 +81,7 @@ export class EmbeddedHomeAssistantClient {
   }
 
   async setUserData(key, value) {
-    await this.hass.connection.sendMessagePromise({
+    await this.currentHass().connection.sendMessagePromise({
       type: "frontend/set_user_data",
       key,
       value,
@@ -72,7 +89,14 @@ export class EmbeddedHomeAssistantClient {
   }
 
   async callService(domain, service, serviceData = {}) {
-    await this.hass.callService(domain, service, serviceData, undefined, true, true);
+    // Plain call_service: asking for a response (return_response) makes HA
+    // reject services such as climate.set_temperature that return none.
+    await this.currentHass().connection.sendMessagePromise({
+      type: "call_service",
+      domain,
+      service,
+      service_data: serviceData,
+    });
   }
 
   async setTemperature(entityId, temperature) {
@@ -97,12 +121,17 @@ export class EmbeddedHomeAssistantClient {
   }
 
   async request(type, payload = {}) {
-    return this.hass.connection.sendMessagePromise({ type, ...payload });
+    return this.currentHass().connection.sendMessagePromise({ type, ...payload });
   }
 
   disconnect() {
-    this.unsubscribe?.();
+    const unsub = this.unsubscribe;
     this.unsubscribe = null;
+    try {
+      unsub?.();
+    } catch {
+      // Connection already gone.
+    }
     this.hass = null;
     this.setConnected(false);
   }
