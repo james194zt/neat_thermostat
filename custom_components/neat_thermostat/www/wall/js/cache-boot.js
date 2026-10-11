@@ -9,7 +9,9 @@
   const ASSETS = {
     app: {
       css: ["css/app.css"],
-      modules: ["js/native-shell.js", "js/app.js"],
+      // js/native-shell.js was for the abandoned Android wrapper; in a browser its
+      // "@capacitor/app" import fails on every load, so it's no longer loaded.
+      modules: ["js/app.js"],
     },
     setup: {
       css: ["css/setup.css"],

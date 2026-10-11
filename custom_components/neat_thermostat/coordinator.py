@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_ON, STATE_OPEN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
@@ -40,6 +41,7 @@ from .intelligence import (
     update_warmup_from_cycle,
 )
 from .control import boiler_cycle_guard, house_calls_for_heat, next_schedule_change, room_calls_for_heat
+from . import kiosk
 from .models import NeatConfig, RoomConfig, WallPanelConfig
 from .schedule import scheduled_temperature
 
@@ -58,6 +60,12 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # State-change subscription, rebuilt when the watched entities change.
         self._state_unsub: Any = None
         self._watched: tuple[str, ...] = ()
+        # Fully Kiosk panels: watched entities, pending syncs and back-off (transient by design:
+        # after a restart everything is simply re-checked against the saved config).
+        self._kiosk_unsub: Any = None
+        self._kiosk_watched: dict[str, str] = {}
+        self._kiosk_timers: dict[str, Any] = {}
+        self._kiosk_attempts: dict[str, int] = {}
         # Last seen heater availability, so a dropout is logged once.
         self._heater_available = True
         self._main_hvac_mode = "heat"
@@ -157,6 +165,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # until the next 30s tick.
         if self._state_unsub is not None:
             self._subscribe_state_changes()
+        if self._kiosk_unsub is not None:
+            self._kiosk_subscribe()
 
     async def async_save_config(self, updates: dict[str, Any]) -> NeatConfig:
         if updates.get("seasonal_savings") is False:
@@ -915,8 +925,96 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else (lambda: None)
         )
 
+    # ---- Fully Kiosk wall panels ----
+    def kiosk_status(self) -> dict[str, Any]:
+        return {
+            "devices": kiosk.fully_devices(self.hass),
+            "defaults": self.config.kiosk_defaults,
+            "auto_sync": self.config.kiosk_auto_sync,
+            "panels": {
+                p.id: kiosk.panel_status(self.hass, p, self.config.kiosk_defaults) for p in self.config.wall_panels
+            },
+        }
+
+    async def async_kiosk_apply(self, panel_id: str | None = None, *, force: bool = True) -> dict[str, list[str]]:
+        """Push settings to one panel (or all linked panels)."""
+        out: dict[str, list[str]] = {}
+        for panel in self.config.wall_panels:
+            if panel_id and panel.id != panel_id:
+                continue
+            if not panel.kiosk_device:
+                continue
+            try:
+                out[panel.id] = await kiosk.async_apply(self.hass, panel, self.config.kiosk_defaults, force=force)
+            except Exception as err:  # noqa: BLE001 - one bad panel mustn't stop the rest
+                _LOGGER.warning("Neat: couldn't sync wall panel %s: %s", panel.id, err)
+                out[panel.id] = [f"error: {err}"]
+        return out
+
+    def _kiosk_subscribe(self) -> None:
+        watched: dict[str, str] = {}
+        for panel in self.config.wall_panels:
+            if panel.kiosk_device:
+                for entity_id in kiosk.device_entities(self.hass, panel.kiosk_device).values():
+                    watched[entity_id] = panel.id
+        if self._kiosk_unsub is not None and watched == self._kiosk_watched:
+            return
+        if self._kiosk_unsub is not None:
+            self._kiosk_unsub()
+
+        @callback
+        def _on_state(event: Any) -> None:
+            panel_id = self._kiosk_watched.get(event.data.get("entity_id"))
+            if not panel_id or not self.config.kiosk_auto_sync:
+                return
+            old = event.data.get("old_state")
+            new = event.data.get("new_state")
+            came_back = (old is None or old.state == "unavailable") and new is not None and new.state != "unavailable"
+            # Back online: re-apply everything soon (it may have lost settings or rebooted).
+            self._kiosk_schedule(panel_id, delay=5 if came_back else 10, force=came_back)
+
+        self._kiosk_watched = watched
+        self._kiosk_unsub = (
+            async_track_state_change_event(self.hass, list(watched), _on_state) if watched else (lambda: None)
+        )
+
+    @callback
+    def _kiosk_schedule(self, panel_id: str, *, delay: float, force: bool = False) -> None:
+        """Debounced sync of one panel; backs off while a panel keeps refusing a setting."""
+        if panel_id in self._kiosk_timers:
+            return
+        attempts = self._kiosk_attempts.get(panel_id, 0)
+        wait = delay if attempts == 0 else min(1800, 60 * 2 ** (attempts - 1))
+
+        async def _run(_now: Any) -> None:
+            self._kiosk_timers.pop(panel_id, None)
+            panel = self.get_wall_panel(panel_id)
+            if panel is None or not panel.kiosk_device or not self.config.kiosk_auto_sync:
+                return
+            status = kiosk.panel_status(self.hass, panel, self.config.kiosk_defaults)
+            if not status.get("online"):
+                return
+            if status.get("in_sync") and not force:
+                self._kiosk_attempts[panel_id] = 0
+                return
+            await self.async_kiosk_apply(panel_id, force=force)
+            after = kiosk.panel_status(self.hass, panel, self.config.kiosk_defaults)
+            self._kiosk_attempts[panel_id] = 0 if after.get("in_sync") else attempts + 1
+
+        self._kiosk_timers[panel_id] = async_call_later(self.hass, wait, _run)
+
     async def async_setup_listeners(self) -> None:
         self._subscribe_state_changes()
+        self._kiosk_subscribe()
+
+        @callback
+        def _kiosk_check(_now: Any) -> None:
+            # Safety net: catch drift on settings HA can only read occasionally.
+            for panel in self.config.wall_panels:
+                if panel.kiosk_device:
+                    self._kiosk_schedule(panel.id, delay=1)
+
+        self._unsubs.append(async_track_time_interval(self.hass, _kiosk_check, timedelta(minutes=10)))
 
         # @callback keeps it on the event loop; without it HA runs it in a worker thread, where
         # async_create_task is refused and the refresh coroutine is dropped (never awaited).
@@ -937,3 +1035,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._state_unsub is not None:
             self._state_unsub()
             self._state_unsub = None
+        if self._kiosk_unsub is not None:
+            self._kiosk_unsub()
+            self._kiosk_unsub = None
+        for cancel in self._kiosk_timers.values():
+            cancel()
+        self._kiosk_timers.clear()

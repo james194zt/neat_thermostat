@@ -10,6 +10,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 
+from . import kiosk
 from .const import DOMAIN, HEATER_DOMAINS
 from .models import RoomConfig, WallPanelConfig, default_schedule
 
@@ -40,6 +41,10 @@ def async_register_ws_handlers(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_energy_history)
     websocket_api.async_register_command(hass, ws_verify_wall_pin)
     websocket_api.async_register_command(hass, ws_stop_seasonal_savings)
+    websocket_api.async_register_command(hass, ws_kiosk_status)
+    websocket_api.async_register_command(hass, ws_kiosk_apply)
+    websocket_api.async_register_command(hass, ws_kiosk_read)
+    websocket_api.async_register_command(hass, ws_kiosk_reload)
 
 
 @websocket_api.websocket_command(
@@ -95,6 +100,8 @@ async def ws_get_state(
         vol.Optional("seasonal_savings"): cv.boolean,
         vol.Optional("adaptive_comfort"): cv.boolean,
         vol.Optional("wall_pin"): cv.string,
+        vol.Optional("kiosk_defaults"): dict,
+        vol.Optional("kiosk_auto_sync"): cv.boolean,
     }
 )
 @websocket_api.async_response
@@ -133,9 +140,13 @@ async def ws_update_settings(
             "seasonal_savings",
             "adaptive_comfort",
             "wall_pin",
+            "kiosk_defaults",
+            "kiosk_auto_sync",
         )
         if k in msg
     }
+    if "kiosk_defaults" in updates:
+        updates["kiosk_defaults"] = kiosk.clean_settings(updates["kiosk_defaults"])
     if "heater" in updates and updates["heater"].split(".", 1)[0] not in HEATER_DOMAINS:
         connection.send_error(
             msg["id"], "invalid", "heater must be a switch, input_boolean or climate"
@@ -148,7 +159,8 @@ async def ws_update_settings(
             return
         updates["wall_pin"] = pin
     config = await coordinator.async_save_config(updates)
-    connection.send_result(msg["id"], {"config": config.to_dict()})
+    synced = await coordinator.async_kiosk_apply() if "kiosk_defaults" in updates else {}
+    connection.send_result(msg["id"], {"config": config.to_dict(), "kiosk_synced": synced})
 
 
 @websocket_api.websocket_command(
@@ -267,9 +279,10 @@ async def ws_upsert_wall_panel(
     config = await coordinator.async_save_config(
         {"wall_panels": [p.to_dict() for p in panels]}
     )
+    synced = await coordinator.async_kiosk_apply(panel.id) if panel.kiosk_device else {}
     connection.send_result(
         msg["id"],
-        {"wall_panels": [p.to_dict() for p in config.wall_panels], "panel": panel.to_dict()},
+        {"wall_panels": [p.to_dict() for p in config.wall_panels], "panel": panel.to_dict(), "kiosk_synced": synced},
     )
 
 
@@ -381,3 +394,82 @@ async def ws_stop_seasonal_savings(
         return
     config = await coordinator.async_stop_seasonal_savings()
     connection.send_result(msg["id"], {"config": config.to_dict()})
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "neat_thermostat/kiosk_status", vol.Optional("entry_id"): cv.string}
+)
+@websocket_api.async_response
+async def ws_kiosk_status(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Fully Kiosk devices, house defaults, and target-vs-actual for every wall panel."""
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
+        return
+    connection.send_result(msg["id"], coordinator.kiosk_status())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "neat_thermostat/kiosk_apply",
+        vol.Optional("entry_id"): cv.string,
+        vol.Optional("panel_id"): cv.string,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_kiosk_apply(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Push settings now to one panel, or every linked panel."""
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
+        return
+    synced = await coordinator.async_kiosk_apply(msg.get("panel_id"))
+    connection.send_result(msg["id"], {"synced": synced, **coordinator.kiosk_status()})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "neat_thermostat/kiosk_read",
+        vol.Optional("entry_id"): cv.string,
+        vol.Required("device_id"): cv.string,
+    }
+)
+@websocket_api.async_response
+async def ws_kiosk_read(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """A Fully device's current values (for "Import from panel"). Unreadable ones are left out."""
+    connection.send_result(msg["id"], {"settings": kiosk.read_current(hass, msg["device_id"])})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "neat_thermostat/kiosk_reload",
+        vol.Optional("entry_id"): cv.string,
+        vol.Required("panel_id"): cv.string,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_kiosk_reload(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Reload the wall app on a panel."""
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    panel = coordinator.get_wall_panel(msg["panel_id"]) if coordinator else None
+    if panel is None or not panel.kiosk_device:
+        connection.send_error(msg["id"], "not_found", "That wall panel isn't linked to a Fully Kiosk device")
+        return
+    status = kiosk.panel_status(hass, panel, coordinator.config.kiosk_defaults)
+    if not status.get("online") or not status.get("expected_url"):
+        connection.send_error(msg["id"], "offline", "The panel is offline")
+        return
+    await hass.services.async_call(
+        kiosk.FULLY_DOMAIN, "load_url", {"device_id": panel.kiosk_device, "url": status["expected_url"]}, blocking=True
+    )
+    connection.send_result(msg["id"], {"ok": True})

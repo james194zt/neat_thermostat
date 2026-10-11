@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.5.3
+ * @version 0.6.0
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.5.3";
+const PANEL_VERSION = "0.6.0";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -288,6 +288,11 @@ button.primary svg, button.secondary svg { vertical-align: -4px; margin: 0 6px 0
 .wp-card-meta strong { color: var(--primary-text-color); font-weight: 500; }
 .wp-card-meta .set-state { padding: 1px 8px; font-size: 11px; }
 .warn-note { color: var(--nt-amber) !important; }
+.kiosk-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.kiosk-act { padding: 2px 6px; font-size: 11px; letter-spacing: 0.04em; }
+.kiosk-act:hover { color: var(--nt-accent-hi); }
+.kiosk-select { width: auto; min-width: 150px; }
+.kiosk-num input { width: 128px; }
 
 /* —— Dialog (add / edit) —— */
 .dlg-backdrop {
@@ -865,6 +870,24 @@ function formatTemp(value) {
   return Number.isInteger(n) ? String(n) : n.toFixed(1).replace(/\.0$/, "");
 }
 
+// Fully Kiosk settings Neat manages (keys match the backend's kiosk.KIOSK_SETTINGS).
+const KIOSK_FIELDS = [
+  { key: "screen_brightness", label: "Screen brightness", desc: "While the panel is in use.", kind: "pct" },
+  { key: "screensaver_timer", label: "Fully screensaver after", desc: "Fully's own screensaver. 0 = never — the Neat app already dims to its clock.", kind: "sec" },
+  { key: "screensaver_brightness", label: "Screensaver brightness", desc: "", kind: "pct" },
+  { key: "screen_off_timer", label: "Screen off after", desc: "0 = never.", kind: "sec" },
+  { key: "kiosk_lock", label: "Kiosk lock", desc: "Stops anyone leaving the app on the panel.", kind: "bool" },
+  { key: "motion_detection", label: "Wake on motion", desc: "Uses the panel's camera.", kind: "bool" },
+];
+
+/** Fully stores brightness 0–255; people think in %. */
+function kioskDisplay(field, raw) {
+  if (raw == null) return "";
+  if (field.kind === "bool") return raw ? "On" : "Off";
+  if (field.kind === "pct") return `${Math.round(Number(raw) / 2.55)}%`;
+  return Number(raw) === 0 ? "Never" : `${raw} s`;
+}
+
 /** Lower-case id from a name: "Hallway Panel" → "hallway-panel". */
 function slugId(value) {
   return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -1005,6 +1028,8 @@ class NeatThermostatPanel extends HTMLElement {
     this._roomDraft = { trv: "", sensor: "", extras: [], calls_for_heat: true };
     this._editingRoomId = null;
     this._roomPickerMountGen = 0;
+    this._kiosk = null;
+    this._kioskTimer = null;
     this._dialogKind = null;
     this._wallEditingId = null;
     this._wallIdTouched = false;
@@ -1023,6 +1048,17 @@ class NeatThermostatPanel extends HTMLElement {
     this._settingsDraft = null;
     this._settingsPickerMountGen = 0;
     this.attachShadow({ mode: "open" });
+    this.shadowRoot.addEventListener("click", (ev) => {
+      const sync = ev.target.closest?.("[data-kiosk-sync]");
+      const reload = ev.target.closest?.("[data-kiosk-reload]");
+      if (sync) {
+        ev.stopPropagation();
+        this._kioskSync(sync.dataset.kioskSync || null);
+      } else if (reload) {
+        ev.stopPropagation();
+        this._kioskReload(reload.dataset.kioskReload);
+      }
+    });
     // Dialog closing: ×, Cancel, backdrop click (not clicks inside the dialog), Esc.
     this.shadowRoot.addEventListener("click", (ev) => {
       const closer = ev.target.closest?.("[data-close-dialog]");
@@ -1073,6 +1109,7 @@ class NeatThermostatPanel extends HTMLElement {
   }
 
   disconnectedCallback() {
+    clearInterval(this._kioskTimer);
     this._previewResize?.disconnect();
     this._previewResize = null;
     this._ehResize?.disconnect();
@@ -1141,6 +1178,7 @@ class NeatThermostatPanel extends HTMLElement {
 
   async _loadState() {
     try {
+      if (this._view === "wall_panels" && !this._kiosk) this._loadKiosk();
       this._state = await this._ws("neat_thermostat/get_state");
       this._error = "";
       if (this._view === "energy") await this._loadEnergy();
@@ -1181,6 +1219,12 @@ class NeatThermostatPanel extends HTMLElement {
     this._view = id;
     this._flash = "";
     this._settingsDraft = null;
+    clearInterval(this._kioskTimer);
+    if (id === "wall_panels") {
+      this._loadKiosk();
+      // Panel status (online / in sync) changes on its own; refresh just the pills.
+      this._kioskTimer = setInterval(() => this._loadKiosk(true), 15000);
+    }
     if (id === "energy") {
       this._loadEnergy().then(() => this._render());
       return;
@@ -1991,6 +2035,7 @@ class NeatThermostatPanel extends HTMLElement {
               <div class="wp-card-name">${this._escape(p.label || p.id)}</div>
               <div class="wp-card-meta">${this._escape(model.label)} · device ID <code>${this._escape(p.id)}</code></div>
               <div class="wp-card-meta">Controls <strong>${this._escape(primaryName)}</strong>${notNeat ? ` <span class="set-state warn">not Neat</span>` : ""}${p.temperature_lock ? ` · <span class="set-state">Locked</span>` : ""}</div>
+              <div class="wp-card-meta kiosk-line" data-kiosk-pill="${this._escape(p.id)}">${this._kioskPillHtml(p.id)}</div>
             </div>
             <button class="secondary compact edit-panel" type="button" data-id="${this._escape(p.id)}">Edit</button>
           </div>`;
@@ -2003,9 +2048,178 @@ class NeatThermostatPanel extends HTMLElement {
         <button class="primary" id="addWallPanel" type="button">${ICONS.plus}Add wall panel</button>
       </div>
       ${panels.length
-        ? `${this._renderWallPreview(panels)}<div class="wp-list">${cards}</div>`
+        ? `${this._renderWallPreview(panels)}<div class="wp-list">${cards}</div><div style="height:14px"></div>${this._renderKioskCard()}`
         : `<div class="card empty-state"><p class="muted" style="margin:0">No wall panels yet.</p><button class="primary" id="addWallPanelEmpty" type="button">${ICONS.plus}Add your first wall panel</button></div>`}
     `;
+  }
+
+  async _loadKiosk(pillsOnly = false) {
+    try {
+      this._kiosk = await this._ws("neat_thermostat/kiosk_status");
+    } catch {
+      this._kiosk = null;
+    }
+    if (this._view !== "wall_panels") return;
+    if (pillsOnly || this._dialogKind) this._refreshKioskPills();
+    else {
+      const card = this.shadowRoot.getElementById("kioskCard");
+      if (card) {
+        card.outerHTML = this._renderKioskCard();
+        this._bindKioskCard();
+      }
+      this._refreshKioskPills();
+    }
+  }
+
+  _kioskPillHtml(panelId) {
+    const s = this._kiosk?.panels?.[panelId];
+    if (!s || !s.linked) return `<span class="set-state">Kiosk not linked</span>`;
+    if (!s.online) return `<span class="set-state bad">Panel offline</span>`;
+    const pill = s.in_sync
+      ? `<span class="set-state good">In sync</span>`
+      : `<span class="set-state warn" title="${this._escape(this._kioskDriftText(s))}">${s.page_ok === false ? "Wrong page" : "Out of sync"}</span>`;
+    return `${pill}
+      ${s.in_sync ? "" : `<button class="linkish kiosk-act" type="button" data-kiosk-sync="${this._escape(panelId)}">Sync now</button>`}
+      <button class="linkish kiosk-act" type="button" data-kiosk-reload="${this._escape(panelId)}">Reload</button>`;
+  }
+
+  _kioskDriftText(s) {
+    const out = [];
+    if (s.page_ok === false) out.push(`Showing ${s.current_page || "another page"}`);
+    for (const f of KIOSK_FIELDS) {
+      const it = s.settings?.[f.key];
+      if (it && it.ok === false) out.push(`${f.label}: ${kioskDisplay(f, it.actual)} (should be ${kioskDisplay(f, it.target)})`);
+    }
+    return out.join(" · ");
+  }
+
+  _refreshKioskPills() {
+    this.shadowRoot.querySelectorAll("[data-kiosk-pill]").forEach((el) => {
+      const html = this._kioskPillHtml(el.dataset.kioskPill);
+      if (el.innerHTML !== html) el.innerHTML = html;
+    });
+  }
+
+  /** One setting's input. Blank = not managed (house) / use the house default (panel). */
+  _kioskControl(field, value, idPrefix, placeholder) {
+    const id = `${idPrefix}${field.key}`;
+    if (field.kind === "bool") {
+      const v = value == null ? "" : value ? "on" : "off";
+      return `<select id="${id}" class="kiosk-select">
+          <option value="" ${v === "" ? "selected" : ""}>${this._escape(placeholder)}</option>
+          <option value="on" ${v === "on" ? "selected" : ""}>On</option>
+          <option value="off" ${v === "off" ? "selected" : ""}>Off</option>
+        </select>`;
+    }
+    const shown = value == null ? "" : field.kind === "pct" ? Math.round(Number(value) / 2.55) : value;
+    const max = field.kind === "pct" ? 100 : 86400;
+    return `<div class="num-input kiosk-num"><input id="${id}" type="number" min="0" max="${max}" step="1" placeholder="${this._escape(placeholder)}" value="${this._escape(shown)}" /><span>${field.kind === "pct" ? "%" : "sec"}</span></div>`;
+  }
+
+  /** Read a set of kiosk inputs back into backend values (blank fields left out). */
+  _readKioskControls(idPrefix) {
+    const out = {};
+    for (const f of KIOSK_FIELDS) {
+      const el = this.shadowRoot.getElementById(`${idPrefix}${f.key}`);
+      if (!el || el.value === "") continue;
+      if (f.kind === "bool") out[f.key] = el.value === "on";
+      else if (f.kind === "pct") out[f.key] = Math.round(Math.min(100, Math.max(0, Number(el.value))) * 2.55);
+      else out[f.key] = Math.max(0, Math.round(Number(el.value)));
+    }
+    return out;
+  }
+
+  _renderKioskCard() {
+    const k = this._kiosk;
+    const head = `
+      <div class="card-head">
+        <span class="card-icon intel">${ICONS.tune}</span>
+        <div class="card-head-text"><p class="card-title">Kiosk browser</p><p class="card-sub">Fully Kiosk settings every panel shares. Leave a setting blank and Neat won't touch it.</p></div>
+      </div>`;
+    if (!k) return `<div class="card" id="kioskCard">${head}<p class="muted" style="margin:0">Loading…</p></div>`;
+    if (!k.devices?.length) {
+      return `<div class="card" id="kioskCard">${head}<p class="muted" style="margin:0">Add the <strong>Fully Kiosk Browser</strong> integration in Home Assistant (needs Fully's Plus licence) to manage your panels from here.</p></div>`;
+    }
+    const d = k.defaults || {};
+    const rows = KIOSK_FIELDS.map(
+      (f) => `
+        <div class="set-row">
+          <div class="set-row-text"><div class="set-row-name">${f.label}</div>${f.desc ? `<div class="set-row-desc">${f.desc}</div>` : ""}</div>
+          <div class="set-row-control">${this._kioskControl(f, d[f.key], "kd_", "Not managed")}</div>
+        </div>`
+    ).join("");
+    return `
+      <div class="card" id="kioskCard">
+        ${head}
+        <div class="set-row">
+          <div class="set-row-text"><div class="set-row-name">Keep panels in sync</div><div class="set-row-desc">Re-applies these when a panel reconnects or drifts. The start URL is always set for you.</div></div>
+          <div class="set-row-control"><label class="switch"><input type="checkbox" id="kioskAutoSync" ${k.auto_sync !== false ? "checked" : ""} /><span></span></label></div>
+        </div>
+        ${rows}
+        <div class="form-actions">
+          <select id="kioskImportFrom" class="kiosk-select" aria-label="Panel to import from">
+            ${k.devices.map((dev) => `<option value="${this._escape(dev.id)}">${this._escape(dev.name)}</option>`).join("")}
+          </select>
+          <button class="secondary" id="kioskImport" type="button">Import from panel</button>
+          <span style="flex:1"></span>
+          <button class="primary" id="kioskSaveDefaults" type="button">Save &amp; sync all</button>
+        </div>
+      </div>`;
+  }
+
+  _bindKioskCard() {
+    this.shadowRoot.getElementById("kioskImport")?.addEventListener("click", async () => {
+      const select = this.shadowRoot.getElementById("kioskImportFrom");
+      const name = select?.selectedOptions?.[0]?.textContent || "the panel";
+      try {
+        const { settings } = await this._ws("neat_thermostat/kiosk_read", { device_id: select.value });
+        let n = 0;
+        for (const f of KIOSK_FIELDS) {
+          const el = this.shadowRoot.getElementById(`kd_${f.key}`);
+          if (!el || settings[f.key] == null) continue;
+          el.value = f.kind === "bool" ? (settings[f.key] ? "on" : "off") : f.kind === "pct" ? Math.round(settings[f.key] / 2.55) : settings[f.key];
+          n++;
+        }
+        const missed = KIOSK_FIELDS.filter((f) => settings[f.key] == null).map((f) => f.label.toLowerCase());
+        this._showToast(`Imported ${n} setting${n === 1 ? "" : "s"} from ${name}${missed.length ? ` — couldn't read ${missed.join(", ")} (left as they were)` : ""}. Save to apply.`);
+      } catch (e) {
+        this._showToast(`Couldn't read ${name}: ${e?.message || e}`, "err");
+      }
+    });
+    this.shadowRoot.getElementById("kioskSaveDefaults")?.addEventListener("click", async () => {
+      try {
+        const res = await this._ws("neat_thermostat/update_settings", {
+          kiosk_defaults: this._readKioskControls("kd_"),
+          kiosk_auto_sync: Boolean(this.shadowRoot.getElementById("kioskAutoSync")?.checked),
+        });
+        const changed = Object.values(res.kiosk_synced || {}).reduce((n, list) => n + list.length, 0);
+        this._showToast(changed ? `Saved — ${changed} change${changed === 1 ? "" : "s"} sent to your panels` : "Saved — panels already match");
+        await this._loadKiosk();
+      } catch (e) {
+        this._showToast(`Couldn't save: ${e?.message || e}`, "err");
+      }
+    });
+  }
+
+  async _kioskSync(panelId) {
+    try {
+      const res = await this._ws("neat_thermostat/kiosk_apply", panelId ? { panel_id: panelId } : {});
+      this._kiosk = res;
+      this._refreshKioskPills();
+      const changed = Object.values(res.synced || {}).reduce((n, list) => n + list.length, 0);
+      this._showToast(changed ? `Synced — ${changed} change${changed === 1 ? "" : "s"} sent` : "Already in sync");
+    } catch (e) {
+      this._showToast(`Couldn't sync: ${e?.message || e}`, "err");
+    }
+  }
+
+  async _kioskReload(panelId) {
+    try {
+      await this._ws("neat_thermostat/kiosk_reload", { panel_id: panelId });
+      this._showToast("Reloading the panel");
+    } catch (e) {
+      this._showToast(`Couldn't reload: ${e?.message || e}`, "err");
+    }
   }
 
   _isNeatClimate(entityId) {
@@ -2081,20 +2295,50 @@ class NeatThermostatPanel extends HTMLElement {
         <div class="dlg-section">
           <div class="dlg-section-title">Screen</div>
           <div class="set-row">
-            <div class="set-row-text"><div class="set-row-name">Screensaver after</div><div class="set-row-desc">Idle time before the panel dims to its clock.</div></div>
+            <div class="set-row-text"><div class="set-row-name">Clock after</div><div class="set-row-desc">Idle time before the Neat app dims to its clock.</div></div>
             <div class="set-row-control"><div class="num-input"><input id="wpIdle" type="number" min="5" step="5" value="${this._escape(d.idleSec ?? 30)}" /><span>sec</span></div></div>
           </div>
           <div class="set-row">
             <div class="set-row-text"><div class="set-row-name">Temperature lock</div><div class="set-row-desc">${String(cfg.wall_pin || "").trim() ? "Changes on the panel need the house PIN." : "Needs a Wall panel PIN in Settings first."}</div></div>
             <div class="set-row-control"><label class="switch"><input type="checkbox" id="wpLock" ${d.lock ? "checked" : ""} /><span></span></label></div>
           </div>
-        </div>`,
+        </div>
+        ${this._renderKioskDialogSection(d)}`,
       foot: `
         ${editing ? `<button class="danger" id="deleteWallPanel" type="button">Delete</button>` : ""}
         <span style="flex:1"></span>
         <button class="secondary" data-close-dialog type="button">Cancel</button>
         <button class="primary" id="saveWallPanel" type="button">${editing ? "Save changes" : "Add wall panel"}</button>`,
     });
+  }
+
+  _renderKioskDialogSection(d) {
+    const k = this._kiosk;
+    if (!k?.devices?.length) return "";
+    const defaults = k.defaults || {};
+    const rows = KIOSK_FIELDS.map((f) => {
+      const house = defaults[f.key];
+      const placeholder = house == null ? "Not managed" : `House: ${kioskDisplay(f, house)}`;
+      return `
+        <div class="set-row">
+          <div class="set-row-text"><div class="set-row-name">${f.label}</div></div>
+          <div class="set-row-control">${this._kioskControl(f, d.kioskOverrides?.[f.key], "ko_", placeholder)}</div>
+        </div>`;
+    }).join("");
+    return `
+      <div class="dlg-section">
+        <div class="dlg-section-title">Kiosk browser</div>
+        <div class="set-field">
+          <div class="set-field-label">Fully Kiosk device</div>
+          <select id="wpKioskDevice">
+            <option value="">Not linked</option>
+            ${k.devices.map((dev) => `<option value="${this._escape(dev.id)}" ${d.kioskDevice === dev.id ? "selected" : ""}>${this._escape(dev.name)}</option>`).join("")}
+          </select>
+          <div class="set-row-desc">Linking lets Neat set this panel's start URL and settings for you.</div>
+        </div>
+        <div class="set-row-desc">Overrides for this panel only — leave blank to use the house setting.</div>
+        ${rows}
+      </div>`;
   }
 
   /** Open the wall panel dialog: a panel to edit, or nothing to add one. */
@@ -2114,6 +2358,8 @@ class NeatThermostatPanel extends HTMLElement {
       weather: sensors.weather || "weather.home",
       idleSec: Math.round(Number(panel?.display?.idleMs ?? 30000) / 1000) || 30,
       lock: Boolean(panel?.temperature_lock),
+      kioskDevice: panel?.kiosk_device || (!panel && this._kiosk?.devices?.length === 1 ? this._kiosk.devices[0].id : ""),
+      kioskOverrides: { ...(panel?.kiosk_overrides || {}) },
     };
     this._openDialog("wall");
   }
@@ -2783,6 +3029,7 @@ class NeatThermostatPanel extends HTMLElement {
     `;
     this._bind();
     this._bindWallPreview();
+    if (this._view === "wall_panels") this._bindKioskCard();
     this._bindRoomDrag();
     this._layoutEnergyBubbles();
     // Overview re-renders every few seconds; keep the Entities section as the user left it.
@@ -3135,12 +3382,22 @@ class NeatThermostatPanel extends HTMLElement {
               display: { idleMs: idleSec * 1000, panelEntity: "" },
               temperature_lock: Boolean(this.shadowRoot.getElementById("wpLock")?.checked),
               model: wallModel(this.shadowRoot.getElementById("wpModel")?.value).id,
+              ...(this.shadowRoot.getElementById("wpKioskDevice")
+                ? {
+                    kiosk_device: this.shadowRoot.getElementById("wpKioskDevice").value,
+                    kiosk_overrides: this._readKioskControls("ko_"),
+                  }
+                : {
+                    kiosk_device: this._wallDraft.kioskDevice || "",
+                    kiosk_overrides: this._wallDraft.kioskOverrides || {},
+                  }),
             },
           });
           this._previewPanel = id;
           this._dialogKind = null;
           this._wallEditingId = null;
           await this._loadState();
+          await this._loadKiosk();
           this._showToast(`Wall panel ${label} saved`);
         } catch (e) {
           this._error = String(e.message || e);

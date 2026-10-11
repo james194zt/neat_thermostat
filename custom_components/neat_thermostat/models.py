@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from .kiosk import clean_settings
 from .const import (
     DAYS,
     DEFAULT_ADAPTIVE_COMFORT,
@@ -113,6 +114,9 @@ class WallPanelConfig:
     display: dict[str, Any] = field(default_factory=dict)
     temperature_lock: bool = False
     model: str = DEFAULT_WALL_PANEL_MODEL
+    # Fully Kiosk Browser device (HA device id) and settings that differ from the house defaults.
+    kiosk_device: str = ""
+    kiosk_overrides: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -128,6 +132,8 @@ class WallPanelConfig:
             display=dict(data.get("display") or {"idleMs": 30000, "panelEntity": ""}),
             temperature_lock=bool(data.get("temperature_lock", False)),
             model=str(data.get("model") or DEFAULT_WALL_PANEL_MODEL),
+            kiosk_device=str(data.get("kiosk_device") or ""),
+            kiosk_overrides=clean_settings(data.get("kiosk_overrides")),
         )
 
 
@@ -165,6 +171,9 @@ class NeatConfig:
     seasonal_savings: bool = DEFAULT_SEASONAL_SAVINGS
     adaptive_comfort: bool = DEFAULT_ADAPTIVE_COMFORT
     wall_pin: str = DEFAULT_WALL_PIN
+    # Fully Kiosk settings every panel shares (a missing key = not managed).
+    kiosk_defaults: dict[str, Any] = field(default_factory=dict)
+    kiosk_auto_sync: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -199,6 +208,8 @@ class NeatConfig:
             "adaptive_comfort": self.adaptive_comfort,
             "wall_pin": self.wall_pin,
             "wall_pin_configured": bool(str(self.wall_pin or "").strip()),
+            "kiosk_defaults": self.kiosk_defaults,
+            "kiosk_auto_sync": self.kiosk_auto_sync,
         }
 
     @classmethod
@@ -256,4 +267,6 @@ class NeatConfig:
                 data.get("adaptive_comfort", DEFAULT_ADAPTIVE_COMFORT)
             ),
             wall_pin=pin,
+            kiosk_defaults=clean_settings(data.get("kiosk_defaults")),
+            kiosk_auto_sync=bool(data.get("kiosk_auto_sync", True)),
         )
