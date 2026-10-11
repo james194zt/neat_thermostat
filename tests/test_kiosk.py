@@ -35,6 +35,7 @@ ENTITIES = {
     "kiosk_lock": ("switch", "off"),
     "motion_detection": ("switch", "off"),
     "current_page": ("sensor", OLD_PAGE),
+    "clear_browser_cache": ("button", "unknown"),
 }
 
 
@@ -59,7 +60,11 @@ def _panel(device_id, overrides=None):
 
 
 def _mocks(hass):
+    order = []
+    hass.bus.async_listen("call_service", lambda ev: order.append(f"{ev.data['domain']}.{ev.data['service']}"))
     return {
+        "order": order,
+        "press": async_mock_service(hass, "button", "press"),
         "set_value": async_mock_service(hass, "number", "set_value"),
         "turn_on": async_mock_service(hass, "switch", "turn_on"),
         "turn_off": async_mock_service(hass, "switch", "turn_off"),
@@ -104,6 +109,9 @@ async def test_apply_writes_only_managed_differences_and_moves_the_page(hass):
         "value": "http://192.168.1.10:8123/neat_thermostat/static/wall/index.html?device=hallway",
     }
     assert calls["load_url"][0].data["url"].endswith("?device=hallway")
+    # Moving page: clear Fully's cache first (stale files caused glitches), then load.
+    assert calls["press"][0].data == {"entity_id": f"button.{P}_clear_browser_cache"}
+    assert calls["order"].index("button.press") < calls["order"].index("fully_kiosk.load_url")
     assert len(changes) == 3
 
 
@@ -115,9 +123,10 @@ async def test_in_sync_panel_is_left_alone_unless_forced(hass):
     panel = _panel(device_id)
     assert kiosk.panel_status(hass, panel, {"kiosk_lock": True})["in_sync"]
     assert await kiosk.async_apply(hass, panel, {"kiosk_lock": True}) == []
-    assert not any(calls.values())
+    assert not any(v for k, v in calls.items() if k != "order")
     await kiosk.async_apply(hass, panel, {"kiosk_lock": True}, force=True)
     assert len(calls["set_config"]) == 1 and not calls["load_url"]  # start URL refreshed, no reload
+    assert not calls["press"]  # same page: no cache clear
 
 
 async def test_panel_override_beats_house_default(hass):
@@ -131,7 +140,7 @@ async def test_offline_panel_is_not_touched(hass):
     hass.states.async_set(f"sensor.{P}_current_page", "unavailable")
     calls = _mocks(hass)
     assert await kiosk.async_apply(hass, _panel(device_id), {"kiosk_lock": True}) == []
-    assert not any(calls.values())
+    assert not any(v for k, v in calls.items() if k != "order")
 
 
 async def test_auto_sync_reapplies_when_the_panel_comes_back(hass, setup):
@@ -150,3 +159,28 @@ async def test_auto_sync_reapplies_when_the_panel_comes_back(hass, setup):
     await hass.async_block_till_done()
     assert calls["turn_on"] and calls["load_url"]
     await coord.async_unload()
+
+
+async def test_new_wall_app_version_clears_cache_once(hass, setup, monkeypatch):
+    coord, _calls = setup
+    device_id = _make_device(hass)
+    hass.states.async_set(f"sensor.{P}_current_page", GOOD_PAGE)
+    calls = _mocks(hass)
+    await coord.async_save_config({"wall_panels": [_panel(device_id).to_dict()]})
+    monkeypatch.setattr(kiosk, "bundled_wall_version", lambda _dir: "2.0.46-dev")
+
+    assert await coord.async_kiosk_version_refresh() == ["hallway"]
+    assert len(calls["press"]) == 1 and len(calls["load_url"]) == 1
+    # Saved: a restart on the same version does nothing.
+    assert await coord.async_kiosk_version_refresh() == []
+    assert len(calls["press"]) == 1
+
+    monkeypatch.setattr(kiosk, "bundled_wall_version", lambda _dir: "2.0.47-dev")
+    assert await coord.async_kiosk_version_refresh() == ["hallway"]
+    assert len(calls["press"]) == 2
+
+
+def test_bundled_wall_version_reads_the_shipped_app():
+    from custom_components.neat_thermostat.panel import WWW_DIR
+
+    assert kiosk.bundled_wall_version(WWW_DIR).endswith("-dev")

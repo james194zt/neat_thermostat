@@ -30,8 +30,9 @@ KIOSK_SETTINGS: dict[str, tuple[str, tuple[float, float] | None]] = {
     "kiosk_lock": ("switch", None),
     "motion_detection": ("switch", None),
 }
-# Read-only helpers we need from the same device.
+# Other entities we need from the same device.
 _CURRENT_PAGE = ("sensor", "current_page")
+_CLEAR_CACHE = ("button", "clear_browser_cache")
 # Brightness can read back a step off what was written.
 _TOLERANCE = 2
 
@@ -63,7 +64,11 @@ def effective_settings(defaults: dict[str, Any], overrides: dict[str, Any]) -> d
 def device_entities(hass: HomeAssistant, device_id: str) -> dict[str, str]:
     """Map our setting keys (plus current_page) to this Fully device's entity ids."""
     reg = er.async_get(hass)
-    wanted = {**{k: d for k, (d, _b) in KIOSK_SETTINGS.items()}, _CURRENT_PAGE[1]: _CURRENT_PAGE[0]}
+    wanted = {
+        **{k: d for k, (d, _b) in KIOSK_SETTINGS.items()},
+        _CURRENT_PAGE[1]: _CURRENT_PAGE[0],
+        _CLEAR_CACHE[1]: _CLEAR_CACHE[0],
+    }
     found: dict[str, str] = {}
     for entry in er.async_entries_for_device(reg, device_id):
         if entry.platform != FULLY_DOMAIN:
@@ -213,8 +218,29 @@ async def async_apply(
             FULLY_DOMAIN, "set_config", {"device_id": device_id, "key": "startURL", "value": url}, blocking=True
         )
         if not status["page_ok"]:
-            await hass.services.async_call(FULLY_DOMAIN, "load_url", {"device_id": device_id, "url": url}, blocking=True)
+            await async_fresh_load(hass, device_id, url)
             changes.append(f"page → {url}")
     if changes:
         _LOGGER.info("Neat: synced wall panel %s (%s)", panel.id, "; ".join(changes))
     return changes
+
+
+async def async_fresh_load(hass: HomeAssistant, device_id: str, url: str) -> None:
+    """Clear Fully's browser cache, then load the page.
+
+    Switching between copies of the app (or to a new version) with stale cached files gave
+    odd glitches; clearing first avoids them. Without the button we still load the page."""
+    button = device_entities(hass, device_id).get(_CLEAR_CACHE[1])
+    if button:
+        await hass.services.async_call("button", "press", {"entity_id": button}, blocking=True)
+    await hass.services.async_call(FULLY_DOMAIN, "load_url", {"device_id": device_id, "url": url}, blocking=True)
+
+
+def bundled_wall_version(www_dir: Any) -> str:
+    """Version of the wall app this Neat install ships (blocking file read)."""
+    import json
+
+    try:
+        return str(json.loads((www_dir / "wall" / "version.json").read_text(encoding="utf-8")).get("version") or "")
+    except (OSError, ValueError):
+        return ""

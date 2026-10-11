@@ -469,7 +469,5 @@ async def ws_kiosk_reload(
     if not status.get("online") or not status.get("expected_url"):
         connection.send_error(msg["id"], "offline", "The panel is offline")
         return
-    await hass.services.async_call(
-        kiosk.FULLY_DOMAIN, "load_url", {"device_id": panel.kiosk_device, "url": status["expected_url"]}, blocking=True
-    )
+    await kiosk.async_fresh_load(hass, panel.kiosk_device, status["expected_url"])
     connection.send_result(msg["id"], {"ok": True})

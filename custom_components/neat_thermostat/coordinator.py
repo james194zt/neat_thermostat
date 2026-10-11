@@ -11,6 +11,7 @@ from homeassistant.const import STATE_ON, STATE_OPEN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
@@ -66,6 +67,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._kiosk_watched: dict[str, str] = {}
         self._kiosk_timers: dict[str, Any] = {}
         self._kiosk_attempts: dict[str, int] = {}
+        # Wall app version the panels were last given a cache-clearing reload for.
+        self._kiosk_store: Store = Store(hass, 1, f"{DOMAIN}.kiosk_{entry.entry_id}")
         # Last seen heater availability, so a dropout is logged once.
         self._heater_available = True
         self._main_hvac_mode = "heat"
@@ -1003,9 +1006,47 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._kiosk_timers[panel_id] = async_call_later(self.hass, wait, _run)
 
+    async def async_kiosk_version_refresh(self) -> list[str]:
+        """Once per new wall app version: clear each linked panel's cache and reload it.
+
+        The app reloads itself on a new version, but only Fully's own button can clear the
+        browser cache (stale files caused glitches). The version is saved, so this runs once
+        per update, not on every restart."""
+        from .panel import WWW_DIR
+
+        version = await self.hass.async_add_executor_job(kiosk.bundled_wall_version, WWW_DIR)
+        if not version:
+            return []
+        stored = await self._kiosk_store.async_load() or {}
+        if stored.get("wall_version") == version:
+            return []
+        refreshed: list[str] = []
+        for panel in self.config.wall_panels:
+            if not panel.kiosk_device:
+                continue
+            status = kiosk.panel_status(self.hass, panel, self.config.kiosk_defaults)
+            if not status.get("online") or not status.get("expected_url"):
+                continue
+            try:
+                await kiosk.async_fresh_load(self.hass, panel.kiosk_device, status["expected_url"])
+                refreshed.append(panel.id)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("Neat: couldn't refresh wall panel %s: %s", panel.id, err)
+        await self._kiosk_store.async_save({"wall_version": version})
+        if refreshed:
+            _LOGGER.info("Neat: wall app %s — cleared cache and reloaded %s", version, ", ".join(refreshed))
+        return refreshed
+
     async def async_setup_listeners(self) -> None:
         self._subscribe_state_changes()
         self._kiosk_subscribe()
+
+        @callback
+        def _version_check(_now: Any) -> None:
+            self.hass.async_create_task(self.async_kiosk_version_refresh())
+
+        # Give the Fully Kiosk entities time to come up after a restart.
+        self._unsubs.append(async_call_later(self.hass, 30, _version_check))
 
         @callback
         def _kiosk_check(_now: Any) -> None:
