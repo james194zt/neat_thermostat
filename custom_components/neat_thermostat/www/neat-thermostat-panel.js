@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.4.6
+ * @version 0.4.7
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.4.6";
+const PANEL_VERSION = "0.4.7";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -265,6 +265,65 @@ const STYLES = `
 }
 .set-remove:hover { background: color-mix(in srgb, var(--nt-red) 14%, transparent); color: var(--nt-red); }
 .set-add { margin-bottom: 4px; }
+/* —— Page header with an action button —— */
+.page-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.page-head-row > button { margin-top: 4px; }
+button.primary svg, button.secondary svg { vertical-align: -4px; margin: 0 6px 0 -4px; }
+.empty-state { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
+
+/* —— Wall panel list —— */
+.wp-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.wp-card {
+  display: flex; align-items: center; gap: 14px; padding: 14px 16px; cursor: pointer;
+  background: var(--card-background-color); border-radius: var(--nt-radius);
+  border: 1px solid var(--divider-color, transparent);
+}
+.wp-card:hover { border-color: color-mix(in srgb, var(--primary-text-color) 22%, transparent); }
+.wp-card.selected { border-color: var(--nt-accent-hi); }
+.wp-card-text { flex: 1; min-width: 0; }
+.wp-card-name { font-size: 15px; font-weight: 600; }
+.wp-card-meta { font-size: 12px; color: var(--secondary-text-color); margin-top: 3px; }
+.wp-card-meta strong { color: var(--primary-text-color); font-weight: 500; }
+.wp-card-meta .set-state { padding: 1px 8px; font-size: 11px; }
+.warn-note { color: var(--nt-amber) !important; }
+
+/* —— Dialog (add / edit) —— */
+.dlg-backdrop {
+  position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+  padding: 24px; background: rgba(0,0,0,0.55); backdrop-filter: blur(2px);
+  animation: dlg-fade 0.15s ease;
+}
+.dlg {
+  width: 100%; max-width: 640px; max-height: calc(100vh - 48px); display: flex; flex-direction: column;
+  background: var(--card-background-color); border-radius: 20px; border: 1px solid var(--divider-color);
+  box-shadow: 0 24px 60px rgba(0,0,0,0.5); animation: dlg-rise 0.18s ease;
+}
+.dlg-head { display: flex; align-items: center; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--divider-color); }
+.dlg-title { margin: 0; font-size: 17px; font-weight: 600; }
+.dlg-x {
+  margin-left: auto; flex-shrink: 0; width: 36px; height: 36px; border: 0; border-radius: 50%;
+  display: grid; place-items: center; background: transparent; color: var(--secondary-text-color); cursor: pointer;
+}
+.dlg-x:hover { background: color-mix(in srgb, var(--primary-text-color) 8%, transparent); color: var(--primary-text-color); }
+.dlg-body {
+  padding: 4px 20px 8px; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--primary-text-color) 25%, transparent) transparent;
+}
+.dlg-section { display: flex; flex-direction: column; gap: 14px; padding: 16px 0; border-top: 1px solid var(--divider-color); }
+.dlg-section:first-child { border-top: 0; }
+.dlg-section-title { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--secondary-text-color); }
+.dlg-section .set-row { padding: 0; border-top: 0; }
+.dlg-section .set-row + .set-row { padding-top: 14px; border-top: 1px solid var(--divider-color); }
+.dlg-section .set-list { margin-bottom: 8px; }
+.dlg-foot { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--divider-color); }
+input[readonly] { opacity: 0.7; cursor: default; }
+@keyframes dlg-fade { from { opacity: 0; } }
+@keyframes dlg-rise { from { opacity: 0; transform: translateY(12px); } }
+@media (max-width: 720px) {
+  .dlg-backdrop { align-items: flex-end; padding: 0; }
+  .dlg { max-width: none; max-height: 92vh; border-radius: 20px 20px 0 0; }
+}
+
 /* —— Rooms —— */
 .room-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
 .room-card {
@@ -784,6 +843,11 @@ function formatTemp(value) {
   return Number.isInteger(n) ? String(n) : n.toFixed(1).replace(/\.0$/, "");
 }
 
+/** Lower-case id from a name: "Hallway Panel" → "hallway-panel". */
+function slugId(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 function flameSvg() {
   return `<svg viewBox="0 0 24 24" aria-hidden="true">
     <path fill="currentColor" d="M12 2c.5 3.2-1.6 5-3.2 6.9C7.4 10.6 6 12.4 6 15a6 6 0 0 0 12 0c0-2.6-1.3-4.6-2.6-6.1-.3 1.6-1.1 2.7-2.3 3.2.6-3.7-.3-7.6-1.1-10.1z"/>
@@ -821,6 +885,8 @@ const ICONS = {
   shield: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-1 15-4-4 1.41-1.41L11 13.17l5.59-5.59L18 9l-7 7z"/></svg>`,
   gauge: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M5.6 18.4a9 9 0 1 1 12.8 0M12 13l4-4"/><circle cx="12" cy="13" r="1.6" fill="currentColor"/></svg>`,
   thermo: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15 13V5a3 3 0 0 0-6 0v8a5 5 0 1 0 6 0zm-3 7a3 3 0 0 1-1.5-5.6l.5-.29V5a1 1 0 0 1 2 0v9.11l.5.29A3 3 0 0 1 12 20z"/></svg>`,
+  plus: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>`,
+  panel: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="11" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 17h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
   link: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>`,
 };
 
@@ -917,8 +983,11 @@ class NeatThermostatPanel extends HTMLElement {
     this._roomDraft = { trv: "", sensor: "", extras: [], calls_for_heat: true };
     this._editingRoomId = null;
     this._roomPickerMountGen = 0;
+    this._dialogKind = null;
+    this._wallEditingId = null;
+    this._wallIdTouched = false;
     this._wallDraft = {
-      primary: "climate.neat_home",
+      primary: "",
       insideTemp: "",
       outsideTemp: "",
       humidity: "",
@@ -932,6 +1001,16 @@ class NeatThermostatPanel extends HTMLElement {
     this._settingsDraft = null;
     this._settingsPickerMountGen = 0;
     this.attachShadow({ mode: "open" });
+    // Dialog closing: ×, Cancel, backdrop click (not clicks inside the dialog), Esc.
+    this.shadowRoot.addEventListener("click", (ev) => {
+      const closer = ev.target.closest?.("[data-close-dialog]");
+      if (!closer || !this._dialogKind) return;
+      if (closer.classList.contains("dlg-backdrop") && ev.target !== closer) return;
+      this._closeDialog();
+    });
+    this.shadowRoot.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && this._dialogKind) this._closeDialog();
+    });
     // Settings lists (presence, windows) redraw in place, so remove buttons are delegated.
     this.shadowRoot.addEventListener("click", (ev) => {
       const btn = ev.target.closest?.("[data-remove-key]");
@@ -1670,56 +1749,66 @@ class NeatThermostatPanel extends HTMLElement {
           </div>`;
       })
       .join("");
-    const head = (icon, cls, title, sub) => `
-      <div class="card-head">
-        <span class="card-icon ${cls}">${icon}</span>
-        <div class="card-head-text"><p class="card-title">${title}</p><p class="card-sub">${sub}</p></div>
-      </div>`;
     return `
-      ${this._pageHeader("Rooms", "Each room has its own Neat climate, driven by its TRV.")}
+      <div class="page-head-row">
+        ${this._pageHeader("Rooms", "Each room has its own Neat climate, driven by its TRV.")}
+        <button class="primary" id="addRoom" type="button">${ICONS.plus}Add room</button>
+      </div>
       ${rooms.length
         ? `<div class="room-grid${rooms.length > 1 ? " reorderable" : ""}">${cards}</div>
            <p class="hero-rooms-hint" style="margin:8px 0 14px">Click a room to edit it · drag to reorder</p>`
-        : `<div class="card"><p class="muted" style="margin:0">No rooms yet — add your first one below.</p></div>`}
-      <div class="card" id="roomFormCard">
-        ${head(editing ? ICONS.tune : ICONS.home, editing ? "intel" : "", editing ? `Edit ${this._escape(editingRoom?.name || "room")}` : "Add a room", editing ? "Change the TRV, sensors or boiler behaviour." : "Pick the room's TRV; sensors are optional.")}
-        <div class="set-fields">
+        : `<div class="card empty-state"><p class="muted" style="margin:0">No rooms yet.</p><button class="primary" id="addRoomEmpty" type="button">${ICONS.plus}Add your first room</button></div>`}
+    `;
+  }
+
+  _renderRoomDialog() {
+    const editing = this._editingRoomId;
+    const room = editing ? (this._cfg().rooms || []).find((r) => r.id === editing) : null;
+    return this._dialog({
+      icon: editing ? ICONS.tune : ICONS.home,
+      title: editing ? `Edit ${this._escape(room?.name || "room")}` : "Add a room",
+      sub: editing ? "Change the TRV, sensors or boiler behaviour." : "Pick the room's TRV — sensors are optional.",
+      body: `
+        <div class="dlg-section">
           <div class="set-field">
             <div class="set-field-label">Name</div>
-            <input id="roomName" placeholder="e.g. Kitchen" />
+            <input id="roomName" placeholder="e.g. Kitchen" value="${this._escape(this._roomDraft.name || "")}" />
           </div>
           <div class="set-field">
             <div class="set-field-label">TRV</div>
             <div class="entity-picker-host" data-room-picker="trv"></div>
             <div class="set-row-desc">The radiator valve Neat controls.</div>
           </div>
+        </div>
+        <div class="dlg-section">
+          <div class="dlg-section-title">Temperature</div>
           <div class="set-field">
-            <div class="set-field-label">Temperature sensor</div>
+            <div class="set-field-label">Room sensor</div>
             <div class="entity-picker-host" data-room-picker="sensor"></div>
             <div class="set-row-desc">Optional — otherwise the TRV's own reading is used.</div>
           </div>
-        </div>
-        <div class="set-field" style="margin-top:16px">
-          <div class="set-field-label">Extra sensors</div>
-          <div class="set-row-desc" style="margin:0 0 8px">Optional — averaged with the sensor above.</div>
-          <div class="set-list" data-room-extras-list>${this._renderRoomExtras()}</div>
-          <div class="entity-picker-host set-add" data-room-picker="extras"></div>
-        </div>
-        <div class="set-row" style="margin-top:8px">
-          <div class="set-row-text">
-            <div class="set-row-name">Call for heat</div>
-            <div class="set-row-desc">Lets this room turn the boiler on when it's cold. Leave on for most TRVs — otherwise the valve can open with no hot water.</div>
+          <div class="set-field">
+            <div class="set-field-label">Extra sensors</div>
+            <div class="set-row-desc" style="margin:0 0 8px">Optional — averaged with the room sensor.</div>
+            <div class="set-list" data-room-extras-list>${this._renderRoomExtras()}</div>
+            <div class="entity-picker-host set-add" data-room-picker="extras"></div>
           </div>
-          <div class="set-row-control"><label class="switch"><input type="checkbox" id="roomCallsForHeat" ${this._roomDraft.calls_for_heat !== false ? "checked" : ""} /><span></span></label></div>
         </div>
-        <div class="form-actions">
-          ${editing ? `<button class="danger" id="deleteRoom" type="button">Delete room</button>` : ""}
-          <span style="flex:1"></span>
-          ${editing ? `<button class="secondary" id="clearRoomForm" type="button">Cancel</button>` : ""}
-          <button class="primary" id="saveRoom">${editing ? "Save changes" : "Add room"}</button>
-        </div>
-      </div>
-    `;
+        <div class="dlg-section">
+          <div class="set-row">
+            <div class="set-row-text">
+              <div class="set-row-name">Call for heat</div>
+              <div class="set-row-desc">Lets this room turn the boiler on when it's cold. Leave on for most TRVs — otherwise the valve can open with no hot water.</div>
+            </div>
+            <div class="set-row-control"><label class="switch"><input type="checkbox" id="roomCallsForHeat" ${this._roomDraft.calls_for_heat !== false ? "checked" : ""} /><span></span></label></div>
+          </div>
+        </div>`,
+      foot: `
+        ${editing ? `<button class="danger" id="deleteRoom" type="button">Delete</button>` : ""}
+        <span style="flex:1"></span>
+        <button class="secondary" data-close-dialog type="button">Cancel</button>
+        <button class="primary" id="saveRoom" type="button">${editing ? "Save changes" : "Add room"}</button>`,
+    });
   }
 
   _renderRoomExtras() {
@@ -1734,24 +1823,20 @@ class NeatThermostatPanel extends HTMLElement {
   }
 
   _clearRoomForm() {
-    this._editingRoomId = null;
-    this._roomDraft = { trv: "", sensor: "", extras: [], calls_for_heat: true };
-    this._render();
+    this._closeDialog();
   }
 
+  /** Open the room dialog: a room to edit, or nothing to add one. */
   _loadRoomIntoForm(room) {
-    if (!room) return;
-    this._editingRoomId = room.id;
+    this._editingRoomId = room?.id || null;
     this._roomDraft = {
-      trv: room.trv_entity || "",
-      sensor: room.temperature_sensor || "",
-      extras: [...(room.extra_temperature_sensors || [])],
-      calls_for_heat: room.calls_for_heat !== false,
+      name: room?.name || "",
+      trv: room?.trv_entity || "",
+      sensor: room?.temperature_sensor || "",
+      extras: [...(room?.extra_temperature_sensors || [])],
+      calls_for_heat: room ? room.calls_for_heat !== false : true,
     };
-    this._render();
-    const nameEl = this.shadowRoot?.getElementById("roomName");
-    if (nameEl) nameEl.value = room.name || "";
-    this.shadowRoot?.getElementById("roomFormCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    this._openDialog("room");
   }
 
   async _mountRoomPickers() {
@@ -1819,73 +1904,195 @@ class NeatThermostatPanel extends HTMLElement {
 
   _renderWallPanels() {
     const panels = this._cfg().wall_panels || [];
-    const rooms = this._cfg().rooms || [];
-    const cfg = this._cfg();
-    const list = panels
-      .map(
-        (p) => `
-      <div class="panel-item" data-id="${this._escape(p.id)}" role="button" tabindex="0" title="Click to edit">
-        <div>
-          <strong>${this._escape(p.label || p.id)}</strong>
-          <div class="muted">id: <code>${this._escape(p.id)}</code> · ${this._escape(wallModel(p.model).label)} · primary: <code>${this._escape(p.primary_entity || "climate.neat_home")}</code></div>
-        </div>
-        <button class="danger del-panel" data-id="${this._escape(p.id)}">Delete</button>
-      </div>`
-      )
+    const neat = this._neatClimateEntities();
+    const cards = panels
+      .map((p) => {
+        const model = wallModel(p.model);
+        const primary = this._wallPrimary(p.primary_entity);
+        const primaryName = this._entityState(primary)?.attributes?.friendly_name || primary || "—";
+        const notNeat = primary && !this._isNeatClimate(primary);
+        return `
+          <div class="wp-card${this._previewPanelId() === p.id ? " selected" : ""}" data-id="${this._escape(p.id)}" role="button" tabindex="0" title="Show in preview">
+            <span class="card-icon">${ICONS.panel}</span>
+            <div class="wp-card-text">
+              <div class="wp-card-name">${this._escape(p.label || p.id)}</div>
+              <div class="wp-card-meta">${this._escape(model.label)} · device ID <code>${this._escape(p.id)}</code></div>
+              <div class="wp-card-meta">Controls <strong>${this._escape(primaryName)}</strong>${notNeat ? ` <span class="set-state warn">not Neat</span>` : ""}${p.temperature_lock ? ` · <span class="set-state">Locked</span>` : ""}</div>
+            </div>
+            <button class="secondary compact edit-panel" type="button" data-id="${this._escape(p.id)}">Edit</button>
+          </div>`;
+      })
       .join("");
+    void neat;
     return `
-      ${this._pageHeader("Wall panels", "Define each physical NSPanel here. On the device, only pick which panel it is.")}
-      ${this._renderWallPreview(panels)}
-      <div class="card">
-        <p class="card-title">Registered panels</p>
-        <div class="panel-list">${list || `<p class="muted" style="margin:0">No wall panels yet.</p>`}</div>
-        <p class="muted" style="margin:8px 0 0">Click a panel to load it into the form below.</p>
+      <div class="page-head-row">
+        ${this._pageHeader("Wall panels", "Each physical NSPanel. On the device, you only pick which panel it is.")}
+        <button class="primary" id="addWallPanel" type="button">${ICONS.plus}Add wall panel</button>
       </div>
-      <div class="card">
-        <p class="card-title">Add / update wall panel</p>
-        <div class="row">
-          <label class="field">Panel ID<input id="wpId" placeholder="hallway" /></label>
-          <label class="field">Label<input id="wpLabel" placeholder="Hallway panel" /></label>
-          <label class="field">Model
-            <select id="wpModel">
-              ${WALL_MODELS.map((m) => `<option value="${m.id}">${this._escape(m.label)} (${this._escape(m.screen)})</option>`).join("")}
-            </select>
-          </label>
-        </div>
-        <div class="row">
-          <label class="field">Primary climate
-            <div class="entity-picker-host" data-wall-picker="primary"></div>
-          </label>
-        </div>
-        <div class="row">
-          <label class="field">Inside temp sensor
-            <div class="entity-picker-host" data-wall-picker="insideTemp"></div>
-          </label>
-          <label class="field">Outside temp sensor
-            <div class="entity-picker-host" data-wall-picker="outsideTemp"></div>
-          </label>
-        </div>
-        <div class="row">
-          <label class="field">Humidity sensor
-            <div class="entity-picker-host" data-wall-picker="humidity"></div>
-          </label>
-          <label class="field">Weather entity
-            <div class="entity-picker-host" data-wall-picker="weather"></div>
-          </label>
-        </div>
-        <div class="row">
-          <label class="field">Idle timeout (sec)<input id="wpIdle" type="number" value="30" min="5" /></label>
-          <label class="field">Temperature lock
-            <select id="wpLock">
-              <option value="false" selected>Off</option>
-              <option value="true">On (requires house PIN)</option>
-            </select>
-          </label>
-        </div>
-        <p class="muted">House defaults: temp <code>${this._escape(cfg.temperature_sensor || "—")}</code>, outdoor <code>${this._escape(cfg.outdoor_temp_sensor || "—")}</code>. Room chips follow the live Rooms list (${rooms.length ? rooms.map((r) => r.name).join(", ") : "none yet"}).</p>
-        <button class="primary" id="saveWallPanel">Save wall panel</button>
-      </div>
+      ${panels.length
+        ? `${this._renderWallPreview(panels)}<div class="wp-list">${cards}</div>`
+        : `<div class="card empty-state"><p class="muted" style="margin:0">No wall panels yet.</p><button class="primary" id="addWallPanelEmpty" type="button">${ICONS.plus}Add your first wall panel</button></div>`}
     `;
+  }
+
+  _isNeatClimate(entityId) {
+    return this._hass?.entities?.[entityId]?.platform === "neat_thermostat";
+  }
+
+  /** Same rule as the backend: blank, or the old "climate.neat_home" default that isn't Neat's, means Neat's house climate. */
+  _wallPrimary(configured) {
+    const home = this._neatClimateEntities().home;
+    if (!configured) return home || "";
+    if (configured === "climate.neat_home" && home && !this._isNeatClimate(configured)) return home;
+    return configured;
+  }
+
+  _renderWallDialog() {
+    const d = this._wallDraft;
+    const editing = this._wallEditingId;
+    const cfg = this._cfg();
+    return this._dialog({
+      icon: ICONS.panel,
+      title: editing ? `Edit ${this._escape(d.label || editing)}` : "Add a wall panel",
+      sub: editing ? "Change what this panel shows and controls." : "Set up a new NSPanel. You'll pick this panel on the device.",
+      body: `
+        <div class="dlg-section">
+          <div class="set-fields">
+            <div class="set-field">
+              <div class="set-field-label">Name</div>
+              <input id="wpLabel" placeholder="e.g. Hallway panel" value="${this._escape(d.label || "")}" />
+            </div>
+            <div class="set-field">
+              <div class="set-field-label">Device ID</div>
+              <input id="wpId" placeholder="hallway" value="${this._escape(d.id || "")}" ${editing ? "readonly" : ""} />
+              <div class="set-row-desc">${editing ? "Fixed — the panel uses it to find its settings." : "Filled in from the name. You'll choose this on the panel."}</div>
+            </div>
+          </div>
+          <div class="set-field">
+            <div class="set-field-label">Model</div>
+            <select id="wpModel">
+              ${WALL_MODELS.map((m) => `<option value="${m.id}" ${wallModel(d.model).id === m.id ? "selected" : ""}>${this._escape(m.label)} (${this._escape(m.screen)})</option>`).join("")}
+            </select>
+          </div>
+        </div>
+        <div class="dlg-section">
+          <div class="dlg-section-title">Controls</div>
+          <div class="set-field">
+            <div class="set-field-label">Thermostat</div>
+            <div class="entity-picker-host" data-wall-picker="primary"></div>
+            <div class="set-row-desc" id="wpPrimaryNote"></div>
+          </div>
+        </div>
+        <div class="dlg-section">
+          <div class="dlg-section-title">Shows</div>
+          <div class="set-fields">
+            <div class="set-field">
+              <div class="set-field-label">Inside temperature</div>
+              <div class="entity-picker-host" data-wall-picker="insideTemp"></div>
+            </div>
+            <div class="set-field">
+              <div class="set-field-label">Outside temperature</div>
+              <div class="entity-picker-host" data-wall-picker="outsideTemp"></div>
+            </div>
+            <div class="set-field">
+              <div class="set-field-label">Humidity</div>
+              <div class="entity-picker-host" data-wall-picker="humidity"></div>
+            </div>
+            <div class="set-field">
+              <div class="set-field-label">Weather</div>
+              <div class="entity-picker-host" data-wall-picker="weather"></div>
+            </div>
+          </div>
+          <div class="set-row-desc">Blank sensors use the house ones from Settings. Room buttons always follow your Rooms list.</div>
+        </div>
+        <div class="dlg-section">
+          <div class="dlg-section-title">Screen</div>
+          <div class="set-row">
+            <div class="set-row-text"><div class="set-row-name">Screensaver after</div><div class="set-row-desc">Idle time before the panel dims to its clock.</div></div>
+            <div class="set-row-control"><div class="num-input"><input id="wpIdle" type="number" min="5" step="5" value="${this._escape(d.idleSec ?? 30)}" /><span>sec</span></div></div>
+          </div>
+          <div class="set-row">
+            <div class="set-row-text"><div class="set-row-name">Temperature lock</div><div class="set-row-desc">${String(cfg.wall_pin || "").trim() ? "Changes on the panel need the house PIN." : "Needs a Wall panel PIN in Settings first."}</div></div>
+            <div class="set-row-control"><label class="switch"><input type="checkbox" id="wpLock" ${d.lock ? "checked" : ""} /><span></span></label></div>
+          </div>
+        </div>`,
+      foot: `
+        ${editing ? `<button class="danger" id="deleteWallPanel" type="button">Delete</button>` : ""}
+        <span style="flex:1"></span>
+        <button class="secondary" data-close-dialog type="button">Cancel</button>
+        <button class="primary" id="saveWallPanel" type="button">${editing ? "Save changes" : "Add wall panel"}</button>`,
+    });
+  }
+
+  /** Open the wall panel dialog: a panel to edit, or nothing to add one. */
+  _openWallDialog(panel) {
+    const cfg = this._cfg();
+    const sensors = panel?.sensors || {};
+    this._wallEditingId = panel?.id || null;
+    this._wallIdTouched = Boolean(panel);
+    this._wallDraft = {
+      id: panel?.id || "",
+      label: panel?.label || "",
+      model: panel?.model,
+      primary: this._wallPrimary(panel?.primary_entity || ""),
+      insideTemp: sensors.insideTemp || cfg.temperature_sensor || "",
+      outsideTemp: sensors.outsideTemp || cfg.outdoor_temp_sensor || "",
+      humidity: sensors.insideHumidity || "",
+      weather: sensors.weather || "weather.home",
+      idleSec: Math.round(Number(panel?.display?.idleMs ?? 30000) / 1000) || 30,
+      lock: Boolean(panel?.temperature_lock),
+    };
+    this._openDialog("wall");
+  }
+
+  _updateWallPrimaryNote() {
+    const note = this.shadowRoot?.getElementById("wpPrimaryNote");
+    if (!note) return;
+    const value = this._wallDraft.primary;
+    if (!value || this._isNeatClimate(value)) {
+      note.className = "set-row-desc";
+      note.textContent = "Neat's house thermostat — schedule, presets and boiler control all apply.";
+    } else {
+      note.className = "set-row-desc warn-note";
+      note.textContent = "This isn't a Neat thermostat, so the panel will bypass Neat's schedule and boiler control.";
+    }
+  }
+
+  // ---- Shared dialog ----
+  _dialog({ icon, title, sub, body, foot }) {
+    return `
+      <div class="dlg-backdrop" data-close-dialog>
+        <div class="dlg" role="dialog" aria-modal="true" aria-label="${title}">
+          <div class="dlg-head">
+            <span class="card-icon intel">${icon}</span>
+            <div class="card-head-text"><p class="dlg-title">${title}</p><p class="card-sub">${sub}</p></div>
+            <button class="dlg-x" type="button" data-close-dialog aria-label="Close">
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </div>
+          <div class="dlg-body">${body}</div>
+          <div class="dlg-foot">${foot}</div>
+        </div>
+      </div>`;
+  }
+
+  _renderDialog() {
+    if (this._dialogKind === "room" && this._view === "rooms") return this._renderRoomDialog();
+    if (this._dialogKind === "wall" && this._view === "wall_panels") return this._renderWallDialog();
+    return "";
+  }
+
+  _openDialog(kind) {
+    this._dialogKind = kind;
+    this._render();
+    this.shadowRoot.querySelector(".dlg input:not([readonly])")?.focus();
+  }
+
+  _closeDialog() {
+    this._dialogKind = null;
+    this._editingRoomId = null;
+    this._wallEditingId = null;
+    this._render();
   }
 
   _previewPanelId(panels = this._cfg().wall_panels || []) {
@@ -2133,26 +2340,7 @@ class NeatThermostatPanel extends HTMLElement {
   _loadWallPanelIntoForm(panel) {
     if (!panel) return;
     if (panel.id !== this._previewPanelId()) this._showPreviewPanel(panel.id);
-    const modelEl = this.shadowRoot?.getElementById("wpModel");
-    if (modelEl) modelEl.value = wallModel(panel.model).id;
-    const idEl = this.shadowRoot?.getElementById("wpId");
-    const labelEl = this.shadowRoot?.getElementById("wpLabel");
-    const idleEl = this.shadowRoot?.getElementById("wpIdle");
-    const lockEl = this.shadowRoot?.getElementById("wpLock");
-    if (idEl) idEl.value = panel.id || "";
-    if (labelEl) labelEl.value = panel.label || "";
-    const idleMs = Number(panel.display?.idleMs ?? 30000);
-    if (idleEl) idleEl.value = String(Math.round(idleMs / 1000) || 30);
-    if (lockEl) lockEl.value = panel.temperature_lock ? "true" : "false";
-    const sensors = panel.sensors || {};
-    this._wallDraft = {
-      primary: panel.primary_entity || "climate.neat_home",
-      insideTemp: sensors.insideTemp || this._cfg().temperature_sensor || "",
-      outsideTemp: sensors.outsideTemp || this._cfg().outdoor_temp_sensor || "",
-      humidity: sensors.insideHumidity || "",
-      weather: sensors.weather || "weather.home",
-    };
-    void this._mountWallPickers();
+    this.shadowRoot.querySelectorAll(".wp-card").forEach((c) => c.classList.toggle("selected", c.dataset.id === panel.id));
   }
 
   async _mountWallPickers() {
@@ -2176,15 +2364,6 @@ class NeatThermostatPanel extends HTMLElement {
     }
     if (gen !== this._wallPickerMountGen || this._view !== "wall_panels") return;
 
-    // Prefill blanks from house config once
-    const cfg = this._cfg();
-    if (!this._wallDraft.insideTemp && cfg.temperature_sensor) {
-      this._wallDraft.insideTemp = cfg.temperature_sensor;
-    }
-    if (!this._wallDraft.outsideTemp && cfg.outdoor_temp_sensor) {
-      this._wallDraft.outsideTemp = cfg.outdoor_temp_sensor;
-    }
-
     const mountSingle = (key, { domains, filter, label }) => {
       const host = this.shadowRoot.querySelector(`[data-wall-picker="${key}"]`);
       if (!host) return;
@@ -2194,11 +2373,12 @@ class NeatThermostatPanel extends HTMLElement {
         picker = document.createElement("ha-entity-picker");
         picker.setAttribute("allow-custom-entity", "");
         if (this._hass.userData?.showEntityIdPicker) picker.setAttribute("show-entity-id", "");
-        if (label) picker.label = label;
+        void label; // the dialog's own field label is enough
         picker.includeDomains = domains;
         if (filter) picker.entityFilter = filter;
         picker.addEventListener("value-changed", (ev) => {
           this._wallDraft[key] = ev.detail?.value || "";
+          if (key === "primary") this._updateWallPrimaryNote();
         });
         host.appendChild(picker);
       }
@@ -2224,6 +2404,7 @@ class NeatThermostatPanel extends HTMLElement {
       label: "Humidity",
     });
     mountSingle("weather", { domains: ["weather"], label: "Weather" });
+    this._updateWallPrimaryNote();
   }
 
   _readWallPickerValues() {
@@ -2525,6 +2706,7 @@ class NeatThermostatPanel extends HTMLElement {
         </div>
         <p class="panel-build-footer">neat ${PANEL_VERSION}</p>
       </div>
+      ${this._renderDialog()}
     `;
     this._bind();
     this._bindWallPreview();
@@ -2709,6 +2891,7 @@ class NeatThermostatPanel extends HTMLElement {
     if (saveRoom) {
       saveRoom.addEventListener("click", async () => {
         const name = this.shadowRoot.getElementById("roomName").value.trim();
+        this._roomDraft.name = name;
         const draft = this._readRoomPickerValues();
         const trv = String(draft.trv || "").trim();
         const sensor = String(draft.sensor || "").trim();
@@ -2748,8 +2931,9 @@ class NeatThermostatPanel extends HTMLElement {
         else rooms.push(room);
         try {
           await this._ws("neat_thermostat/update_rooms", { rooms });
+          this._dialogKind = null;
           this._editingRoomId = null;
-          this._roomDraft = { trv: "", sensor: "", extras: [], calls_for_heat: true };
+          this._roomDraft = { name: "", trv: "", sensor: "", extras: [], calls_for_heat: true };
           await this._loadState();
           this._showToast(`Room ${name} saved`);
         } catch (e) {
@@ -2759,46 +2943,6 @@ class NeatThermostatPanel extends HTMLElement {
         }
       });
 
-      this.shadowRoot.querySelectorAll(".room-card[data-room-id]").forEach((card) => {
-        const open = () => {
-          const room = (this._cfg().rooms || []).find((r) => r.id === card.dataset.roomId);
-          this._loadRoomIntoForm(room);
-        };
-        card.addEventListener("click", (ev) => {
-          if (this._suppressZoneClick || ev.target.closest(".switch")) return;
-          open();
-        });
-        card.addEventListener("keydown", (ev) => {
-          if (ev.target !== card || (ev.key !== "Enter" && ev.key !== " ")) return;
-          ev.preventDefault();
-          open();
-        });
-      });
-
-      this.shadowRoot.querySelectorAll("[data-toggle-calls]").forEach((btn) => {
-        btn.addEventListener("change", async () => {
-          const id = btn.dataset.toggleCalls;
-          const rooms = (this._cfg().rooms || []).map((r) =>
-            r.id === id ? { ...r, calls_for_heat: r.calls_for_heat === false } : { ...r }
-          );
-          try {
-            await this._ws("neat_thermostat/update_rooms", { rooms });
-            await this._loadState();
-            const next = rooms.find((r) => r.id === id);
-            this._showToast(
-              `Call for heat ${next?.calls_for_heat !== false ? "On" : "Off"} for ${next?.name || id}`
-            );
-          } catch (e) {
-            this._error = String(e.message || e);
-            this._showToast(this._error, "err");
-            this._render();
-          }
-        });
-      });
-
-      this.shadowRoot.getElementById("clearRoomForm")?.addEventListener("click", () => {
-        this._clearRoomForm();
-      });
 
       this.shadowRoot.getElementById("deleteRoom")?.addEventListener("click", async () => {
         const id = this._editingRoomId;
@@ -2808,8 +2952,9 @@ class NeatThermostatPanel extends HTMLElement {
         const rooms = (this._cfg().rooms || []).filter((r) => r.id !== id);
         try {
           await this._ws("neat_thermostat/update_rooms", { rooms });
+          this._dialogKind = null;
           this._editingRoomId = null;
-          this._roomDraft = { trv: "", sensor: "", extras: [], calls_for_heat: true };
+          this._roomDraft = { name: "", trv: "", sensor: "", extras: [], calls_for_heat: true };
           await this._loadState();
           this._showToast("Room deleted");
         } catch (e) {
@@ -2824,18 +2969,76 @@ class NeatThermostatPanel extends HTMLElement {
       });
     }
 
+    if (this._view === "wall_panels") {
+      const open = (id) => this._openWallDialog(id ? (this._cfg().wall_panels || []).find((p) => p.id === id) : null);
+      this.shadowRoot.getElementById("addWallPanel")?.addEventListener("click", () => open(null));
+      this.shadowRoot.getElementById("addWallPanelEmpty")?.addEventListener("click", () => open(null));
+      this.shadowRoot.querySelectorAll(".edit-panel").forEach((btn) =>
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          open(btn.dataset.id);
+        })
+      );
+      this.shadowRoot.querySelectorAll(".wp-card[data-id]").forEach((card) => {
+        const show = () => this._loadWallPanelIntoForm((this._cfg().wall_panels || []).find((p) => p.id === card.dataset.id));
+        card.addEventListener("click", show);
+        card.addEventListener("keydown", (ev) => {
+          if (ev.target !== card || (ev.key !== "Enter" && ev.key !== " ")) return;
+          ev.preventDefault();
+          show();
+        });
+      });
+    }
+    if (this._view === "rooms") {
+      this.shadowRoot.getElementById("addRoom")?.addEventListener("click", () => this._loadRoomIntoForm(null));
+      this.shadowRoot.getElementById("addRoomEmpty")?.addEventListener("click", () => this._loadRoomIntoForm(null));
+      this.shadowRoot.querySelectorAll(".room-card[data-room-id]").forEach((card) => {
+        const open = () => this._loadRoomIntoForm((this._cfg().rooms || []).find((r) => r.id === card.dataset.roomId));
+        card.addEventListener("click", (ev) => {
+          if (this._suppressZoneClick || ev.target.closest(".switch")) return;
+          open();
+        });
+        card.addEventListener("keydown", (ev) => {
+          if (ev.target !== card || (ev.key !== "Enter" && ev.key !== " ")) return;
+          ev.preventDefault();
+          open();
+        });
+      });
+      this.shadowRoot.querySelectorAll("[data-toggle-calls]").forEach((btn) => {
+        btn.addEventListener("change", async () => {
+          const id = btn.dataset.toggleCalls;
+          const rooms = (this._cfg().rooms || []).map((r) =>
+            r.id === id ? { ...r, calls_for_heat: btn.checked } : { ...r }
+          );
+          try {
+            await this._ws("neat_thermostat/update_rooms", { rooms });
+            await this._loadState();
+            const next = rooms.find((r) => r.id === id);
+            this._showToast(`Call for heat ${next?.calls_for_heat !== false ? "On" : "Off"} for ${next?.name || id}`);
+          } catch (e) {
+            this._showToast(String(e.message || e), "err");
+            this._render();
+          }
+        });
+      });
+    }
+
     const saveWall = this.shadowRoot.getElementById("saveWallPanel");
     if (saveWall) {
       saveWall.addEventListener("click", async () => {
-        const id = this.shadowRoot.getElementById("wpId").value.trim().toLowerCase();
+        const id = slugId(this.shadowRoot.getElementById("wpId").value);
         const label = this.shadowRoot.getElementById("wpLabel").value.trim() || id;
         if (!id) {
-          this._error = "Panel ID required";
-          this._showToast(this._error, "err");
+          this._showToast("Give the panel a name", "err");
+          return;
+        }
+        if (!this._wallEditingId && (this._cfg().wall_panels || []).some((p) => p.id === id)) {
+          this._showToast(`A panel with ID “${id}” already exists`, "err");
           return;
         }
         const draft = this._readWallPickerValues();
-        const primary = String(draft.primary || "").trim() || "climate.neat_home";
+        // Blank = Neat's house climate (resolved to its real entity id by the backend).
+        const primary = String(draft.primary || "").trim();
         const idleSec = Number(this.shadowRoot.getElementById("wpIdle").value) || 30;
         // Empty rooms list = wall UI always loads the live Neat room list
         const rooms = [];
@@ -2854,11 +3057,13 @@ class NeatThermostatPanel extends HTMLElement {
                 sun: "sun.sun",
               },
               display: { idleMs: idleSec * 1000, panelEntity: "" },
-              temperature_lock: this.shadowRoot.getElementById("wpLock")?.value === "true",
+              temperature_lock: Boolean(this.shadowRoot.getElementById("wpLock")?.checked),
               model: wallModel(this.shadowRoot.getElementById("wpModel")?.value).id,
             },
           });
           this._previewPanel = id;
+          this._dialogKind = null;
+          this._wallEditingId = null;
           await this._loadState();
           this._showToast(`Wall panel ${label} saved`);
         } catch (e) {
@@ -2867,32 +3072,29 @@ class NeatThermostatPanel extends HTMLElement {
           this._render();
         }
       });
-      this.shadowRoot.querySelectorAll(".panel-item[data-id]").forEach((row) => {
-        row.addEventListener("click", (ev) => {
-          if (ev.target.closest(".del-panel")) return;
-          const panel = (this._cfg().wall_panels || []).find((p) => p.id === row.dataset.id);
-          this._loadWallPanelIntoForm(panel);
-        });
-        row.addEventListener("keydown", (ev) => {
-          if (ev.key !== "Enter" && ev.key !== " ") return;
-          ev.preventDefault();
-          const panel = (this._cfg().wall_panels || []).find((p) => p.id === row.dataset.id);
-          this._loadWallPanelIntoForm(panel);
-        });
+      this.shadowRoot.getElementById("deleteWallPanel")?.addEventListener("click", async () => {
+        const id = this._wallEditingId;
+        const panel = (this._cfg().wall_panels || []).find((p) => p.id === id);
+        if (!id || !window.confirm(`Delete wall panel “${panel?.label || id}”? The device will need setting up again.`)) return;
+        try {
+          await this._ws("neat_thermostat/delete_wall_panel", { panel_id: id });
+          this._dialogKind = null;
+          this._wallEditingId = null;
+          await this._loadState();
+          this._showToast("Wall panel deleted");
+        } catch (e) {
+          this._showToast(String(e.message || e), "err");
+        }
       });
-      this.shadowRoot.querySelectorAll(".del-panel").forEach((btn) => {
-        btn.addEventListener("click", async (ev) => {
-          ev.stopPropagation();
-          try {
-            await this._ws("neat_thermostat/delete_wall_panel", { panel_id: btn.dataset.id });
-            await this._loadState();
-            this._showToast("Wall panel deleted");
-          } catch (e) {
-            this._error = String(e.message || e);
-            this._showToast(this._error, "err");
-            this._render();
-          }
-        });
+      // New panel: the ID follows the name until the user types their own.
+      const wpId = this.shadowRoot.getElementById("wpId");
+      const wpLabel = this.shadowRoot.getElementById("wpLabel");
+      wpLabel?.addEventListener("input", () => {
+        this._wallDraft.label = wpLabel.value;
+        if (!this._wallEditingId && !this._wallIdTouched && wpId) wpId.value = slugId(wpLabel.value);
+      });
+      wpId?.addEventListener("input", () => {
+        this._wallIdTouched = Boolean(wpId.value);
       });
     }
   }

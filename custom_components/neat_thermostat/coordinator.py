@@ -9,6 +9,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_ON, STATE_OPEN
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
@@ -801,19 +802,36 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return panel
         return None
 
+    def neat_entity_id(self, unique_id: str) -> str | None:
+        """Real entity id of a Neat climate. HA picks the id (e.g. climate.neat_thermostat_neat_home),
+        so never assume climate.neat_<x> — that name can belong to some other integration."""
+        return er.async_get(self.hass).async_get_entity_id("climate", DOMAIN, unique_id)
+
+    def _wall_primary(self, configured: str) -> str:
+        """The panel's main climate. Blank, or the old hard-coded default "climate.neat_home"
+        when that isn't actually Neat's entity, means Neat's house climate."""
+        home = self.neat_entity_id("neat_home")
+        if not configured:
+            return home or "climate.neat_home"
+        if configured == "climate.neat_home" and home and home != configured:
+            entry = er.async_get(self.hass).async_get(configured)
+            if entry is None or entry.platform != DOMAIN:
+                return home
+        return configured
+
     def wall_panel_payload(self, panel_id: str) -> dict[str, Any] | None:
         panel = self.get_wall_panel(panel_id)
         if panel is None:
             return None
-        primary = panel.primary_entity or "climate.neat_home"
+        primary = self._wall_primary(panel.primary_entity)
         # Always mirror current Neat rooms so newly added rooms show on panels
         # without re-saving the wall panel. Prefer Neat room climates; fall back
-        # to the TRV entity if a room climate id is missing.
+        # to the TRV entity if a room climate isn't registered.
         rooms = []
         for room in self.config.rooms:
             if room.enabled is False:
                 continue
-            entity = f"climate.neat_{room.id}" if room.id else (room.trv_entity or "")
+            entity = (self.neat_entity_id(f"neat_{room.id}") if room.id else None) or room.trv_entity or ""
             if not entity:
                 continue
             rooms.append({"entity": entity, "name": room.name})
