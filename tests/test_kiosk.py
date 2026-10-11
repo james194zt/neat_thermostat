@@ -129,6 +129,27 @@ async def test_in_sync_panel_is_left_alone_unless_forced(hass):
     assert not calls["press"]  # same page: no cache clear
 
 
+async def test_proximity_settings_are_write_only_and_sent_when_forced(hass):
+    device_id = _make_device(hass)
+    hass.states.async_set(f"switch.{P}_motion_detection", "on")
+    hass.states.async_set(f"sensor.{P}_current_page", GOOD_PAGE)
+    calls = _mocks(hass)
+    panel = _panel(device_id)
+    defaults = {"motion_detection": True, "proximity_motion": True, "proximity_threshold": 150}
+    status = kiosk.panel_status(hass, panel, defaults)
+    assert status["in_sync"]  # can't read them back, so they never count as drift
+    assert status["settings"]["proximity_motion"]["ok"] is None
+    assert status["settings"]["proximity_threshold"]["target"] == 100  # clamped to 0–100
+    assert "proximity_motion" not in kiosk.read_current(hass, device_id)
+    assert await kiosk.async_apply(hass, panel, defaults) == []
+    assert not calls["set_config"]
+    await kiosk.async_apply(hass, panel, defaults, force=True)
+    sent = {c.data["key"]: c.data["value"] for c in calls["set_config"]}
+    assert sent["motionDetectionProximity"] is True
+    assert sent["motionThresholdProximity"] == 100
+    assert "startURL" in sent
+
+
 async def test_panel_override_beats_house_default(hass):
     device_id = _make_device(hass)
     status = kiosk.panel_status(hass, _panel(device_id, {"screensaver_timer": 120}), {"screensaver_timer": 0})

@@ -29,6 +29,14 @@ KIOSK_SETTINGS: dict[str, tuple[str, tuple[float, float] | None]] = {
     "screen_off_timer": ("number", (0, 86400)),
     "kiosk_lock": ("switch", None),
     "motion_detection": ("switch", None),
+    "proximity_motion": ("config", None),
+    "proximity_threshold": ("config", (0, 100)),
+}
+# Settings with no HA entity: written with fully_kiosk.set_config, never read back, so
+# they're only sent on an explicit sync/save or when the panel comes back online.
+FULLY_CONFIG_KEYS = {
+    "proximity_motion": "motionDetectionProximity",  # "Enable Proximity Motion Detection"
+    "proximity_threshold": "motionThresholdProximity",  # 0–100 %
 }
 # Other entities we need from the same device.
 _CURRENT_PAGE = ("sensor", "current_page")
@@ -198,6 +206,16 @@ async def async_apply(
     device_id = status["device_id"]
     changes: list[str] = []
     for key, info in status["settings"].items():
+        if key in FULLY_CONFIG_KEYS:
+            if force:
+                await hass.services.async_call(
+                    FULLY_DOMAIN,
+                    "set_config",
+                    {"device_id": device_id, "key": FULLY_CONFIG_KEYS[key], "value": info["target"]},
+                    blocking=True,
+                )
+                changes.append(f"{key} → {info['target']}")
+            continue
         entity_id = info["entity_id"]
         # Unreadable values (ok is None) are written too: we can't tell they're right.
         if info["ok"] is True or not entity_id:

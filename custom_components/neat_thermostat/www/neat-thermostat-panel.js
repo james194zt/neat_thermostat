@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.7
+ * @version 0.6.8
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.7";
+const PANEL_VERSION = "0.6.8";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -893,7 +893,9 @@ const KIOSK_FIELDS = [
   { key: "screensaver_brightness", label: "Screensaver brightness", desc: "", kind: "pct" },
   { key: "screen_off_timer", label: "Screen off after", desc: "0 = never.", kind: "sec" },
   { key: "kiosk_lock", label: "Kiosk lock", desc: "Stops anyone leaving the app on the panel.", kind: "bool" },
-  { key: "motion_detection", label: "Wake on motion", desc: "Fully's motion detection. No camera (e.g. NSPanel Pro)? Also turn on Fully → Settings → Motion Detection → Enable Proximity Motion Detection, for wave to wake.", kind: "bool" },
+  { key: "motion_detection", label: "Wake on motion", desc: "Fully's motion detection (camera, or the proximity sensor below).", kind: "bool" },
+  { key: "proximity_motion", label: "Wave to wake", desc: "Uses the panel's proximity sensor for motion — for panels without a camera, like the NSPanel Pro. Needs Wake on motion on. Sent on save or sync; HA can't read it back.", kind: "bool", writeOnly: true },
+  { key: "proximity_threshold", label: "Wave sensitivity", desc: "Fully's proximity threshold. Its default is 50%.", kind: "pct100", writeOnly: true },
 ];
 
 /** Fully stores brightness 0–255; people think in %. */
@@ -901,6 +903,7 @@ function kioskDisplay(field, raw) {
   if (raw == null) return "";
   if (field.kind === "bool") return raw ? "On" : "Off";
   if (field.kind === "pct") return `${Math.round(Number(raw) / 2.55)}%`;
+  if (field.kind === "pct100") return `${Math.round(Number(raw))}%`;
   return Number(raw) === 0 ? "Never" : `${raw} s`;
 }
 
@@ -2153,8 +2156,9 @@ class NeatThermostatPanel extends HTMLElement {
         </select>`;
     }
     const shown = value == null ? "" : field.kind === "pct" ? Math.round(Number(value) / 2.55) : value;
-    const max = field.kind === "pct" ? 100 : 86400;
-    return `<div class="num-input kiosk-num"><input id="${id}" type="number" min="0" max="${max}" step="1" placeholder="${this._escape(placeholder)}" value="${this._escape(shown)}" /><span>${field.kind === "pct" ? "%" : "sec"}</span></div>`;
+    const isPct = field.kind === "pct" || field.kind === "pct100";
+    const max = isPct ? 100 : 86400;
+    return `<div class="num-input kiosk-num"><input id="${id}" type="number" min="0" max="${max}" step="1" placeholder="${this._escape(placeholder)}" value="${this._escape(shown)}" /><span>${isPct ? "%" : "sec"}</span></div>`;
   }
 
   /** Read a set of kiosk inputs back into backend values (blank fields left out). */
@@ -2165,6 +2169,7 @@ class NeatThermostatPanel extends HTMLElement {
       if (!el || el.value === "") continue;
       if (f.kind === "bool") out[f.key] = el.value === "on";
       else if (f.kind === "pct") out[f.key] = Math.round(Math.min(100, Math.max(0, Number(el.value))) * 2.55);
+      else if (f.kind === "pct100") out[f.key] = Math.round(Math.min(100, Math.max(0, Number(el.value))));
       else out[f.key] = Math.max(0, Math.round(Number(el.value)));
     }
     return out;
@@ -2221,7 +2226,7 @@ class NeatThermostatPanel extends HTMLElement {
           el.value = f.kind === "bool" ? (settings[f.key] ? "on" : "off") : f.kind === "pct" ? Math.round(settings[f.key] / 2.55) : settings[f.key];
           n++;
         }
-        const missed = KIOSK_FIELDS.filter((f) => settings[f.key] == null).map((f) => f.label.toLowerCase());
+        const missed = KIOSK_FIELDS.filter((f) => !f.writeOnly && settings[f.key] == null).map((f) => f.label.toLowerCase());
         this._showToast(`Imported ${n} setting${n === 1 ? "" : "s"} from ${name}${missed.length ? ` — couldn't read ${missed.join(", ")} (left as they were)` : ""}. Save to apply.`);
       } catch (e) {
         this._showToast(`Couldn't read ${name}: ${e?.message || e}`, "err");
