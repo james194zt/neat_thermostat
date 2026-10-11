@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.2
+ * @version 0.6.3
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.2";
+const PANEL_VERSION = "0.6.3";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -2022,6 +2022,8 @@ class NeatThermostatPanel extends HTMLElement {
   _renderWallPanels() {
     const panels = this._cfg().wall_panels || [];
     const neat = this._neatClimateEntities();
+    // The outline marks which panel the preview shows — meaningless with only one.
+    const several = panels.length > 1;
     const cards = panels
       .map((p) => {
         const model = wallModel(p.model);
@@ -2029,7 +2031,7 @@ class NeatThermostatPanel extends HTMLElement {
         const primaryName = (primary && this._entityName(primary)) || "—";
         const notNeat = primary && !this._isNeatClimate(primary);
         return `
-          <div class="wp-card${this._previewPanelId() === p.id ? " selected" : ""}" data-id="${this._escape(p.id)}" role="button" tabindex="0" title="Show in preview">
+          <div class="wp-card${several && this._previewPanelId() === p.id ? " selected" : ""}" data-id="${this._escape(p.id)}" role="button" tabindex="0" ${several ? `title="Show in preview"` : ""}>
             <span class="card-icon">${ICONS.panel}</span>
             <div class="wp-card-text">
               <div class="wp-card-name">${this._escape(p.label || p.id)}</div>
@@ -2665,7 +2667,8 @@ class NeatThermostatPanel extends HTMLElement {
   _loadWallPanelIntoForm(panel) {
     if (!panel) return;
     if (panel.id !== this._previewPanelId()) this._showPreviewPanel(panel.id);
-    this.shadowRoot.querySelectorAll(".wp-card").forEach((c) => c.classList.toggle("selected", c.dataset.id === panel.id));
+    const cards = this.shadowRoot.querySelectorAll(".wp-card");
+    cards.forEach((c) => c.classList.toggle("selected", cards.length > 1 && c.dataset.id === panel.id));
   }
 
   async _mountWallPickers() {

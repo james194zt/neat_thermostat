@@ -1,6 +1,6 @@
 """Central Fully Kiosk management (needs HA test venv).
 
-The fake device mirrors the user's real panel on 2026-10-11: on the old /local copy,
+The fake device mirrors a typical panel being migrated: on an old /local copy,
 screensaver/screen-off 0, lock and motion off, brightness unreadable (screen off).
 """
 

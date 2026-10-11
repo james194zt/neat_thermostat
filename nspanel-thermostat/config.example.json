@@ -9,8 +9,8 @@
   "rooms": [],
   "sensors": {
     "insideTemp": "sensor.living_room_temperature",
-    "insideHumidity": "sensor.home_humidity",
-    "outsideTemp": "sensor.home_temperature",
+    "insideHumidity": "sensor.living_room_humidity",
+    "outsideTemp": "sensor.outdoor_temperature",
     "weather": "weather.home",
     "sun": "sun.sun"
   },

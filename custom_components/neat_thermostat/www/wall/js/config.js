@@ -16,7 +16,10 @@ export const LEGACY_STORAGE_KEYS = [
   "nspanel-thermostat-config-v2",
 ];
 export const LOCAL_SECRETS_KEY = "nspanel-thermostat-local-secrets";
-export const DEFAULT_HA_URL = "http://192.168.1.10:8123";
+// The copy Neat ships is served by Home Assistant itself, so its own origin is the right default.
+export const DEFAULT_HA_URL = /^https?:$/.test(window.location.protocol)
+  ? window.location.origin
+  : "http://homeassistant.local:8123";
 export const CONFIG_VERSION = 11;
 
 export const DEFAULT_CONFIG = {
