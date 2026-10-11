@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.4.2
+ * @version 0.4.3
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,11 +46,12 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.4.2";
+const PANEL_VERSION = "0.4.3";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
-// Wall app copy served by HA from /config/www; the preview runs it embedded.
-const WALL_APP_URL = "/local/nspanel-thermostat-v2/index.html";
+// The integration ships a copy of the wall app (scripts/sync_wall_app.py);
+// the preview runs it embedded, so it always matches the installed version.
+const WALL_APP_URL = "/neat_thermostat/static/wall/index.html";
 // Wall panel hardware: the preview renders the app at each model's screen size.
 // Add new devices here; the first entry is the default (matches DEFAULT_WALL_PANEL_MODEL).
 const WALL_MODELS = [
@@ -1528,8 +1529,8 @@ class NeatThermostatPanel extends HTMLElement {
         </div>
         <p class="muted" style="margin:12px 0 0">
           <strong id="wpPreviewSize">${this._escape(this._previewSizeText(model))}</strong> —
-          the real wall app installed on HA at <code>${WALL_APP_URL.replace("index.html", "")}</code>, shown at the model's screen size.
-          Saving a panel reloads it; changes to the wall app's own code show once that copy is updated.
+          the wall app bundled with this Neat version, live against your real entities, at the model's screen size.
+          Saving a panel reloads it.
         </p>
       </div>`;
   }
@@ -1603,7 +1604,7 @@ class NeatThermostatPanel extends HTMLElement {
         if (res.ok) return;
         const stage = this.shadowRoot.querySelector(".wp-preview-stage");
         if (stage) {
-          stage.innerHTML = `<p class="muted wp-preview-missing">The wall app isn't installed on HA — nothing at <code>${WALL_APP_URL}</code>.</p>`;
+          stage.innerHTML = `<p class="muted wp-preview-missing">The wall app is missing from this Neat install — nothing at <code>${WALL_APP_URL}</code>.</p>`;
         }
       })
       .catch(() => {});
