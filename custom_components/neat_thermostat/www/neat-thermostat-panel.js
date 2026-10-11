@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
- * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.4.5
+ * Fox Plant–style shell + dial overview / schedule.
+ * @version 0.4.6
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.4.5";
+const PANEL_VERSION = "0.4.6";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -590,7 +590,7 @@ table.data tbody tr.room-row.selected {
 .wp-preview-shield { position: absolute; inset: 0; cursor: not-allowed; }
 .wp-preview-missing { text-align: center; padding: 32px 16px; }
 
-/* —— Nest schedule grid —— */
+/* —— Schedule grid —— */
 .nest-schedule-sheet {
   background: var(--card-background-color);
   border-radius: 20px;
@@ -708,7 +708,7 @@ table.data tbody tr.room-row.selected {
 .eh-day-label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; white-space: nowrap; }
 .eh-day-label svg { width: 14px; height: 14px; color: var(--nt-green); flex-shrink: 0; }
 .eh-timeline { position: relative; height: 50px; }
-/* Nest-style setpoint bubbles, in their own lane above the track (never over the row above). */
+/* Setpoint bubbles, in their own lane above the track (never over the row above). */
 .eh-sp {
   position: absolute; top: 0; z-index: 1;
   width: 26px; height: 26px; margin-left: -13px; border-radius: 50%;
@@ -1321,7 +1321,7 @@ class NeatThermostatPanel extends HTMLElement {
           <div class="card-head">
             <span class="card-icon intel">${ICONS.sparkle}</span>
             <div class="card-head-text">
-              <p class="card-title">Nest intelligence</p>
+              <p class="card-title">Neat Intelligence</p>
               <p class="card-sub">How Neat learns and plans for the house.</p>
             </div>
           </div>
@@ -1556,7 +1556,7 @@ class NeatThermostatPanel extends HTMLElement {
   }
 
   _pointLeftPercent(start) {
-    // Nest axis ~ 1a → 11p (1:00–23:00). Map 0–24h across full width for simplicity.
+    // Map 0–24h across the full width.
     const mins = parseHHMM(start);
     return Math.max(1, Math.min(99, (mins / (24 * 60)) * 100));
   }
@@ -1631,7 +1631,7 @@ class NeatThermostatPanel extends HTMLElement {
           <label class="field">Temp °C<input id="addTemp" type="number" step="0.5" value="${this._escape(this._mainTarget() ?? 20)}" /></label>
           <button type="button" class="primary" id="saveSchedule">Save schedule</button>
         </div>
-        <p class="muted" style="margin:0 12px 8px">Outside comfort blocks, Eco (${this._escape(eco)}°) applies and rooms drop to their own Eco temp. Dial changes hold until the next block change. Orange dots are block start setpoints (Nest-style).</p>
+        <p class="muted" style="margin:0 12px 8px">Outside comfort blocks, Eco (${this._escape(eco)}°) applies and rooms drop to their own Eco temp. Dial changes hold until the next block change. Orange dots are block start setpoints.</p>
       </div>
     `;
   }
@@ -2442,7 +2442,7 @@ class NeatThermostatPanel extends HTMLElement {
           ${row("Summer mode", "Never calls for heat (the safety floor still applies).", toggle("summerMode", cfg.summer_mode))}
         </div>
         <div class="card">
-          ${head(ICONS.sparkle, "intel", "Nest intelligence", "Learning and comfort features for the house.")}
+          ${head(ICONS.sparkle, "intel", "Neat Intelligence", "Learning and comfort features for the house.")}
           ${row("True Radiant", "Starts heating early so it's warm when a schedule block begins.", toggle("trueRadiant", cfg.true_radiant !== false))}
           ${row("Auto-Schedule", "Learns schedule changes from your manual adjustments.", toggle("autoSchedule", cfg.auto_schedule))}
           ${row("Leaf coaching", "Shows the leaf when you're saving energy.", toggle("leafEnabled", cfg.leaf_enabled !== false))}

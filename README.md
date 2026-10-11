@@ -5,8 +5,8 @@ Home Assistant custom integration that replaces Better Thermostat-style heating 
 - **House climate** `climate.neat_home` — schedule, Eco / Boost / Away, window & summer hold
 - **Room climates** `climate.neat_<room>` — own sensors/setpoints; each room can call for heat
 - **Boiler demand** — heats when the house **or** any room needs heat
-- **Nest-like intelligence (house only)** — True Radiant, Auto-Schedule, Home/Away, Leaf, Safety Temps, Time-to-Temp, Seasonal Savings, Adaptive Comfort
-- **Energy History** — Nest-style 24h heat timeline with Leaf days
+- **Neat Intelligence (house only)** — True Radiant, Auto-Schedule, Home/Away, Leaf, Safety Temps, Time-to-Temp, Seasonal Savings, Adaptive Comfort
+- **Energy History** — 24h heat timeline with setpoint changes and Leaf days
 - **HA sidebar** — Overview, Energy, Rooms, Schedule, Wall panels, Settings
 - **Wall panels** — optional per-panel temperature PIN lock; multi-sensor rooms
 
@@ -49,11 +49,11 @@ Neat wiring (both copies):
 4. Locked panels prompt for the house **Wall PIN** before setpoint/mode changes; unlock lasts until screensaver/idle
 
 Deploy **v2** only when ready; keep **v1** (`nspanel-thermostat/`) available as fallback.
-## Nest intelligence (house only)
+## Neat Intelligence (house only)
 
 Intelligence applies to **`climate.neat_home` / the boiler**, not per-room TRV learning.
 
-| Nest feature | Neat setting | Behaviour |
+| Feature | Neat setting | Behaviour |
 |--------------|--------------|-----------|
 | **True Radiant / Early-On** | Settings → True Radiant (default On) | Learns °C/h warm-up; preheats so the house hits the scheduled temp *at* block start; early-off to limit overshoot. |
 | **Auto-Schedule** | Settings → Auto-Schedule (default Off) | Manual Home setpoint changes learn into schedule blocks. |

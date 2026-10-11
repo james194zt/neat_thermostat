@@ -1,4 +1,4 @@
-"""Nest-like house intelligence: True Radiant, Auto-Schedule, Home/Away."""
+"""House intelligence: True Radiant, Auto-Schedule, Home/Away."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ DEFAULT_AWAY_DELAY_MINUTES = 20
 LEARNING_WINDOW_MINUTES = 30
 INITIAL_LEARNING_DAYS = 7
 
-# Nest Leaf (heating hard floor ≈ 62°F)
+# Leaf (heating hard floor ≈ 62°F)
 LEAF_HARD_FLOOR_C = 16.5
 LEAF_CHALLENGE_OFFSET_C = 0.5
 LEAF_DEFAULT_EARLY_THRESHOLD_C = 19.5

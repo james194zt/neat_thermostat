@@ -1,4 +1,4 @@
-"""Coordinator: boiler demand + Nest-like house intelligence."""
+"""Coordinator: boiler demand + house intelligence."""
 
 from __future__ import annotations
 
@@ -747,7 +747,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._main_target = temperature
         self._main_preset = PRESET_NONE
         if self.config.schedule_enabled:
-            # Nest-style: a dial change holds until the next schedule change.
+            # A dial change holds until the next schedule change.
             self._manual_hold = self._new_hold(temperature)
         self._persist_control()
         record_manual_adjustment(self.intel.state, temperature)

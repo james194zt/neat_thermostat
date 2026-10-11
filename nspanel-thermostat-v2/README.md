@@ -9,7 +9,7 @@ Do **not** change these fallback trees unless you mean to:
 | [`../nspanel-thermostat/`](../nspanel-thermostat/) | Neat-wired fallback UI (stable) |
 | `HADashboard/nspanel-thermostat` | Live panels in production — leave alone |
 
-Forked from `nspanel-thermostat` so Nest/Neat wiring stays available while the visual design is rebuilt.
+Forked from `nspanel-thermostat` so the Neat wiring stays available while the visual design is rebuilt.
 
 ## Deploy (only when v2 is ready)
 
