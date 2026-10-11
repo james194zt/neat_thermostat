@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.1
+ * @version 0.6.2
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.1";
+const PANEL_VERSION = "0.6.2";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -1567,7 +1567,7 @@ class NeatThermostatPanel extends HTMLElement {
     const chip = (entityId) => {
       if (!entityId) return `<span class="muted">—</span>`;
       const st = this._entityState(entityId);
-      const name = st?.attributes?.friendly_name || entityId;
+      const name = this._entityName(entityId);
       const state = st ? st.state : "missing";
       const bad = !st || state === "unavailable" || state === "unknown";
       return `
@@ -2026,7 +2026,7 @@ class NeatThermostatPanel extends HTMLElement {
       .map((p) => {
         const model = wallModel(p.model);
         const primary = this._wallPrimary(p.primary_entity);
-        const primaryName = this._entityState(primary)?.attributes?.friendly_name || primary || "—";
+        const primaryName = (primary && this._entityName(primary)) || "—";
         const notNeat = primary && !this._isNeatClimate(primary);
         return `
           <div class="wp-card${this._previewPanelId() === p.id ? " selected" : ""}" data-id="${this._escape(p.id)}" role="button" tabindex="0" title="Show in preview">
@@ -2220,6 +2220,12 @@ class NeatThermostatPanel extends HTMLElement {
     } catch (e) {
       this._showToast(`Couldn't reload: ${e?.message || e}`, "err");
     }
+  }
+
+  /** Display name. HA prefixes Neat's entities with the device name ("Neat Thermostat Neat Home"); drop it. */
+  _entityName(entityId) {
+    const name = this._entityState(entityId)?.attributes?.friendly_name || entityId || "";
+    return this._hass?.entities?.[entityId]?.platform === "neat_thermostat" ? name.replace(/^Neat Thermostat\s+/, "") : name;
   }
 
   _isNeatClimate(entityId) {
