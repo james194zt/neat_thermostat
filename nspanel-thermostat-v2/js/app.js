@@ -987,6 +987,12 @@ async function connect() {
 
     screenSaver?.destroy();
     displayPower?.destroy();
+    screenSaver = null;
+    displayPower = null;
+
+    // The Neat panel's Wall panels preview: never blank the preview, and never
+    // send the real panel's display to sleep from someone's browser.
+    if (new URLSearchParams(window.location.search).get("preview") === "1") return;
 
     const idleMs = config.display?.idleMs ?? config.screensaverIdleMs ?? 30000;
 

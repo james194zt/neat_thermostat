@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.4.0
+ * @version 0.4.1
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,9 +46,12 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.4.0";
+const PANEL_VERSION = "0.4.1";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
+// Wall app copy served by HA from /config/www; the preview runs it embedded.
+const WALL_APP_URL = "/local/nspanel-thermostat-v2/index.html";
+const WALL_SCREEN_PX = 480; // NSPanel Pro / Pro Gen2: 3.95" 480×480
 
 const STYLES = `
 :host {
@@ -249,132 +252,135 @@ table.data tbody tr.room-row.selected {
   color: var(--secondary-text-color); opacity: 0.42; pointer-events: none;
 }
 
-/* —— Nest-inspired hero —— */
-.nest-hero {
+/* —— Overview hero —— */
+.hero {
+  --hero-tint: var(--nt-accent-hi);
   position: relative;
-  border-radius: 18px;
-  padding: 28px 20px 36px;
-  margin-bottom: 0;
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 28px;
+  align-items: center;
+  padding: 24px 28px;
+  border-radius: 20px;
   background:
-    radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--nt-nest-blue) 28%, transparent), transparent 70%),
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--nt-nest-blue) 18%, var(--card-background-color)),
-      var(--card-background-color));
+    radial-gradient(70% 120% at 0% 0%, color-mix(in srgb, var(--hero-tint) 14%, transparent), transparent 65%),
+    var(--card-background-color);
   border: 1px solid var(--divider-color, transparent);
   box-shadow: var(--ha-card-box-shadow, 0 1px 2px rgba(0,0,0,0.08));
   overflow: hidden;
 }
-.nest-zones {
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: clamp(16px, 4vw, 36px);
-  flex-wrap: wrap;
-  min-height: 220px;
+.hero.heating { --hero-tint: var(--nt-heat-soft); }
+.hero.off { --hero-tint: #9aa0a6; }
+.hero-dial {
+  position: relative; width: 100%; max-width: 260px; aspect-ratio: 1; margin: 0 auto;
+  background: transparent; border: 0; padding: 0; cursor: pointer; color: inherit; font-family: inherit;
+  border-radius: 50%;
 }
-.nest-house {
-  display: flex; flex-direction: column; align-items: center; gap: 10px;
-  align-self: center; margin-bottom: 28px;
+.hero-dial:focus-visible { outline: 2px solid var(--nt-nest-tab); outline-offset: 4px; }
+.hero-dial svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.hero-dial .track { stroke: color-mix(in srgb, var(--primary-text-color) 9%, transparent); }
+.hero-dial .fill { transition: stroke-dasharray 0.6s ease; }
+.hero-dial .now-dot { fill: var(--card-background-color); stroke: var(--primary-text-color); stroke-width: 3; }
+.hero-dial-core {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
 }
-.nest-house svg { width: 72px; height: 72px; filter: drop-shadow(0 6px 10px rgba(0,0,0,0.18)); }
-.nest-zone {
-  display: flex; flex-direction: column; align-items: center; gap: 10px;
-  background: transparent; border: 0; padding: 0; cursor: pointer; font-family: inherit;
-  color: inherit;
-}
-.nest-zone:focus-visible { outline: 2px solid var(--nt-nest-tab); outline-offset: 4px; border-radius: 12px; }
-.nest-zone-label {
-  font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+.hero-dial-caption {
+  font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--secondary-text-color);
 }
-.nest-zone.selected .nest-zone-label { color: var(--primary-text-color); }
-.nest-sat {
-  width: 72px; height: 72px; border-radius: 50%;
-  display: grid; place-items: center;
-  font-size: 24px; font-weight: 700; color: #fff;
-  background: #5c636b;
-  box-shadow: 0 8px 18px rgba(0,0,0,0.22);
+.hero.heating .hero-dial-caption { color: var(--nt-heat-soft); }
+.hero-dial-temp {
+  font-size: 68px; font-weight: 300; line-height: 1; letter-spacing: -0.04em; margin: 6px 0 4px;
+  font-variant-numeric: tabular-nums;
 }
-.nest-sat.heat { background: var(--nt-heat); }
-.nest-sat.unknown { background: #6a7178; font-size: 28px; font-weight: 500; }
-.nest-dial-wrap { position: relative; }
-.nest-dial {
-  width: 168px; height: 168px; border-radius: 50%;
-  background:
-    radial-gradient(circle at 50% 42%, #4a5058 0%, #2f343a 62%, #262a30 100%);
-  box-shadow:
-    0 14px 28px rgba(0,0,0,0.28),
-    inset 0 1px 0 rgba(255,255,255,0.08);
-  display: grid; place-items: center;
-  position: relative;
+.hero-dial-temp sup { font-size: 0.38em; font-weight: 400; vertical-align: top; position: relative; top: 0.35em; margin-left: 2px; }
+.hero-dial-sub { font-size: 13px; color: var(--secondary-text-color); font-weight: 500; }
+.hero-dial-eta { margin-top: 2px; font-size: 12px; font-weight: 600; color: var(--nt-heat-soft); }
+.hero-side { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.hero-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.hero-title { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
+.hero-headline { font-size: 14px; color: var(--secondary-text-color); margin: 4px 0 0; }
+.hero-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.hero-pill {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+  background: color-mix(in srgb, var(--primary-text-color) 7%, transparent);
+  color: var(--secondary-text-color);
 }
-.nest-dial.heating {
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--nt-heat) 55%, transparent),
-    0 14px 28px rgba(0,0,0,0.28),
-    inset 0 1px 0 rgba(255,255,255,0.08);
+.hero-pill svg { width: 14px; height: 14px; }
+.hero-pill.heat { background: color-mix(in srgb, var(--nt-heat) 16%, transparent); color: var(--nt-heat-soft); }
+.hero-pill.leaf { background: color-mix(in srgb, var(--nt-green) 16%, transparent); color: var(--nt-green); }
+.hero-pill.info { background: color-mix(in srgb, var(--nt-accent) 16%, transparent); color: var(--nt-accent-hi); }
+.hero-pill.warn { background: color-mix(in srgb, var(--nt-amber) 16%, transparent); color: var(--nt-amber); }
+.hero-rooms { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.hero-room {
+  display: flex; flex-direction: column; gap: 2px; text-align: left;
+  padding: 14px 16px; border-radius: 14px; cursor: pointer; font-family: inherit; color: inherit;
+  background: color-mix(in srgb, var(--primary-text-color) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary-text-color) 8%, transparent);
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
-.nest-dial.leaf {
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--nt-green) 50%, transparent),
-    0 14px 28px rgba(0,0,0,0.28),
-    inset 0 1px 0 rgba(255,255,255,0.08);
+.hero-room:hover { background: color-mix(in srgb, var(--primary-text-color) 7%, transparent); }
+.hero-room:focus-visible { outline: 2px solid var(--nt-nest-tab); outline-offset: 2px; }
+.hero-room.selected { border-color: color-mix(in srgb, var(--primary-text-color) 30%, transparent); }
+.hero-room.heat {
+  background: color-mix(in srgb, var(--nt-heat) 10%, transparent);
+  border-color: color-mix(in srgb, var(--nt-heat) 35%, transparent);
 }
-.nest-dial.heating.leaf {
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--nt-heat) 45%, transparent),
-    0 0 0 6px color-mix(in srgb, var(--nt-green) 35%, transparent),
-    0 14px 28px rgba(0,0,0,0.28),
-    inset 0 1px 0 rgba(255,255,255,0.08);
+.hero-room-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.hero-room-name {
+  font-size: 13px; font-weight: 600; color: var(--secondary-text-color);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.nest-leaf {
-  position: absolute; top: 14px; right: 18px; z-index: 2;
-  width: 22px; height: 22px; color: var(--nt-green);
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.35));
+.hero-room-flame { width: 16px; height: 16px; color: var(--nt-heat-soft); flex-shrink: 0; }
+.hero-room-temp { font-size: 30px; font-weight: 400; letter-spacing: -0.03em; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.hero-room-temp.unknown { color: var(--secondary-text-color); }
+.hero-room-target { font-size: 12px; color: var(--secondary-text-color); }
+.hero-room.heat .hero-room-target { color: var(--nt-heat-soft); }
+.hero-empty { font-size: 13px; color: var(--secondary-text-color); margin: 0; }
+@media (max-width: 720px) {
+  .hero { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 20px 16px; }
+  .hero-dial { max-width: 220px; margin-bottom: -28px; }
+  .hero-dial-temp { font-size: 56px; }
+  .hero-head { flex-direction: column; align-items: center; text-align: center; }
+  .hero-pill { white-space: normal; }
+  .hero-pills { justify-content: center; }
+  .hero-rooms { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-.nest-leaf svg { width: 100%; height: 100%; display: block; }
-.nest-ticks {
-  position: absolute; inset: 10px; border-radius: 50%;
-  background:
-    repeating-conic-gradient(
-      from -90deg,
-      rgba(255,255,255,0.55) 0deg 1.2deg,
-      transparent 1.2deg 9deg
-    );
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 9px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 9px));
-  pointer-events: none;
+
+/* —— Wall panel preview —— */
+.wp-preview-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+.wp-preview-bar select { width: auto; min-width: 180px; }
+.wp-preview-taps { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.wp-preview-taps input { width: auto; margin: 0; }
+.wp-preview-taps.live { color: var(--nt-heat-soft); font-weight: 600; }
+.wp-preview-stage { display: flex; justify-content: center; }
+.wp-preview-device {
+  width: 100%; max-width: ${WALL_SCREEN_PX + 28}px; box-sizing: border-box;
+  padding: 14px; border-radius: 26px; background: #0d0f12;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.06);
 }
-.nest-dial-core {
-  position: relative; z-index: 1; text-align: center; color: #fff; padding: 8px;
+.wp-preview-screen {
+  position: relative; width: 100%; aspect-ratio: 1; overflow: hidden;
+  border-radius: 6px; background: #000;
 }
-.nest-dial-caption {
-  font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
-  color: rgba(255,255,255,0.62); font-weight: 600; margin-bottom: 4px;
+.wp-preview-screen iframe {
+  position: absolute; top: 0; left: 0; border: 0;
+  width: ${WALL_SCREEN_PX}px; height: ${WALL_SCREEN_PX}px;
+  transform-origin: 0 0; transform: scale(var(--wp-scale, 1));
 }
-.nest-dial-temp { font-size: 52px; font-weight: 500; line-height: 1; letter-spacing: -0.03em; }
-.nest-dial-current {
-  margin-top: 4px; font-size: 12px; color: rgba(255,255,255,0.55); font-weight: 500;
-}
-.nest-pointer {
-  position: absolute; left: 50%; bottom: -2px; transform: translateX(-50%);
-  width: 0; height: 0;
-  border-left: 10px solid transparent;
-  border-right: 10px solid transparent;
-  border-bottom: 12px solid var(--card-background-color);
-  filter: drop-shadow(0 -1px 0 var(--divider-color));
-  z-index: 2;
-}
+.wp-preview-shield { position: absolute; inset: 0; cursor: not-allowed; }
+.wp-preview-missing { text-align: center; padding: 32px 16px; }
 
 /* —— Nest schedule grid —— */
 .nest-schedule-sheet {
   background: var(--card-background-color);
-  border-radius: 0 0 16px 16px;
+  border-radius: 20px;
   border: 1px solid var(--divider-color, transparent);
-  border-top: 0;
   box-shadow: var(--ha-card-box-shadow, 0 1px 2px rgba(0,0,0,0.08));
   padding: 8px 8px 12px;
-  margin-bottom: 14px;
+  margin: 14px 0;
 }
 .nest-schedule-toolbar {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -498,10 +504,6 @@ table.data tbody tr.room-row.selected {
   display: flex; justify-content: space-between;
   margin-top: 6px; font-size: 10px; color: var(--secondary-text-color);
 }
-.nest-dial-eta {
-  margin-top: 4px; font-size: 11px; font-weight: 600;
-  letter-spacing: 0.04em; color: rgba(255,255,255,0.72);
-}
 .toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
   padding: 12px 20px; border-radius: 10px; font-size: 14px; font-weight: 500;
@@ -524,9 +526,6 @@ table.data tbody tr.room-row.selected {
 label.field .entity-picker-host { margin-top: 0; }
 
 @media (max-width: 720px) {
-  .nest-dial { width: 140px; height: 140px; }
-  .nest-dial-temp { font-size: 42px; }
-  .nest-sat { width: 60px; height: 60px; font-size: 20px; }
   .nest-schedule-grid { grid-template-columns: 72px 1fr; }
   .nest-day-label { font-size: 10px; padding-right: 4px; }
   .nest-point { width: 28px; height: 28px; font-size: 11px; }
@@ -553,14 +552,33 @@ function formatTemp(value) {
   return Number.isInteger(n) ? String(n) : n.toFixed(1).replace(/\.0$/, "");
 }
 
-function houseSvg() {
-  return `<svg viewBox="0 0 80 80" aria-hidden="true">
-    <path d="M12 34 L40 12 L68 34 V70 H12 Z" fill="#d7dde3"/>
-    <path d="M12 34 L40 12 L68 34" fill="none" stroke="#9aa3ab" stroke-width="3" stroke-linejoin="round"/>
-    <path d="M40 12 L68 34 V22 L52 12 Z" fill="#b8c0c7"/>
-    <rect x="30" y="42" width="20" height="28" rx="2" fill="#F5C542"/>
-    <rect x="18" y="40" width="10" height="10" rx="1" fill="#8fa0b0"/>
-    <rect x="52" y="40" width="10" height="10" rx="1" fill="#8fa0b0"/>
+function flameSvg() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true">
+    <path fill="currentColor" d="M12 2c.5 3.2-1.6 5-3.2 6.9C7.4 10.6 6 12.4 6 15a6 6 0 0 0 12 0c0-2.6-1.3-4.6-2.6-6.1-.3 1.6-1.1 2.7-2.3 3.2.6-3.7-.3-7.6-1.1-10.1z"/>
+  </svg>`;
+}
+
+/** SVG arc gauge: 270° sweep, `fill` and `now` are 0–1 positions along it. */
+function dialSvg({ fill, now, color }) {
+  const r = 84;
+  const arc = "M40.6 159.4 A84 84 0 1 1 159.4 159.4";
+  const pct = Math.max(0, Math.min(1, fill)) * 100;
+  let nowDot = "";
+  if (now != null) {
+    const a = ((135 + 270 * Math.max(0, Math.min(1, now))) * Math.PI) / 180;
+    nowDot = `<circle class="now-dot" cx="${(100 + r * Math.cos(a)).toFixed(1)}" cy="${(100 + r * Math.sin(a)).toFixed(1)}" r="6"/>`;
+  }
+  return `<svg viewBox="0 0 200 200" aria-hidden="true">
+    <defs>
+      <linearGradient id="heroArc" x1="0" y1="1" x2="1" y2="0">
+        <stop offset="0" stop-color="${color[0]}"/>
+        <stop offset="1" stop-color="${color[1]}"/>
+      </linearGradient>
+    </defs>
+    <path class="track" d="${arc}" fill="none" stroke-width="12" stroke-linecap="round"/>
+    <path class="fill" d="${arc}" pathLength="100" fill="none" stroke="url(#heroArc)" stroke-width="12"
+      stroke-linecap="round" stroke-dasharray="${pct.toFixed(1)} 100"/>
+    ${nowDot}
   </svg>`;
 }
 
@@ -641,6 +659,9 @@ class NeatThermostatPanel extends HTMLElement {
       weather: "weather.home",
     };
     this._wallPickerMountGen = 0;
+    this._previewPanel = "";
+    this._previewTaps = false;
+    this._previewResize = null;
     this._settingsDraft = null;
     this._settingsPickerMountGen = 0;
     this.attachShadow({ mode: "open" });
@@ -670,6 +691,8 @@ class NeatThermostatPanel extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._previewResize?.disconnect();
+    this._previewResize = null;
     if (this._liveTimer) {
       window.clearInterval(this._liveTimer);
       this._liveTimer = null;
@@ -833,119 +856,120 @@ class NeatThermostatPanel extends HTMLElement {
     return `<div class="header"><h1>${title}</h1><p>${lead}</p></div>`;
   }
 
-  _renderHero({ showPointer = false } = {}) {
+  /** Same sources as the coordinator's room_current_temp: sensors averaged, else the TRV. */
+  _roomCurrent(room) {
+    const readings = [room.temperature_sensor, ...(room.extra_temperature_sensors || [])]
+      .filter(Boolean)
+      .map((id) => Number(this._entityState(id)?.state))
+      .filter((n) => Number.isFinite(n));
+    if (readings.length) return readings.reduce((a, b) => a + b, 0) / readings.length;
+    const t = Number(this._entityState(room.trv_entity)?.attributes?.current_temperature);
+    return Number.isFinite(t) ? t : null;
+  }
+
+  /** Status pills for the hero: heating state first, then whatever Neat is doing. */
+  _heroPills() {
+    const live = this._live();
+    const intel = live.intelligence || {};
+    const preheat = live.preheat || {};
+    const preset = (live.main || {}).preset;
+    const pills = [];
+    const pill = (cls, text, icon = "") =>
+      pills.push(`<span class="hero-pill ${cls}">${icon}${this._escape(text)}</span>`);
+    if (live.safety_active) pill("heat", "Safety temp · protecting", flameSvg());
+    else if (live.boiler_on) pill("heat", "Boiler on", flameSvg());
+    if (preheat.preheating) pill("heat", `Preheating for ${preheat.block_start ?? ""}`.trim());
+    if (live.leaf?.active) pill("leaf", "Leaf", leafSvg());
+    if (live.away) pill("warn", "Away · Eco");
+    if (live.window_open) pill("warn", "Window open");
+    if (live.summer_mode) pill("warn", "Summer mode");
+    if (preset && preset !== "none" && !live.away) pill("info", preset[0].toUpperCase() + preset.slice(1));
+    if (Number(live.adaptive_offset_c)) {
+      const off = Number(live.adaptive_offset_c);
+      pill("info", `Adaptive ${off > 0 ? "+" : ""}${off}°C`);
+    } else if (intel.true_radiant && intel.warmup_c_per_hour != null) {
+      pill("info", `True Radiant · ${intel.warmup_c_per_hour}°C/h`);
+    }
+    return pills.join("");
+  }
+
+  _renderHero() {
     const live = this._live();
     const rooms = (this._cfg().rooms || []).filter((r) => r.enabled !== false);
-    const target = formatTemp(this._mainTarget()) ?? "—";
-    const current = formatTemp(this._mainCurrent());
+    const targetNum = this._mainTarget();
+    const currentNum = this._mainCurrent();
+    const target = formatTemp(targetNum) ?? "—";
+    const current = currentNum != null ? formatTemp(Math.round(currentNum * 10) / 10) : null;
     const heating = Boolean(live.boiler_on);
-    const mode = (live.main || {}).hvac_mode || "heat";
+    const off = (live.main || {}).hvac_mode === "off";
     const preheat = live.preheat || {};
-    const leaf = live.leaf || {};
-    const leafActive = Boolean(leaf.active);
-    let caption = mode === "off" ? "Off" : heating ? "Heating to" : "Heat set to";
+    let caption = off ? "Off" : heating ? "Heating to" : "Set to";
     if (preheat.preheating) caption = "Preheating to";
+    let headline = "Holding temperature";
+    if (off) headline = "Heating is off";
+    else if (heating) headline = "Warming the house";
+    else if (currentNum != null && targetNum != null && currentNum >= Number(targetNum)) headline = "Up to temperature";
 
-    const dialClass = `nest-dial${heating ? " heating" : ""}${leafActive ? " leaf" : ""}`;
-    const leafBadge = leafActive
-      ? `<div class="nest-leaf" title="Leaf — efficient (eco, away, or off)">${leafSvg()}</div>`
-      : "";
-    const eta = this._formatEta(live.time_to_temp_minutes);
-    const etaHtml = eta ? `<div class="nest-dial-eta">${this._escape(eta)}</div>` : "";
+    const home = this._entityState(this._neatClimateEntities().home);
+    const lo = Number(home?.attributes?.min_temp ?? 7);
+    const hi = Number(home?.attributes?.max_temp ?? 30);
+    const pos = (t) => (t == null || !Number.isFinite(Number(t)) ? null : (Number(t) - lo) / (hi - lo));
+    const color = off
+      ? ["#6b7177", "#9aa0a6"]
+      : heating
+        ? ["#FFB74D", "#F4511E"]
+        : ["#19D4DE", "#08979C"];
+    const eta = heating ? this._formatEta(live.time_to_temp_minutes) : null;
 
-    const roomZones = rooms
+    const heroClass = `hero${heating ? " heating" : ""}${off ? " off" : ""}`;
+    const roomTiles = rooms
       .map((room) => {
-        const temp = formatTemp(this._roomDisplayTemp(room));
+        const now = this._roomCurrent(room);
+        const set = formatTemp(this._roomDisplayTemp(room));
         const heat = this._roomHeating(room);
         const selected = this._focusZone === room.id;
-        const cls = temp == null ? "nest-sat unknown" : `nest-sat${heat ? " heat" : ""}`;
-        const value = temp == null ? "?" : temp;
         return `
-          <button type="button" class="nest-zone${selected ? " selected" : ""}" data-zone="${this._escape(room.id)}">
-            <span class="${cls}">${this._escape(value)}</span>
-            <span class="nest-zone-label">${this._escape(room.name)}</span>
+          <button type="button" class="hero-room${heat ? " heat" : ""}${selected ? " selected" : ""}" data-zone="${this._escape(room.id)}">
+            <span class="hero-room-top">
+              <span class="hero-room-name">${this._escape(room.name)}</span>
+              ${heat ? `<span class="hero-room-flame" title="Calling for heat">${flameSvg()}</span>` : ""}
+            </span>
+            <span class="hero-room-temp${now == null ? " unknown" : ""}">${now == null ? "—" : `${this._escape(formatTemp(Math.round(now * 10) / 10))}°`}</span>
+            <span class="hero-room-target">${heat ? "Heating to" : "Set"} ${this._escape(set ?? "—")}°</span>
           </button>`;
       })
       .join("");
-
-    // Nest layout: house · TRVs · main dial (main dial centered-ish). Put dial in middle of TRVs when many.
-    const leftRooms = rooms.slice(0, Math.ceil(rooms.length / 2));
-    const rightRooms = rooms.slice(Math.ceil(rooms.length / 2));
-    const leftHtml = leftRooms
-      .map((room) => {
-        const temp = formatTemp(this._roomDisplayTemp(room));
-        const heat = this._roomHeating(room);
-        const selected = this._focusZone === room.id;
-        const cls = temp == null ? "nest-sat unknown" : `nest-sat${heat ? " heat" : ""}`;
-        const value = temp == null ? "?" : temp;
-        return `
-          <button type="button" class="nest-zone${selected ? " selected" : ""}" data-zone="${this._escape(room.id)}">
-            <span class="${cls}">${this._escape(value)}</span>
-            <span class="nest-zone-label">${this._escape(room.name)}</span>
-          </button>`;
-      })
-      .join("");
-    const rightHtml = rightRooms
-      .map((room) => {
-        const temp = formatTemp(this._roomDisplayTemp(room));
-        const heat = this._roomHeating(room);
-        const selected = this._focusZone === room.id;
-        const cls = temp == null ? "nest-sat unknown" : `nest-sat${heat ? " heat" : ""}`;
-        const value = temp == null ? "?" : temp;
-        return `
-          <button type="button" class="nest-zone${selected ? " selected" : ""}" data-zone="${this._escape(room.id)}">
-            <span class="${cls}">${this._escape(value)}</span>
-            <span class="nest-zone-label">${this._escape(room.name)}</span>
-          </button>`;
-      })
-      .join("");
-
-    void roomZones;
 
     return `
-      <section class="nest-hero">
-        <div class="nest-zones">
-          <div class="nest-house" title="Home">${houseSvg()}</div>
-          ${leftHtml}
-          <button type="button" class="nest-zone${this._focusZone === "home" ? " selected" : ""}" data-zone="home">
-            <div class="nest-dial-wrap">
-              <div class="${dialClass}">
-                <div class="nest-ticks" aria-hidden="true"></div>
-                ${leafBadge}
-                <div class="nest-dial-core">
-                  <div class="nest-dial-caption">${this._escape(caption)}</div>
-                  <div class="nest-dial-temp">${this._escape(target)}</div>
-                  ${current != null ? `<div class="nest-dial-current">Now ${this._escape(current)}°</div>` : ""}
-                  ${etaHtml}
-                </div>
-              </div>
+      <section class="${heroClass}">
+        <button type="button" class="hero-dial" data-zone="home" title="Home">
+          ${dialSvg({ fill: off ? 0 : pos(targetNum) ?? 0, now: pos(currentNum), color })}
+          <span class="hero-dial-core">
+            <span class="hero-dial-caption">${this._escape(caption)}</span>
+            <span class="hero-dial-temp">${this._escape(target)}${target !== "—" ? "<sup>°C</sup>" : ""}</span>
+            ${current != null ? `<span class="hero-dial-sub">Indoor ${this._escape(current)}°</span>` : ""}
+            ${eta ? `<span class="hero-dial-eta">${this._escape(eta)} to go</span>` : ""}
+          </span>
+        </button>
+        <div class="hero-side">
+          <div class="hero-head">
+            <div>
+              <h2 class="hero-title">Home</h2>
+              <p class="hero-headline">${this._escape(headline)}</p>
             </div>
-            <span class="nest-zone-label">Home</span>
-          </button>
-          ${rightHtml}
+            <div class="hero-pills">${this._heroPills()}</div>
+          </div>
+          ${roomTiles
+            ? `<div class="hero-rooms">${roomTiles}</div>`
+            : `<p class="hero-empty">No rooms yet — add TRVs on the Rooms tab.</p>`}
         </div>
-        ${showPointer ? `<div class="nest-pointer" aria-hidden="true"></div>` : ""}
       </section>`;
   }
 
   _renderOverview() {
     const live = this._live();
-    const preheat = live.preheat || {};
     const intel = live.intelligence || {};
     const leaf = live.leaf || {};
-    const chip = live.safety_active
-      ? `<div class="intel-chip">Safety temp · heating to protect</div>`
-      : leaf.active
-      ? `<div class="intel-chip leaf">Leaf · efficient setpoint</div>`
-      : preheat.preheating
-        ? `<div class="intel-chip">Preheating for ${this._escape(preheat.block_start)}</div>`
-        : live.away
-          ? `<div class="intel-chip">Away · Eco</div>`
-          : Number(live.adaptive_offset_c)
-            ? `<div class="intel-chip home">Adaptive Comfort · ${Number(live.adaptive_offset_c) > 0 ? "+" : ""}${this._escape(live.adaptive_offset_c)}°C</div>`
-            : intel.true_radiant
-              ? `<div class="intel-chip home">True Radiant · ${this._escape(intel.warmup_c_per_hour ?? "—")}°C/h</div>`
-              : "";
     const hoursWeek = leaf.hours_week ?? (leaf.minutes_week != null ? (leaf.minutes_week / 60).toFixed(2) : "—");
     const hoursTotal = leaf.hours_total ?? (leaf.minutes_total != null ? (leaf.minutes_total / 60).toFixed(2) : "—");
     const streak = leaf.days_streak ?? 0;
@@ -959,7 +983,6 @@ class NeatThermostatPanel extends HTMLElement {
       ${heaterWarning}
       ${this._renderHero()}
       <div style="height:14px"></div>
-      ${chip}
       <div class="stats-row">
         <div class="stat ${live.boiler_on ? "ok" : ""}"><div class="label">Boiler</div><div class="value">${live.boiler_on ? "On" : "Off"}</div></div>
         <div class="stat"><div class="label">Preset</div><div class="value">${this._escape((live.main || {}).preset || "none")}</div></div>
@@ -1116,7 +1139,7 @@ class NeatThermostatPanel extends HTMLElement {
     }).join("");
 
     return `
-      ${this._renderHero({ showPointer: true })}
+      ${this._renderHero()}
       <div class="nest-schedule-sheet">
         <div class="nest-schedule-toolbar">
           <span class="pill">Schedule</span>
@@ -1398,6 +1421,7 @@ class NeatThermostatPanel extends HTMLElement {
       .join("");
     return `
       ${this._pageHeader("Wall panels", "Define each physical NSPanel here. On the device, only pick which panel it is.")}
+      ${this._renderWallPreview(panels)}
       <div class="card">
         <p class="card-title">Registered panels</p>
         <div class="panel-list">${list || `<p class="muted" style="margin:0">No wall panels yet.</p>`}</div>
@@ -1445,8 +1469,103 @@ class NeatThermostatPanel extends HTMLElement {
     `;
   }
 
+  _previewPanelId(panels = this._cfg().wall_panels || []) {
+    if (panels.some((p) => p.id === this._previewPanel)) return this._previewPanel;
+    return panels[0]?.id || "";
+  }
+
+  _wallPreviewSrc(id) {
+    const q = new URLSearchParams({ embedded: "1", preview: "1", device: id, t: String(Date.now()) });
+    return `${WALL_APP_URL}?${q}`;
+  }
+
+  _renderWallPreview(panels) {
+    if (!panels.length) return "";
+    const current = this._previewPanelId(panels);
+    const options = panels
+      .map((p) => `<option value="${this._escape(p.id)}" ${p.id === current ? "selected" : ""}>${this._escape(p.label || p.id)}</option>`)
+      .join("");
+    return `
+      <div class="card">
+        <p class="card-title">Preview</p>
+        <div class="wp-preview-bar">
+          <select id="wpPreviewPanel" aria-label="Panel to preview">${options}</select>
+          <button type="button" class="secondary compact" id="wpPreviewReload">Reload</button>
+          <label class="wp-preview-taps${this._previewTaps ? " live" : ""}">
+            <input type="checkbox" id="wpPreviewTaps" ${this._previewTaps ? "checked" : ""} />
+            ${this._previewTaps ? "Taps are live — they change the real heating" : "Allow taps (controls the real heating)"}
+          </label>
+        </div>
+        <div class="wp-preview-stage">
+          <div class="wp-preview-device">
+            <div class="wp-preview-screen">
+              <iframe id="wpPreviewFrame" title="Wall panel preview" src="${this._escape(this._wallPreviewSrc(current))}"></iframe>
+              ${this._previewTaps ? "" : `<div class="wp-preview-shield" title="View only — tick Allow taps to use it"></div>`}
+            </div>
+          </div>
+        </div>
+        <p class="muted" style="margin:12px 0 0">
+          The real wall app installed on HA at <code>${WALL_APP_URL.replace("index.html", "")}</code>, shown at the panel's ${WALL_SCREEN_PX}×${WALL_SCREEN_PX} screen size.
+          Saving a panel reloads it; changes to the wall app's own code show once that copy is updated.
+        </p>
+      </div>`;
+  }
+
+  _bindWallPreview() {
+    this._previewResize?.disconnect();
+    this._previewResize = null;
+    const screen = this.shadowRoot.querySelector(".wp-preview-screen");
+    const frame = this.shadowRoot.getElementById("wpPreviewFrame");
+    if (!screen || !frame) return;
+    this._previewResize = new ResizeObserver(() => {
+      screen.style.setProperty("--wp-scale", String(screen.clientWidth / WALL_SCREEN_PX));
+    });
+    this._previewResize.observe(screen);
+    const reload = () => {
+      frame.src = this._wallPreviewSrc(this._previewPanelId());
+    };
+    this.shadowRoot.getElementById("wpPreviewPanel")?.addEventListener("change", (ev) => {
+      this._previewPanel = ev.target.value;
+      reload();
+    });
+    this.shadowRoot.getElementById("wpPreviewReload")?.addEventListener("click", reload);
+    this.shadowRoot.getElementById("wpPreviewTaps")?.addEventListener("change", (ev) => {
+      this._previewTaps = ev.target.checked;
+      const label = ev.target.closest(".wp-preview-taps");
+      label.classList.toggle("live", this._previewTaps);
+      label.lastChild.textContent = this._previewTaps
+        ? " Taps are live — they change the real heating"
+        : " Allow taps (controls the real heating)";
+      let shield = screen.querySelector(".wp-preview-shield");
+      if (this._previewTaps) shield?.remove();
+      else if (!shield) {
+        shield = document.createElement("div");
+        shield.className = "wp-preview-shield";
+        shield.title = "View only — tick Allow taps to use it";
+        screen.appendChild(shield);
+      }
+    });
+    // A missing wall app would otherwise show HA's bare 404 page inside the frame.
+    fetch(WALL_APP_URL, { method: "HEAD", cache: "no-store" })
+      .then((res) => {
+        if (res.ok) return;
+        const stage = this.shadowRoot.querySelector(".wp-preview-stage");
+        if (stage) {
+          stage.innerHTML = `<p class="muted wp-preview-missing">The wall app isn't installed on HA — nothing at <code>${WALL_APP_URL}</code>.</p>`;
+        }
+      })
+      .catch(() => {});
+  }
+
   _loadWallPanelIntoForm(panel) {
     if (!panel) return;
+    if (panel.id !== this._previewPanelId()) {
+      this._previewPanel = panel.id;
+      const select = this.shadowRoot?.getElementById("wpPreviewPanel");
+      const frame = this.shadowRoot?.getElementById("wpPreviewFrame");
+      if (select) select.value = panel.id;
+      if (frame) frame.src = this._wallPreviewSrc(panel.id);
+    }
     const idEl = this.shadowRoot?.getElementById("wpId");
     const labelEl = this.shadowRoot?.getElementById("wpLabel");
     const idleEl = this.shadowRoot?.getElementById("wpIdle");
@@ -1836,6 +1955,7 @@ class NeatThermostatPanel extends HTMLElement {
       </div>
     `;
     this._bind();
+    this._bindWallPreview();
     if (this._view === "rooms") {
       void this._mountRoomPickers();
     }
@@ -1868,7 +1988,7 @@ class NeatThermostatPanel extends HTMLElement {
       }
     });
 
-    this.shadowRoot.querySelectorAll(".nest-zone[data-zone]").forEach((btn) => {
+    this.shadowRoot.querySelectorAll("[data-zone]").forEach((btn) => {
       btn.addEventListener("click", () => {
         this._focusZone = btn.dataset.zone;
         this._render();
@@ -2148,6 +2268,7 @@ class NeatThermostatPanel extends HTMLElement {
               temperature_lock: this.shadowRoot.getElementById("wpLock")?.value === "true",
             },
           });
+          this._previewPanel = id;
           await this._loadState();
           this._showToast(`Wall panel ${label} saved`);
         } catch (e) {
