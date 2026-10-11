@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.5.0
+ * @version 0.5.1
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.5.0";
+const PANEL_VERSION = "0.5.1";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -3170,6 +3170,8 @@ const versionTag = `neat-thermostat-panel-${PANEL_VERSION.replaceAll(".", "_")}`
 if (!customElements.get(versionTag)) {
   customElements.define(versionTag, NeatThermostatPanel);
 }
+// Plain alias. A class can only be registered once per page, so it needs its own subclass
+// (re-using NeatThermostatPanel threw "this constructor has already been used").
 if (!customElements.get("neat-thermostat-panel")) {
-  customElements.define("neat-thermostat-panel", NeatThermostatPanel);
+  customElements.define("neat-thermostat-panel", class extends NeatThermostatPanel {});
 }
