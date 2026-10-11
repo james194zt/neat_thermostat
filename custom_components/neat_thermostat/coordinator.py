@@ -887,6 +887,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_setup_listeners(self) -> None:
         self._subscribe_state_changes()
 
+        # @callback keeps it on the event loop; without it HA runs it in a worker thread, where
+        # async_create_task is refused and the refresh coroutine is dropped (never awaited).
+        @callback
         def _tick(_now: Any) -> None:
             self.hass.async_create_task(self.async_request_refresh())
 
