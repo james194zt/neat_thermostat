@@ -1,12 +1,11 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.5
+ * @version 0.6.6
  */
 const NAV = [
   { id: "overview", label: "Overview" },
   { id: "energy", label: "Energy" },
-  { id: "rooms", label: "Rooms" },
   { id: "schedule", label: "Schedule" },
   { id: "wall_panels", label: "Wall panels" },
   { id: "settings", label: "Settings" },
@@ -46,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.5";
+const PANEL_VERSION = "0.6.6";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -340,6 +339,8 @@ input[readonly] { opacity: 0.7; cursor: default; }
   box-shadow: var(--ha-card-box-shadow, 0 1px 2px rgba(0,0,0,0.06));
   transition: border-color 0.15s ease, background 0.15s ease;
 }
+#roomsCard .room-card { background: color-mix(in srgb, var(--primary-text-color) 4%, transparent); box-shadow: none; }
+#roomsCard .card-head > button { flex-shrink: 0; }
 .room-card:hover { border-color: color-mix(in srgb, var(--primary-text-color) 22%, transparent); }
 .room-card:focus-visible { outline: 2px solid var(--nt-nest-tab); outline-offset: 2px; }
 .room-card.selected { border-color: var(--nt-accent-hi); }
@@ -1231,6 +1232,7 @@ class NeatThermostatPanel extends HTMLElement {
   }
 
   _setView(id) {
+    if (id === "rooms") id = "settings"; // Rooms now lives on Settings
     this._view = id;
     this._flash = "";
     this._settingsDraft = null;
@@ -1863,7 +1865,8 @@ class NeatThermostatPanel extends HTMLElement {
     `;
   }
 
-  _renderRooms() {
+  /** Rooms, as a card on the Settings page (the Overview handles day-to-day use). */
+  _renderRoomsCard() {
     const rooms = this._cfg().rooms || [];
     const editing = this._editingRoomId;
     const editingRoom = editing ? rooms.find((r) => r.id === editing) : null;
@@ -1898,14 +1901,19 @@ class NeatThermostatPanel extends HTMLElement {
       })
       .join("");
     return `
-      <div class="page-head-row">
-        ${this._pageHeader("Rooms", "Each room has its own Neat climate, driven by its TRV.")}
-        <button class="primary" id="addRoom" type="button">${ICONS.plus}Add room</button>
+      <div class="card" id="roomsCard">
+        <div class="card-head">
+          <span class="card-icon">${ICONS.home}</span>
+          <div class="card-head-text">
+            <p class="card-title">Rooms</p>
+            <p class="card-sub">Each room has its own Neat climate, driven by its TRV.${rooms.length ? " Click a room to edit it, drag to reorder." : ""}</p>
+          </div>
+          <button class="secondary compact" id="addRoom" type="button">${ICONS.plus}Add room</button>
+        </div>
+        ${rooms.length
+          ? `<div class="room-grid${rooms.length > 1 ? " reorderable" : ""}">${cards}</div>`
+          : `<p class="muted" style="margin:0">No rooms yet — add your first one.</p>`}
       </div>
-      ${rooms.length
-        ? `<div class="room-grid${rooms.length > 1 ? " reorderable" : ""}">${cards}</div>
-           <p class="hero-rooms-hint" style="margin:8px 0 14px">Click a room to edit it · drag to reorder</p>`
-        : `<div class="card empty-state"><p class="muted" style="margin:0">No rooms yet.</p><button class="primary" id="addRoomEmpty" type="button">${ICONS.plus}Add your first room</button></div>`}
     `;
   }
 
@@ -1988,7 +1996,7 @@ class NeatThermostatPanel extends HTMLElement {
   }
 
   async _mountRoomPickers() {
-    if (this._view !== "rooms" || !this._hass) return;
+    if (this._view !== "settings" || !this._hass) return;
     const gen = ++this._roomPickerMountGen;
     const hosts = [...(this.shadowRoot?.querySelectorAll("[data-room-picker]") || [])];
     if (!hosts.length) return;
@@ -2006,7 +2014,7 @@ class NeatThermostatPanel extends HTMLElement {
       }
       return;
     }
-    if (gen !== this._roomPickerMountGen || this._view !== "rooms") return;
+    if (gen !== this._roomPickerMountGen || this._view !== "settings") return;
 
     const make = (key, { domains, filter, placeholder }) => {
       const host = this.shadowRoot.querySelector(`[data-room-picker="${key}"]`);
@@ -2435,7 +2443,7 @@ class NeatThermostatPanel extends HTMLElement {
   }
 
   _renderDialog() {
-    if (this._dialogKind === "room" && this._view === "rooms") return this._renderRoomDialog();
+    if (this._dialogKind === "room" && this._view === "settings") return this._renderRoomDialog();
     if (this._dialogKind === "wall" && this._view === "wall_panels") return this._renderWallDialog();
     return "";
   }
@@ -2960,6 +2968,7 @@ class NeatThermostatPanel extends HTMLElement {
           ${field("Outdoor temperature", "outdoor_temp_sensor", "Optional — used by Adaptive Comfort.")}
         </div>
       </div>
+      ${this._renderRoomsCard()}
       <div class="ov-grid">
         <div class="card">
           ${head(ICONS.people, "intel", "Presence", "Who lives here. Neat switches to Away once everyone has left.", count("presence_entities"))}
@@ -3023,9 +3032,7 @@ class NeatThermostatPanel extends HTMLElement {
     const body =
       this._view === "energy"
         ? this._renderEnergy()
-        : this._view === "rooms"
-          ? this._renderRooms()
-          : this._view === "schedule"
+        : this._view === "schedule"
             ? this._renderSchedule()
             : this._view === "wall_panels"
               ? this._renderWallPanels()
@@ -3076,7 +3083,7 @@ class NeatThermostatPanel extends HTMLElement {
     this.shadowRoot.getElementById("ovEntities")?.addEventListener("toggle", (ev) => {
       this._entitiesOpen = ev.target.open;
     });
-    if (this._view === "rooms") {
+    if (this._view === "settings") {
       void this._mountRoomPickers();
     }
     if (this._view === "wall_panels") {
@@ -3379,7 +3386,7 @@ class NeatThermostatPanel extends HTMLElement {
         });
       });
     }
-    if (this._view === "rooms") {
+    if (this._view === "settings") {
       this.shadowRoot.getElementById("addRoom")?.addEventListener("click", () => this._loadRoomIntoForm(null));
       this.shadowRoot.getElementById("addRoomEmpty")?.addEventListener("click", () => this._loadRoomIntoForm(null));
       this.shadowRoot.querySelectorAll(".room-card[data-room-id]").forEach((card) => {
