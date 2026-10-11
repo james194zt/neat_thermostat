@@ -32,6 +32,7 @@ def async_register_ws_handlers(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_update_settings)
     websocket_api.async_register_command(hass, ws_update_schedule)
     websocket_api.async_register_command(hass, ws_update_rooms)
+    websocket_api.async_register_command(hass, ws_reorder_rooms)
     websocket_api.async_register_command(hass, ws_list_wall_panels)
     websocket_api.async_register_command(hass, ws_upsert_wall_panel)
     websocket_api.async_register_command(hass, ws_delete_wall_panel)
@@ -193,6 +194,35 @@ async def ws_update_rooms(
     config = await coordinator.async_save_config({"rooms": rooms})
     await hass.config_entries.async_reload(coordinator.entry.entry_id)
     connection.send_result(msg["id"], {"config": config.to_dict()})
+
+
+def reorder_rooms(rooms: list[dict[str, Any]], room_ids: list[str]) -> list[dict[str, Any]]:
+    """Put rooms in `room_ids` order; unknown ids are ignored, unlisted rooms keep their order at the end."""
+    by_id = {r["id"]: r for r in rooms}
+    ordered = [by_id[i] for i in dict.fromkeys(room_ids) if i in by_id]
+    listed = {r["id"] for r in ordered}
+    return ordered + [r for r in rooms if r["id"] not in listed]
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "neat_thermostat/reorder_rooms",
+        vol.Optional("entry_id"): cv.string,
+        vol.Required("room_ids"): [cv.string],
+    }
+)
+@websocket_api.async_response
+async def ws_reorder_rooms(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Change room order only. Same rooms, so no entry reload (heating keeps running)."""
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
+        return
+    rooms = reorder_rooms([r.to_dict() for r in coordinator.config.rooms], msg["room_ids"])
+    config = await coordinator.async_save_config({"rooms": rooms})
+    connection.send_result(msg["id"], {"room_ids": [r.id for r in config.rooms]})
 
 
 @websocket_api.websocket_command(

@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.4.3
+ * @version 0.4.4
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.4.3";
+const PANEL_VERSION = "0.4.4";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -105,10 +105,10 @@ const STYLES = `
   display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; padding: 12px 16px 4px;
 }
 .panel-brand-mark {
-  width: 40px; height: 40px; flex-shrink: 0; border-radius: 10px; display: grid; place-items: center;
-  background: linear-gradient(145deg, rgba(25,212,222,0.22), rgba(8,151,156,0.12));
-  color: var(--nt-accent-hi); font-size: 20px; font-weight: 700;
+  width: 40px; height: 40px; flex-shrink: 0; border-radius: 12px; overflow: hidden;
+  box-shadow: 0 4px 12px rgba(8,151,156,0.35), inset 0 0 0 1px rgba(255,255,255,0.08);
 }
+.panel-brand-mark svg { display: block; width: 100%; height: 100%; }
 .panel-brand-title { font-size: 18px; font-weight: 600; line-height: 1.2; }
 .panel-brand-sub { font-size: 12px; color: var(--secondary-text-color); margin-top: 2px; }
 .tab-bar {
@@ -143,22 +143,93 @@ const STYLES = `
   color: var(--secondary-text-color); margin: 0 0 14px;
 }
 .stats-row {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 12px; margin-bottom: 14px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 14px;
 }
 .stat {
+  --tone: var(--secondary-text-color);
+  display: flex; align-items: center; gap: 12px;
   background: var(--card-background-color); border-radius: var(--nt-radius);
-  padding: 16px 18px; border: 1px solid var(--divider-color, transparent);
+  padding: 14px 16px; border: 1px solid var(--divider-color, transparent);
   box-shadow: var(--ha-card-box-shadow, 0 1px 2px rgba(0,0,0,0.06));
-  position: relative; overflow: hidden;
 }
-.stat::before {
-  content: ""; position: absolute; left: 0; top: 0; right: 0; height: 3px;
-  background: linear-gradient(90deg, var(--nt-accent-hi), var(--nt-accent));
+.stat.heat { --tone: var(--nt-heat-soft); }
+.stat.warn { --tone: var(--nt-amber); }
+.stat.good { --tone: var(--nt-accent-hi); }
+.stat-icon {
+  flex-shrink: 0; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+  color: var(--tone); background: color-mix(in srgb, var(--tone) 14%, transparent);
 }
-.stat .label { font-size: 12px; color: var(--secondary-text-color); margin-bottom: 6px; font-weight: 500; }
-.stat .value { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; }
-.stat.ok .value { color: var(--nt-green); }
-.stat.warn .value { color: var(--nt-amber); }
+.stat-icon svg { width: 22px; height: 22px; }
+.stat .label { font-size: 12px; color: var(--secondary-text-color); font-weight: 500; }
+.stat .value { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; margin-top: 1px; }
+.stat.heat .value, .stat.warn .value { color: var(--tone); }
+
+/* —— Overview detail cards —— */
+.ov-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; margin-bottom: 14px; align-items: start; }
+.ov-grid > .card { margin-bottom: 0; }
+.card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.card-head .card-title { margin: 0; }
+.card-head-text { flex: 1; min-width: 0; }
+.card-sub { margin: 3px 0 0; font-size: 13px; color: var(--secondary-text-color); line-height: 1.4; }
+.card-icon {
+  flex-shrink: 0; width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center;
+  color: var(--secondary-text-color); background: color-mix(in srgb, var(--primary-text-color) 7%, transparent);
+}
+.card-icon svg { width: 20px; height: 20px; }
+.card-icon.leaf { color: var(--nt-green); background: color-mix(in srgb, var(--nt-green) 14%, transparent); }
+.card-icon.intel { color: var(--nt-accent-hi); background: color-mix(in srgb, var(--nt-accent) 16%, transparent); }
+.badge {
+  flex-shrink: 0; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: color-mix(in srgb, var(--primary-text-color) 7%, transparent); color: var(--secondary-text-color);
+}
+.badge.on { background: color-mix(in srgb, var(--nt-green) 16%, transparent); color: var(--nt-green); }
+.metric-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.metric {
+  padding: 12px 14px; border-radius: 12px;
+  background: color-mix(in srgb, var(--primary-text-color) 4%, transparent);
+}
+.metric-value { font-size: 26px; font-weight: 500; letter-spacing: -0.03em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.metric-value small { font-size: 14px; font-weight: 500; color: var(--secondary-text-color); margin-left: 3px; letter-spacing: 0; }
+.metric-label { font-size: 12px; color: var(--secondary-text-color); margin-top: 4px; }
+.card-foot { margin: 14px 0 0; font-size: 12px; color: var(--secondary-text-color); line-height: 1.45; }
+.feature-list { display: flex; flex-direction: column; }
+.feature {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 0; border-top: 1px solid var(--divider-color);
+}
+.feature:first-child { border-top: 0; padding-top: 0; }
+.feature-name { font-size: 14px; font-weight: 500; }
+.feature-desc { font-size: 12px; color: var(--secondary-text-color); margin-top: 2px; line-height: 1.35; }
+.feature-value { font-size: 14px; font-weight: 600; white-space: nowrap; text-align: right; }
+.feature-value small { display: block; font-size: 11px; font-weight: 500; color: var(--secondary-text-color); }
+details.card > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; gap: 12px;
+}
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .card-title { margin: 0; }
+details.card > summary .chev { margin-left: auto; transition: transform 0.15s ease; color: var(--secondary-text-color); }
+details.card[open] > summary .chev { transform: rotate(180deg); }
+details.card[open] > summary { margin-bottom: 14px; }
+.entity-rows { display: flex; flex-direction: column; gap: 10px; }
+.entity-row { display: grid; grid-template-columns: 110px 1fr; gap: 12px; align-items: start; }
+.entity-row-label { font-size: 12px; font-weight: 600; color: var(--secondary-text-color); padding-top: 8px; }
+.entity-chips { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.entity-chip {
+  display: flex; flex-direction: column; gap: 1px; min-width: 0; max-width: 100%;
+  padding: 7px 12px; border-radius: 10px;
+  background: color-mix(in srgb, var(--primary-text-color) 5%, transparent);
+}
+.entity-chip-name { font-size: 13px; font-weight: 500; display: flex; gap: 8px; justify-content: space-between; }
+.entity-chip-state { color: var(--secondary-text-color); font-weight: 500; }
+.entity-chip-state.bad { color: var(--nt-red); }
+.entity-chip code { padding: 0; background: none; font-size: 11px; color: var(--secondary-text-color); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 720px) {
+  .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ov-grid { grid-template-columns: minmax(0, 1fr); }
+  .metric-value { font-size: 22px; }
+  .entity-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .entity-row-label { padding-top: 0; }
+}
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
 label.field {
   display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 500;
@@ -337,6 +408,16 @@ table.data tbody tr.room-row.selected {
   background: color-mix(in srgb, var(--nt-heat) 10%, transparent);
   border-color: color-mix(in srgb, var(--nt-heat) 35%, transparent);
 }
+.hero-rooms.reorderable .hero-room { cursor: grab; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.hero-room.dragging {
+  cursor: grabbing; position: relative; z-index: 2;
+  transform: scale(1.04); opacity: 0.92;
+  border-color: var(--nt-accent-hi);
+  box-shadow: 0 12px 28px rgba(0,0,0,0.35);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.hero-rooms.is-dragging .hero-room:not(.dragging) { transition: transform 0.18s ease; }
+.hero-rooms-hint { margin: -10px 0 0; font-size: 11px; color: var(--secondary-text-color); opacity: 0.7; }
 .hero-room-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .hero-room-name {
   font-size: 13px; font-weight: 600; color: var(--secondary-text-color);
@@ -477,40 +558,51 @@ table.data tbody tr.room-row.selected {
 }
 .eh-banner .eh-copy { flex: 1; min-width: 160px; }
 .eh-banner strong { display: block; font-size: 15px; margin-bottom: 2px; }
+.eh-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+.eh-total-label { font-size: 12px; color: var(--secondary-text-color); }
+.eh-total-value { font-size: 22px; font-weight: 500; letter-spacing: -0.02em; }
+.eh-legend { display: flex; gap: 16px; font-size: 12px; color: var(--secondary-text-color); align-items: center; }
+.eh-legend i { display: inline-block; width: 14px; height: 8px; border-radius: 4px; background: var(--nt-heat); margin-right: 6px; vertical-align: middle; }
+.eh-legend b { display: inline-block; width: 2px; height: 10px; background: var(--secondary-text-color); margin-right: 6px; vertical-align: middle; }
+.eh-legend svg { width: 14px; height: 14px; color: var(--nt-green); margin-right: 4px; vertical-align: middle; }
+.eh-grid-row { display: grid; grid-template-columns: 84px minmax(0, 1fr) 64px; gap: 14px; align-items: center; }
+.eh-axis-row { padding: 10px 0 6px; border-bottom: 1px solid var(--divider-color); }
+.eh-axis { position: relative; height: 14px; font-size: 11px; color: var(--secondary-text-color); }
+.eh-axis span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.eh-axis span:first-child { transform: none; }
+.eh-axis span:last-child { transform: translateX(-100%); }
 .eh-month {
-  margin: 18px 0 8px; padding: 8px 12px; border-radius: 8px;
-  background: color-mix(in srgb, var(--primary-text-color) 10%, transparent);
-  font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-align: center;
+  margin: 18px 0 2px; font-size: 12px; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--secondary-text-color);
 }
-.eh-day {
-  display: grid; grid-template-columns: 72px 22px 1fr; gap: 8px; align-items: center;
-  padding: 10px 0; border-bottom: 1px solid var(--divider-color);
+.eh-day { padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--divider-color) 70%, transparent); }
+.eh-day:last-child { border-bottom: 0; }
+.eh-day-label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.eh-day-label svg { width: 14px; height: 14px; color: var(--nt-green); flex-shrink: 0; }
+.eh-timeline { position: relative; height: 40px; }
+.eh-sp {
+  position: absolute; top: 0; height: 22px; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+  font-size: 11px; font-weight: 600; color: var(--primary-text-color); font-variant-numeric: tabular-nums;
 }
-.eh-day-label { font-size: 13px; font-weight: 600; }
-.eh-leaf { width: 18px; height: 18px; color: var(--nt-green); }
-.eh-leaf.empty { opacity: 0; }
-.eh-track-wrap { position: relative; padding-top: 18px; padding-bottom: 18px; }
+.eh-sp::after { content: ""; width: 2px; height: 5px; margin-top: 2px; border-radius: 1px; background: var(--secondary-text-color); }
+.eh-sp.minor .eh-sp-text { visibility: hidden; }
 .eh-track {
-  position: relative; height: 18px; border-radius: 999px;
-  background: color-mix(in srgb, var(--primary-text-color) 8%, transparent);
-  overflow: hidden;
+  position: absolute; left: 0; right: 0; top: 24px; height: 12px; border-radius: 6px; overflow: hidden;
+  background:
+    linear-gradient(90deg, transparent calc(25% - 0.5px), var(--divider-color) calc(25% - 0.5px), var(--divider-color) calc(25% + 0.5px), transparent calc(25% + 0.5px),
+      transparent calc(50% - 0.5px), var(--divider-color) calc(50% - 0.5px), var(--divider-color) calc(50% + 0.5px), transparent calc(50% + 0.5px),
+      transparent calc(75% - 0.5px), var(--divider-color) calc(75% - 0.5px), var(--divider-color) calc(75% + 0.5px), transparent calc(75% + 0.5px)),
+    color-mix(in srgb, var(--primary-text-color) 6%, transparent);
 }
-.eh-seg {
-  position: absolute; top: 0; bottom: 0;
-  background: var(--nt-heat); border-radius: 4px;
-}
-.eh-bubble {
-  position: absolute; top: -2px; transform: translate(-50%, -100%);
-  width: 26px; height: 26px; border-radius: 50%;
-  background: var(--nt-heat); color: #fff;
-  font-size: 10px; font-weight: 700;
-  display: grid; place-items: center;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-  z-index: 2;
-}
-.eh-axis {
-  display: flex; justify-content: space-between;
-  margin-top: 6px; font-size: 10px; color: var(--secondary-text-color);
+.eh-seg { position: absolute; top: 0; bottom: 0; min-width: 3px; background: var(--nt-heat); border-radius: 3px; }
+.eh-day-total { text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.eh-day-total.none { color: var(--secondary-text-color); font-weight: 500; }
+@media (max-width: 720px) {
+  .eh-grid-row { grid-template-columns: 58px minmax(0, 1fr) 48px; gap: 8px; }
+  .eh-day-label { font-size: 12px; }
+  .eh-sp.phone-minor .eh-sp-text { visibility: hidden; }
+  .eh-axis span.half { display: none; }
 }
 .toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
@@ -566,6 +658,36 @@ function flameSvg() {
   </svg>`;
 }
 
+/** Brand mark: the hero's 270° dial ring, cool-to-warm, around a leaf, on a deep teal tile. */
+function logoSvg() {
+  return `<svg viewBox="0 0 40 40">
+    <defs>
+      <linearGradient id="ntLogoBg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#0E6F74"/>
+        <stop offset="1" stop-color="#062B33"/>
+      </linearGradient>
+      <linearGradient id="ntLogoRing" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="#19D4DE"/>
+        <stop offset="0.5" stop-color="#FFB74D"/>
+        <stop offset="1" stop-color="#FF6A3D"/>
+      </linearGradient>
+    </defs>
+    <rect width="40" height="40" fill="url(#ntLogoBg)"/>
+    <path d="M12.22 27.78 A11 11 0 1 1 27.78 27.78" fill="none" stroke="url(#ntLogoRing)" stroke-width="3.2" stroke-linecap="round"/>
+    <path d="M24.6 13.2c-3.6.2-6.8 1.9-8.3 4.6-1.2 2.1-1.2 4.6-.4 6.6 2.7-.3 5.1-1.6 6.6-3.8 1.4-2.1 2-4.6 2.1-7.4z" fill="#EFFFFB"/>
+    <path d="M16.6 24.6c1.4-2.5 3.4-4.5 5.8-5.9" fill="none" stroke="#0E6F74" stroke-width="1.2" stroke-linecap="round"/>
+  </svg>`;
+}
+
+const ICONS = {
+  tune: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>`,
+  window: `<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M12 3v18M4 12h16"/></g></svg>`,
+  sun: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`,
+  home: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`,
+  sparkle: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10 2l1.9 5.6L17.5 9.5l-5.6 1.9L10 17l-1.9-5.6L2.5 9.5l5.6-1.9zM18 13l1 2.9 3 1.1-3 1-1 3-1-3-3-1 3-1.1z"/></svg>`,
+  link: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>`,
+};
+
 /** SVG arc gauge: 270° sweep, `fill` and `now` are 0–1 positions along it. */
 function dialSvg({ fill, now, color }) {
   const r = 84;
@@ -584,8 +706,8 @@ function dialSvg({ fill, now, color }) {
       </linearGradient>
     </defs>
     <path class="track" d="${arc}" fill="none" stroke-width="12" stroke-linecap="round"/>
-    <path class="fill" d="${arc}" pathLength="100" fill="none" stroke="url(#heroArc)" stroke-width="12"
-      stroke-linecap="round" stroke-dasharray="${pct.toFixed(1)} 100"/>
+    ${pct > 0 ? `<path class="fill" d="${arc}" pathLength="100" fill="none" stroke="url(#heroArc)" stroke-width="12"
+      stroke-linecap="round" stroke-dasharray="${pct.toFixed(1)} 100"/>` : ""}
     ${nowDot}
   </svg>`;
 }
@@ -669,6 +791,7 @@ class NeatThermostatPanel extends HTMLElement {
     this._wallPickerMountGen = 0;
     this._previewPanel = "";
     this._previewTaps = false;
+    this._entitiesOpen = false;
     this._previewResize = null;
     this._settingsDraft = null;
     this._settingsPickerMountGen = 0;
@@ -732,12 +855,17 @@ class NeatThermostatPanel extends HTMLElement {
     if (!this._hass || !this._state || this._refreshingLive) return;
     // Never rebuild form pages while the user may be editing.
     if (this._formViews().has(this._view)) return;
+    // Re-rendering mid-drag would drop the tile out from under the pointer.
+    if (this._dragging) return;
     this._refreshingLive = true;
+    const startedAt = Date.now();
     try {
       const next = await this._ws("neat_thermostat/get_state");
+      // A drag or room-order save during the fetch makes this snapshot stale.
+      if (this._dragging || (this._orderSavedAt || 0) >= startedAt) return;
       this._state = next;
       if (this._view === "energy") await this._loadEnergy();
-      if (this._view === "overview" || this._view === "energy") this._render();
+      if ((this._view === "overview" || this._view === "energy") && !this._dragging) this._render();
     } catch {
       // Ignore background refresh errors
     } finally {
@@ -968,7 +1096,8 @@ class NeatThermostatPanel extends HTMLElement {
             <div class="hero-pills">${this._heroPills()}</div>
           </div>
           ${roomTiles
-            ? `<div class="hero-rooms">${roomTiles}</div>`
+            ? `<div class="hero-rooms${rooms.length > 1 ? " reorderable" : ""}">${roomTiles}</div>
+              ${rooms.length > 1 ? `<p class="hero-rooms-hint">Drag rooms to reorder${"ontouchstart" in window ? " — press and hold first" : ""}</p>` : ""}`
             : `<p class="hero-empty">No rooms yet — add TRVs on the Rooms tab.</p>`}
         </div>
       </section>`;
@@ -978,56 +1107,121 @@ class NeatThermostatPanel extends HTMLElement {
     const live = this._live();
     const intel = live.intelligence || {};
     const leaf = live.leaf || {};
-    const hoursWeek = leaf.hours_week ?? (leaf.minutes_week != null ? (leaf.minutes_week / 60).toFixed(2) : "—");
-    const hoursTotal = leaf.hours_total ?? (leaf.minutes_total != null ? (leaf.minutes_total / 60).toFixed(2) : "—");
-    const streak = leaf.days_streak ?? 0;
+    const hours = (h, m) => {
+      const v = h != null ? Number(h) : m != null ? Number(m) / 60 : null;
+      if (v == null || !Number.isFinite(v)) return "—";
+      return v < 10 ? v.toFixed(1).replace(/\.0$/, "") : Math.round(v).toLocaleString();
+    };
+    const streak = Number(leaf.days_streak ?? 0);
     const heater = this._cfg().heater || "";
     const heaterWarning =
       live.heater_available === false
         ? `<div class="banner err">Boiler relay <code>${this._escape(heater || "not set")}</code> is unavailable — Neat cannot switch the boiler. Check the device, or pick another relay in Settings.</div>`
         : "";
-    const neatEntities = this._neatClimateEntities();
+    const preset = (live.main || {}).preset;
+    const presetLabel = !preset || preset === "none" ? "Normal" : preset[0].toUpperCase() + preset.slice(1);
+
+    const stat = (tone, icon, label, value) => `
+      <div class="stat ${tone}">
+        <span class="stat-icon">${icon}</span>
+        <div><div class="label">${label}</div><div class="value">${this._escape(value)}</div></div>
+      </div>`;
+
+    const onOff = (on) => `<span class="badge${on ? " on" : ""}">${on ? "On" : "Off"}</span>`;
+    const feature = (name, desc, valueHtml) => `
+      <div class="feature">
+        <div><div class="feature-name">${name}</div><div class="feature-desc">${desc}</div></div>
+        <div class="feature-value">${valueHtml}</div>
+      </div>`;
+    const samples = Number(intel.warmup_samples ?? 0);
+    const rate = intel.warmup_c_per_hour;
+
     return `
       ${heaterWarning}
       ${this._renderHero()}
       <div style="height:14px"></div>
       <div class="stats-row">
-        <div class="stat ${live.boiler_on ? "ok" : ""}"><div class="label">Boiler</div><div class="value">${live.boiler_on ? "On" : "Off"}</div></div>
-        <div class="stat"><div class="label">Preset</div><div class="value">${this._escape((live.main || {}).preset || "none")}</div></div>
-        <div class="stat ${live.window_open ? "warn" : ""}"><div class="label">Windows</div><div class="value">${live.window_open ? "Open" : "Closed"}</div></div>
-        <div class="stat ${live.summer_mode ? "warn" : ""}"><div class="label">Summer</div><div class="value">${live.summer_mode ? "On" : "Off"}</div></div>
-        <div class="stat ${live.away ? "warn" : ""}"><div class="label">Away</div><div class="value">${live.away ? "Yes" : "Home"}</div></div>
+        ${stat(live.boiler_on ? "heat" : "", flameSvg(), "Boiler", live.boiler_on ? "On" : "Off")}
+        ${stat(preset && preset !== "none" ? "good" : "", ICONS.tune, "Preset", presetLabel)}
+        ${stat(live.window_open ? "warn" : "", ICONS.window, "Windows", live.window_open ? "Open" : "Closed")}
+        ${stat(live.summer_mode ? "warn" : "", ICONS.sun, "Summer mode", live.summer_mode ? "On" : "Off")}
+        ${stat(live.away ? "warn" : "", ICONS.home, "Presence", live.away ? "Away" : "Home")}
       </div>
-      <div class="card">
-        <p class="card-title">Leaf (earned)</p>
-        <p class="muted" style="margin:0;line-height:1.55">
-          ${leaf.active ? "Leaf is on right now — you're running efficiently (low setpoint, Eco/Away, or heating Off)." : "Turn the heat down, use Eco/Away, or switch Off to earn Leaf time."}<br />
-          This week: <strong>${this._escape(hoursWeek)} h</strong>
-          · All time: <strong>${this._escape(hoursTotal)} h</strong>
-          · Streak: <strong>${this._escape(streak)} day${streak === 1 ? "" : "s"}</strong><br />
-          <span style="opacity:0.85">Leaves only accumulate — turning heat up hides the icon, it never takes earned time away.</span>
-        </p>
+      <div class="ov-grid">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon leaf">${leafSvg()}</span>
+            <div class="card-head-text">
+              <p class="card-title">Leaf</p>
+              <p class="card-sub">${leaf.active ? "You're running efficiently right now." : "Turn the heat down, use Eco/Away, or switch off to earn Leaf time."}</p>
+            </div>
+            ${leaf.active ? `<span class="badge on">Earning</span>` : ""}
+          </div>
+          <div class="metric-row">
+            <div class="metric"><div class="metric-value">${this._escape(hours(leaf.hours_week, leaf.minutes_week))}<small>h</small></div><div class="metric-label">This week</div></div>
+            <div class="metric"><div class="metric-value">${this._escape(hours(leaf.hours_total, leaf.minutes_total))}<small>h</small></div><div class="metric-label">All time</div></div>
+            <div class="metric"><div class="metric-value">${this._escape(streak)}<small>day${streak === 1 ? "" : "s"}</small></div><div class="metric-label">Streak</div></div>
+          </div>
+          <p class="card-foot">Leaf time only adds up — turning the heat up hides the leaf but never takes earned time away.</p>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <span class="card-icon intel">${ICONS.sparkle}</span>
+            <div class="card-head-text">
+              <p class="card-title">Nest intelligence</p>
+              <p class="card-sub">How Neat learns and plans for the house.</p>
+            </div>
+          </div>
+          <div class="feature-list">
+            ${feature("True Radiant", "Starts heating early so the house is warm when a schedule block begins", onOff(intel.true_radiant))}
+            ${feature("Auto-Schedule", "Learns schedule changes from your manual adjustments", onOff(intel.auto_schedule))}
+            ${feature("Leaf coaching", "Shows the leaf when you're saving energy", onOff(intel.leaf_enabled !== false))}
+            ${feature("Away delay", "Switches to Eco once nobody's been home this long", `${this._escape(intel.away_delay_minutes ?? 20)} min`)}
+            ${feature("Warm-up rate", "How fast the house heats, used to time preheating",
+              `${rate != null ? `${this._escape(rate)} °C/h` : "—"}<small>${samples ? `${samples} sample${samples === 1 ? "" : "s"}` : "Default · still learning"}</small>`)}
+          </div>
+        </div>
       </div>
-      <div class="card">
-        <p class="card-title">Nest intelligence (house)</p>
-        <p class="muted" style="margin:0;line-height:1.55">
-          True Radiant: <strong>${intel.true_radiant ? "On" : "Off"}</strong>
-          · Auto-Schedule: <strong>${intel.auto_schedule ? "On" : "Off"}</strong>
-          · Leaf coaching: <strong>${intel.leaf_enabled !== false ? "On" : "Off"}</strong>
-          · Away delay: <strong>${this._escape(intel.away_delay_minutes ?? 20)} min</strong><br />
-          Warm-up model: <strong>${this._escape(intel.warmup_c_per_hour ?? "—")} °C/h</strong>
-          (${this._escape(intel.warmup_samples ?? 0)} samples)
-        </p>
-      </div>
-      <div class="card">
-        <p class="card-title">Entities</p>
-        <p class="muted" style="margin:0;line-height:1.5">
-          House: <code>${this._escape(neatEntities.home || "—")}</code><br />
-          Rooms: ${neatEntities.rooms.length ? neatEntities.rooms.map((e) => `<code>${this._escape(e)}</code>`).join(", ") : "—"}<br />
-          Boiler relay: <code>${this._escape(heater || "—")}</code>
-        </p>
-      </div>
+      ${this._renderEntitiesCard(heater)}
     `;
+  }
+
+  _renderEntitiesCard(heater) {
+    const neat = this._neatClimateEntities();
+    const chip = (entityId) => {
+      if (!entityId) return `<span class="muted">—</span>`;
+      const st = this._entityState(entityId);
+      const name = st?.attributes?.friendly_name || entityId;
+      const state = st ? st.state : "missing";
+      const bad = !st || state === "unavailable" || state === "unknown";
+      return `
+        <div class="entity-chip" title="${this._escape(entityId)}">
+          <span class="entity-chip-name">${this._escape(name)}<span class="entity-chip-state${bad ? " bad" : ""}">${this._escape(state)}</span></span>
+          <code>${this._escape(entityId)}</code>
+        </div>`;
+    };
+    const row = (label, ids) => `
+      <div class="entity-row">
+        <div class="entity-row-label">${label}</div>
+        <div class="entity-chips">${ids.length ? ids.map(chip).join("") : chip("")}</div>
+      </div>`;
+    const total = (neat.home ? 1 : 0) + neat.rooms.length + (heater ? 1 : 0);
+    return `
+      <details class="card" id="ovEntities" ${this._entitiesOpen ? "open" : ""}>
+        <summary>
+          <span class="card-icon">${ICONS.link}</span>
+          <div class="card-head-text">
+            <p class="card-title">Entities</p>
+            <p class="card-sub">${total} linked in Home Assistant</p>
+          </div>
+          <svg class="chev" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg>
+        </summary>
+        <div class="entity-rows">
+          ${row("House", neat.home ? [neat.home] : [])}
+          ${row("Rooms", neat.rooms)}
+          ${row("Boiler relay", heater ? [heater] : [])}
+        </div>
+      </details>`;
   }
 
   _ehDayParts(isoDate) {
@@ -1048,33 +1242,65 @@ class NeatThermostatPanel extends HTMLElement {
     return Math.max(0, Math.min(100, (mins / (24 * 60)) * 100));
   }
 
+  /** Minutes of boiler time in a day, clipped to that day. */
+  _ehHeatMinutes(day) {
+    return (day.heat_intervals || []).reduce((sum, iv) => {
+      const left = this._ehPct(iv.start_ts, day.date);
+      const right = this._ehPct(iv.end_ts || new Date().toISOString(), day.date);
+      return sum + Math.max(0, right - left) * 14.4;
+    }, 0);
+  }
+
+  _ehDuration(mins) {
+    const m = Math.round(mins);
+    if (m <= 0) return "—";
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+  }
+
   _renderEnergyDay(day) {
     const parts = this._ehDayParts(day.date);
     const segs = (day.heat_intervals || [])
       .map((iv) => {
         const left = this._ehPct(iv.start_ts, day.date);
         const right = this._ehPct(iv.end_ts || new Date().toISOString(), day.date);
-        const width = Math.max(0.4, right - left);
-        return `<div class="eh-seg" style="left:${left}%;width:${width}%"></div>`;
+        const span = `${this._ehClock(iv.start_ts)}–${iv.end_ts ? this._ehClock(iv.end_ts) : "now"}`;
+        return `<div class="eh-seg" style="left:${left}%;width:${Math.max(0, right - left)}%" title="Heating ${span}"></div>`;
       })
       .join("");
-    const bubbles = (day.setpoints || [])
+    // Setpoint labels: hide text that would collide with the previous visible label
+    // (desktop needs ~5% of the day apart, phones ~12%); the tick and tooltip stay.
+    let lastWide = -100;
+    let lastNarrow = -100;
+    const points = [...(day.setpoints || [])]
+      .sort((a, b) => String(a.ts).localeCompare(String(b.ts)))
       .map((sp) => {
         const left = this._ehPct(sp.ts, day.date);
         const temp = formatTemp(sp.temperature) ?? "—";
-        return `<div class="eh-bubble" style="left:${left}%" title="${this._escape(temp)}°">${this._escape(temp)}</div>`;
+        const cls = [];
+        if (left - lastWide < 5) cls.push("minor");
+        else lastWide = left;
+        if (left - lastNarrow < 12) cls.push("phone-minor");
+        else lastNarrow = left;
+        return `<div class="eh-sp ${cls.join(" ")}" style="left:${left}%" title="Set to ${this._escape(temp)}° at ${this._ehClock(sp.ts)}"><span class="eh-sp-text">${this._escape(temp)}°</span></div>`;
       })
       .join("");
+    const mins = this._ehHeatMinutes(day);
     return `
-      <div class="eh-day">
-        <div class="eh-day-label">${this._escape(parts.label)}</div>
-        <div class="eh-leaf${day.leaf ? "" : " empty"}" title="${day.leaf ? "Leaf earned" : ""}">${day.leaf ? leafSvg() : ""}</div>
-        <div class="eh-track-wrap">
-          ${bubbles}
+      <div class="eh-day eh-grid-row">
+        <div class="eh-day-label">${this._escape(parts.label)}${day.leaf ? `<span title="Leaf earned">${leafSvg()}</span>` : ""}</div>
+        <div class="eh-timeline">
+          ${points}
           <div class="eh-track">${segs}</div>
-          <div class="eh-axis"><span>12AM</span><span>4AM</span><span>8AM</span><span>12PM</span><span>4PM</span><span>8PM</span><span>12AM</span></div>
         </div>
+        <div class="eh-day-total${mins > 0 ? "" : " none"}" title="Boiler running time">${this._ehDuration(mins)}</div>
       </div>`;
+  }
+
+  _ehClock(ts) {
+    const d = new Date(ts);
+    return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
   _renderEnergy() {
@@ -1101,11 +1327,26 @@ class NeatThermostatPanel extends HTMLElement {
         return `${month}${this._renderEnergyDay(day)}`;
       })
       .join("");
+    const totalMins = hist.reduce((sum, day) => sum + this._ehHeatMinutes(day), 0);
+    const leafDays = hist.filter((d) => d.leaf).length;
+    const axis = [
+      ["12AM", 0, ""], ["6AM", 25, "half"], ["12PM", 50, ""], ["6PM", 75, "half"], ["12AM", 100, ""],
+    ].map(([t, at, cls]) => `<span class="${cls}" style="left:${at}%">${t}</span>`).join("");
     return `
       ${this._pageHeader("Energy History", "When the boiler ran, setpoint changes, and Leaf days.")}
       ${banner}
-      <div class="card" style="padding:8px 16px 16px">
-        ${rows || `<p class="muted">No history yet — heat cycles will appear here.</p>`}
+      <div class="card">
+        ${rows
+          ? `<div class="eh-head">
+              <div>
+                <div class="eh-total-label">Boiler running time · last ${hist.length} days</div>
+                <div class="eh-total-value">${this._ehDuration(totalMins)}${leafDays ? ` <span class="muted" style="font-size:13px">· ${leafDays} Leaf day${leafDays === 1 ? "" : "s"}</span>` : ""}</div>
+              </div>
+              <div class="eh-legend"><span><i></i>Heating</span><span><b></b>Setpoint change</span><span>${leafSvg()}Leaf day</span></div>
+            </div>
+            <div class="eh-axis-row eh-grid-row"><span></span><div class="eh-axis">${axis}</div><span></span></div>
+            ${rows}`
+          : `<p class="muted" style="margin:0">No history yet — heat cycles will appear here.</p>`}
       </div>
     `;
   }
@@ -1560,6 +1801,115 @@ class NeatThermostatPanel extends HTMLElement {
     if (frame) frame.src = this._wallPreviewSrc(id);
   }
 
+  /**
+   * Drag room tiles to reorder them; the order is saved on the HA config entry.
+   * Mouse: drag after a few px. Touch: press and hold, then drag (so scrolling still works).
+   */
+  _bindRoomDrag() {
+    const grid = this.shadowRoot.querySelector(".hero-rooms.reorderable");
+    if (!grid) return;
+    let drag = null; // { tile, pointerId, x, y, started, timer }
+
+    const begin = () => {
+      if (!drag || drag.started) return;
+      drag.started = true;
+      this._dragging = true;
+      drag.tile.classList.add("dragging");
+      grid.classList.add("is-dragging");
+      try {
+        drag.tile.setPointerCapture(drag.pointerId);
+      } catch {
+        // Pointer already released.
+      }
+      navigator.vibrate?.(10);
+    };
+    const end = async (commit) => {
+      if (!drag) return;
+      const { tile, started, timer, before } = drag;
+      clearTimeout(timer);
+      drag = null;
+      if (!started) return;
+      tile.classList.remove("dragging");
+      grid.classList.remove("is-dragging");
+      this._suppressZoneClick = true;
+      setTimeout(() => (this._suppressZoneClick = false), 0);
+      const order = [...grid.querySelectorAll(".hero-room")].map((t) => t.dataset.zone);
+      if (!commit || order.join() === before) {
+        if (!commit) this._render();
+        this._dragging = false;
+        return;
+      }
+      await this._saveRoomOrder(order);
+      this._dragging = false;
+    };
+
+    grid.querySelectorAll(".hero-room").forEach((tile) => {
+      tile.addEventListener("pointerdown", (ev) => {
+        if (ev.button !== 0 || drag) return;
+        drag = {
+          tile, pointerId: ev.pointerId, x: ev.clientX, y: ev.clientY, started: false, timer: null,
+          before: [...grid.querySelectorAll(".hero-room")].map((t) => t.dataset.zone).join(),
+        };
+        if (ev.pointerType !== "mouse") drag.timer = setTimeout(begin, 350);
+      });
+      // A touch drag must stop the page scrolling once it has begun.
+      tile.addEventListener("touchmove", (ev) => {
+        if (drag?.started) ev.preventDefault();
+      }, { passive: false });
+      tile.addEventListener("contextmenu", (ev) => {
+        if (drag) ev.preventDefault();
+      });
+    });
+
+    grid.addEventListener("pointermove", (ev) => {
+      if (!drag || ev.pointerId !== drag.pointerId) return;
+      const moved = Math.hypot(ev.clientX - drag.x, ev.clientY - drag.y);
+      if (!drag.started) {
+        if (ev.pointerType === "mouse" && moved > 5) begin();
+        else if (ev.pointerType !== "mouse" && moved > 8) {
+          // Finger moved before the hold finished: it's a scroll, not a drag.
+          clearTimeout(drag.timer);
+          drag = null;
+        }
+        return;
+      }
+      // Move the lifted tile into the slot under the pointer.
+      const target = [...grid.querySelectorAll(".hero-room")].find((t) => {
+        if (t === drag.tile) return false;
+        const r = t.getBoundingClientRect();
+        return ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
+      });
+      if (!target) return;
+      const tiles = [...grid.querySelectorAll(".hero-room")];
+      const from = tiles.indexOf(drag.tile);
+      const to = tiles.indexOf(target);
+      grid.insertBefore(drag.tile, from < to ? target.nextSibling : target);
+    });
+    grid.addEventListener("pointerup", (ev) => {
+      if (drag && ev.pointerId === drag.pointerId) end(true);
+    });
+    grid.addEventListener("pointercancel", (ev) => {
+      if (drag && ev.pointerId === drag.pointerId) end(false);
+    });
+  }
+
+  async _saveRoomOrder(visibleOrder) {
+    const rooms = this._cfg().rooms || [];
+    // Rooms hidden from the hero (disabled) keep their place at the end.
+    const ids = [...visibleOrder, ...rooms.map((r) => r.id).filter((id) => !visibleOrder.includes(id))];
+    const previous = rooms;
+    this._state.config.rooms = ids.map((id) => rooms.find((r) => r.id === id)).filter(Boolean);
+    this._orderSavedAt = Date.now();
+    try {
+      await this._ws("neat_thermostat/reorder_rooms", { room_ids: ids });
+      this._showToast("Room order saved");
+    } catch (e) {
+      this._state.config.rooms = previous;
+      this._showToast(`Couldn't save room order: ${e?.message || e}`, "err");
+      this._render();
+    }
+  }
+
   _bindWallPreview() {
     this._previewResize?.disconnect();
     this._previewResize = null;
@@ -1984,10 +2334,10 @@ class NeatThermostatPanel extends HTMLElement {
               <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="currentColor" d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2Z"/></svg>
             </button>
             <div class="panel-brand-row">
-              <div class="panel-brand-mark" aria-hidden="true">N</div>
+              <div class="panel-brand-mark" aria-hidden="true">${logoSvg()}</div>
               <div>
                 <div class="panel-brand-title">Neat Thermostat</div>
-                <div class="panel-brand-sub">Heating · rooms · wall panels</div>
+                <div class="panel-brand-sub">Intelligent heating control</div>
               </div>
             </div>
           </div>
@@ -2005,6 +2355,11 @@ class NeatThermostatPanel extends HTMLElement {
     `;
     this._bind();
     this._bindWallPreview();
+    this._bindRoomDrag();
+    // Overview re-renders every few seconds; keep the Entities section as the user left it.
+    this.shadowRoot.getElementById("ovEntities")?.addEventListener("toggle", (ev) => {
+      this._entitiesOpen = ev.target.open;
+    });
     if (this._view === "rooms") {
       void this._mountRoomPickers();
     }
@@ -2039,6 +2394,7 @@ class NeatThermostatPanel extends HTMLElement {
 
     this.shadowRoot.querySelectorAll("[data-zone]").forEach((btn) => {
       btn.addEventListener("click", () => {
+        if (this._suppressZoneClick) return; // the click that ends a drag
         this._focusZone = btn.dataset.zone;
         this._render();
       });
