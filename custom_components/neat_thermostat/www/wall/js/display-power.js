@@ -21,6 +21,23 @@ export class DisplayPower {
         this.resetTimer();
       }
     });
+    this.bindFullyMotion();
+  }
+
+  // Fully Kiosk Browser's motion detection (camera, or the proximity sensor with
+  // "Enable Proximity Motion Detection") reaches the page via its JS interface.
+  // fully.bind() takes code to eval, so it calls a global that points at the
+  // current instance; bind only once per page load.
+  bindFullyMotion() {
+    window.__neatWake = () => this.resetTimer();
+    if (window.__neatFullyBound || typeof window.fully?.bind !== "function") return;
+    try {
+      window.fully.bind("onMotion", "window.__neatWake && window.__neatWake();");
+      window.fully.bind("screenOn", "window.__neatWake && window.__neatWake();");
+      window.__neatFullyBound = true;
+    } catch {
+      // Not Fully, or JS interface disabled.
+    }
   }
 
   resetTimer() {
@@ -65,5 +82,6 @@ export class DisplayPower {
 
   destroy() {
     clearTimeout(this.timer);
+    window.__neatWake = null;
   }
 }
