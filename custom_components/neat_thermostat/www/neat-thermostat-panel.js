@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.3
+ * @version 0.6.4
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,7 +46,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.3";
+const PANEL_VERSION = "0.6.4";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -569,7 +569,22 @@ table.data tbody tr.room-row.selected {
 .hero-dial > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .hero-dial .track { stroke: color-mix(in srgb, var(--primary-text-color) 9%, transparent); }
 .hero-dial .fill { transition: stroke-dasharray 0.6s ease; }
-.hero-dial .now-dot { fill: var(--card-background-color); stroke: var(--primary-text-color); stroke-width: 3; }
+.hero-dial .now-dot { fill: var(--primary-text-color); opacity: 0.75; }
+.hero-left { display: flex; flex-direction: column; align-items: center; gap: 16px; min-width: 0; }
+.hm-modes { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.hm-seg { display: inline-flex; padding: 3px; border-radius: 999px; background: color-mix(in srgb, var(--primary-text-color) 7%, transparent); }
+.hm-mode {
+  border: 0; background: transparent; color: var(--secondary-text-color); cursor: pointer;
+  padding: 7px 13px; border-radius: 999px; font: inherit; font-size: 13px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.hm-mode svg { width: 15px; height: 15px; }
+.hm-mode:hover { color: var(--primary-text-color); }
+.hm-mode:focus-visible { outline: 2px solid var(--nt-accent-hi); outline-offset: 2px; }
+.hm-mode.active { background: var(--card-background-color); color: var(--primary-text-color); box-shadow: 0 1px 3px rgba(0,0,0,0.25); }
+.hm-mode.active.heat, .hm-mode.active.boost { color: var(--nt-heat-soft); }
+.hm-mode.active.eco { color: var(--nt-green); }
+.hm-mode.active.away { color: var(--nt-accent-hi); }
 .hero-dial-core {
   position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; text-align: center;
@@ -943,7 +958,7 @@ function dialSvg({ fill, now, color }) {
   let nowDot = "";
   if (now != null) {
     const a = ((135 + 270 * Math.max(0, Math.min(1, now))) * Math.PI) / 180;
-    nowDot = `<circle class="now-dot" cx="${(100 + r * Math.cos(a)).toFixed(1)}" cy="${(100 + r * Math.sin(a)).toFixed(1)}" r="6"/>`;
+    nowDot = `<circle class="now-dot" cx="${(100 + r * Math.cos(a)).toFixed(1)}" cy="${(100 + r * Math.sin(a)).toFixed(1)}" r="3.5"/>`;
   }
   return `<svg viewBox="0 0 200 200" aria-hidden="true">
     <defs>
@@ -1372,7 +1387,9 @@ class NeatThermostatPanel extends HTMLElement {
     const target = formatTemp(targetNum) ?? "—";
     const current = currentNum != null ? formatTemp(Math.round(currentNum * 10) / 10) : null;
     const heating = Boolean(live.boiler_on);
-    const off = (live.main || {}).hvac_mode === "off";
+    const homeState = this._entityState(this._neatClimateEntities().home);
+    const off = homeState ? homeState.state === "off" : (live.main || {}).hvac_mode === "off";
+    const preset = homeState?.attributes?.preset_mode ?? (live.main || {}).preset ?? "none";
     const preheat = live.preheat || {};
     let caption = off ? "Off" : heating ? "Heating to" : "Set to";
     if (preheat.preheating) caption = "Preheating to";
@@ -1418,6 +1435,7 @@ class NeatThermostatPanel extends HTMLElement {
 
     return `
       <section class="${heroClass}">
+        <div class="hero-left">
         <div class="hero-dial">
           ${dialSvg({ fill: off ? 0 : pos(targetNum) ?? 0, now: pos(currentNum), color })}
           <span class="hero-dial-core">
@@ -1434,6 +1452,19 @@ class NeatThermostatPanel extends HTMLElement {
               <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
             </button>
           </span>
+        </div>
+        <div class="hm-modes">
+          <div class="hm-seg" role="group" aria-label="Heating mode">
+            <button type="button" class="hm-mode heat${!off ? " active" : ""}" data-hero-hvac="heat">${flameSvg()}Heat</button>
+            <button type="button" class="hm-mode${off ? " active" : ""}" data-hero-hvac="off">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M12 3v8M6.4 6.6a8 8 0 1 0 11.2 0"/></svg>Off</button>
+          </div>
+          <div class="hm-seg" role="group" aria-label="Preset">
+            ${["eco", "boost", "away"]
+              .map((p) => `<button type="button" class="hm-mode ${p}${preset === p ? " active" : ""}" data-hero-preset="${p}">${p[0].toUpperCase() + p.slice(1)}</button>`)
+              .join("")}
+          </div>
+        </div>
         </div>
         <div class="hero-side">
           <div class="hero-head">
@@ -3077,6 +3108,33 @@ class NeatThermostatPanel extends HTMLElement {
       }
     });
 
+    const heroCall = async (service, data, label) => {
+      const home = this._neatClimateEntities().home;
+      if (!home) {
+        this._showToast("Neat's house thermostat isn't available", "err");
+        return;
+      }
+      try {
+        await this._hass.callService("climate", service, { entity_id: home, ...data });
+        // The entity updates straight away; redraw once HA has pushed it.
+        setTimeout(() => this._render(), 250);
+        this._showToast(label);
+      } catch (e) {
+        this._showToast(`Couldn't change it: ${e?.message || e}`, "err");
+      }
+    };
+    this.shadowRoot.querySelectorAll("[data-hero-hvac]").forEach((btn) => {
+      btn.addEventListener("click", () =>
+        heroCall("set_hvac_mode", { hvac_mode: btn.dataset.heroHvac }, btn.dataset.heroHvac === "off" ? "Heating off" : "Heating on")
+      );
+    });
+    this.shadowRoot.querySelectorAll("[data-hero-preset]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const current = this._entityState(this._neatClimateEntities().home)?.attributes?.preset_mode;
+        const next = current === btn.dataset.heroPreset ? "none" : btn.dataset.heroPreset;
+        heroCall("set_preset_mode", { preset_mode: next }, next === "none" ? "Preset cleared" : `${next[0].toUpperCase() + next.slice(1)} on`);
+      });
+    });
     this.shadowRoot.querySelectorAll(".dial-step").forEach((btn) => {
       btn.addEventListener("click", () => this._stepTarget(Number(btn.dataset.step)));
     });
