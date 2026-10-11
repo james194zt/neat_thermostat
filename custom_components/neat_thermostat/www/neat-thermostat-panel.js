@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + Nest-inspired overview / schedule.
- * @version 0.4.1
+ * @version 0.4.2
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -46,12 +46,20 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.4.1";
+const PANEL_VERSION = "0.4.2";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // Wall app copy served by HA from /config/www; the preview runs it embedded.
 const WALL_APP_URL = "/local/nspanel-thermostat-v2/index.html";
-const WALL_SCREEN_PX = 480; // NSPanel Pro / Pro Gen2: 3.95" 480×480
+// Wall panel hardware: the preview renders the app at each model's screen size.
+// Add new devices here; the first entry is the default (matches DEFAULT_WALL_PANEL_MODEL).
+const WALL_MODELS = [
+  { id: "nspanel_pro_gen2", label: "Sonoff NSPanel Pro Gen2", width: 480, height: 480, screen: '3.95" 480×480' },
+];
+
+function wallModel(id) {
+  return WALL_MODELS.find((m) => m.id === id) || WALL_MODELS[0];
+}
 
 const STYLES = `
 :host {
@@ -357,17 +365,16 @@ table.data tbody tr.room-row.selected {
 .wp-preview-taps.live { color: var(--nt-heat-soft); font-weight: 600; }
 .wp-preview-stage { display: flex; justify-content: center; }
 .wp-preview-device {
-  width: 100%; max-width: ${WALL_SCREEN_PX + 28}px; box-sizing: border-box;
+  width: 100%; box-sizing: border-box;
   padding: 14px; border-radius: 26px; background: #0d0f12;
   box-shadow: 0 18px 40px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.06);
 }
 .wp-preview-screen {
-  position: relative; width: 100%; aspect-ratio: 1; overflow: hidden;
+  position: relative; width: 100%; overflow: hidden;
   border-radius: 6px; background: #000;
 }
 .wp-preview-screen iframe {
   position: absolute; top: 0; left: 0; border: 0;
-  width: ${WALL_SCREEN_PX}px; height: ${WALL_SCREEN_PX}px;
   transform-origin: 0 0; transform: scale(var(--wp-scale, 1));
 }
 .wp-preview-shield { position: absolute; inset: 0; cursor: not-allowed; }
@@ -1413,7 +1420,7 @@ class NeatThermostatPanel extends HTMLElement {
       <div class="panel-item" data-id="${this._escape(p.id)}" role="button" tabindex="0" title="Click to edit">
         <div>
           <strong>${this._escape(p.label || p.id)}</strong>
-          <div class="muted">id: <code>${this._escape(p.id)}</code> · primary: <code>${this._escape(p.primary_entity || "climate.neat_home")}</code></div>
+          <div class="muted">id: <code>${this._escape(p.id)}</code> · ${this._escape(wallModel(p.model).label)} · primary: <code>${this._escape(p.primary_entity || "climate.neat_home")}</code></div>
         </div>
         <button class="danger del-panel" data-id="${this._escape(p.id)}">Delete</button>
       </div>`
@@ -1432,6 +1439,11 @@ class NeatThermostatPanel extends HTMLElement {
         <div class="row">
           <label class="field">Panel ID<input id="wpId" placeholder="hallway" /></label>
           <label class="field">Label<input id="wpLabel" placeholder="Hallway panel" /></label>
+          <label class="field">Model
+            <select id="wpModel">
+              ${WALL_MODELS.map((m) => `<option value="${m.id}">${this._escape(m.label)} (${this._escape(m.screen)})</option>`).join("")}
+            </select>
+          </label>
         </div>
         <div class="row">
           <label class="field">Primary climate
@@ -1474,14 +1486,23 @@ class NeatThermostatPanel extends HTMLElement {
     return panels[0]?.id || "";
   }
 
+  _panelModel(id) {
+    return wallModel((this._cfg().wall_panels || []).find((p) => p.id === id)?.model);
+  }
+
   _wallPreviewSrc(id) {
     const q = new URLSearchParams({ embedded: "1", preview: "1", device: id, t: String(Date.now()) });
     return `${WALL_APP_URL}?${q}`;
   }
 
+  _previewSizeText(model) {
+    return `${model.label} · ${model.screen}`;
+  }
+
   _renderWallPreview(panels) {
     if (!panels.length) return "";
     const current = this._previewPanelId(panels);
+    const model = this._panelModel(current);
     const options = panels
       .map((p) => `<option value="${this._escape(p.id)}" ${p.id === current ? "selected" : ""}>${this._escape(p.label || p.id)}</option>`)
       .join("");
@@ -1497,18 +1518,45 @@ class NeatThermostatPanel extends HTMLElement {
           </label>
         </div>
         <div class="wp-preview-stage">
-          <div class="wp-preview-device">
-            <div class="wp-preview-screen">
-              <iframe id="wpPreviewFrame" title="Wall panel preview" src="${this._escape(this._wallPreviewSrc(current))}"></iframe>
+          <div class="wp-preview-device" style="max-width:${model.width + 28}px">
+            <div class="wp-preview-screen" style="aspect-ratio:${model.width} / ${model.height}">
+              <iframe id="wpPreviewFrame" title="Wall panel preview" style="width:${model.width}px;height:${model.height}px"
+                src="${this._escape(this._wallPreviewSrc(current))}"></iframe>
               ${this._previewTaps ? "" : `<div class="wp-preview-shield" title="View only — tick Allow taps to use it"></div>`}
             </div>
           </div>
         </div>
         <p class="muted" style="margin:12px 0 0">
-          The real wall app installed on HA at <code>${WALL_APP_URL.replace("index.html", "")}</code>, shown at the panel's ${WALL_SCREEN_PX}×${WALL_SCREEN_PX} screen size.
+          <strong id="wpPreviewSize">${this._escape(this._previewSizeText(model))}</strong> —
+          the real wall app installed on HA at <code>${WALL_APP_URL.replace("index.html", "")}</code>, shown at the model's screen size.
           Saving a panel reloads it; changes to the wall app's own code show once that copy is updated.
         </p>
       </div>`;
+  }
+
+  /** Resize the preview to a model's screen without reloading the app. */
+  _applyPreviewModel(model) {
+    const device = this.shadowRoot?.querySelector(".wp-preview-device");
+    const screen = this.shadowRoot?.querySelector(".wp-preview-screen");
+    const frame = this.shadowRoot?.getElementById("wpPreviewFrame");
+    if (!device || !screen || !frame) return;
+    this._previewWidth = model.width;
+    device.style.maxWidth = `${model.width + 28}px`;
+    screen.style.aspectRatio = `${model.width} / ${model.height}`;
+    frame.style.width = `${model.width}px`;
+    frame.style.height = `${model.height}px`;
+    screen.style.setProperty("--wp-scale", String(screen.clientWidth / model.width));
+    const size = this.shadowRoot.getElementById("wpPreviewSize");
+    if (size) size.textContent = this._previewSizeText(model);
+  }
+
+  _showPreviewPanel(id) {
+    this._previewPanel = id;
+    const select = this.shadowRoot?.getElementById("wpPreviewPanel");
+    const frame = this.shadowRoot?.getElementById("wpPreviewFrame");
+    if (select) select.value = id;
+    this._applyPreviewModel(this._panelModel(id));
+    if (frame) frame.src = this._wallPreviewSrc(id);
   }
 
   _bindWallPreview() {
@@ -1517,18 +1565,22 @@ class NeatThermostatPanel extends HTMLElement {
     const screen = this.shadowRoot.querySelector(".wp-preview-screen");
     const frame = this.shadowRoot.getElementById("wpPreviewFrame");
     if (!screen || !frame) return;
+    this._previewWidth = this._panelModel(this._previewPanelId()).width;
     this._previewResize = new ResizeObserver(() => {
-      screen.style.setProperty("--wp-scale", String(screen.clientWidth / WALL_SCREEN_PX));
+      screen.style.setProperty("--wp-scale", String(screen.clientWidth / this._previewWidth));
     });
     this._previewResize.observe(screen);
-    const reload = () => {
-      frame.src = this._wallPreviewSrc(this._previewPanelId());
-    };
     this.shadowRoot.getElementById("wpPreviewPanel")?.addEventListener("change", (ev) => {
-      this._previewPanel = ev.target.value;
-      reload();
+      this._showPreviewPanel(ev.target.value);
     });
-    this.shadowRoot.getElementById("wpPreviewReload")?.addEventListener("click", reload);
+    this.shadowRoot.getElementById("wpPreviewReload")?.addEventListener("click", () => {
+      frame.src = this._wallPreviewSrc(this._previewPanelId());
+    });
+    // Picking a model in the form resizes the preview straight away when it's the panel on show.
+    this.shadowRoot.getElementById("wpModel")?.addEventListener("change", (ev) => {
+      const formId = String(this.shadowRoot.getElementById("wpId")?.value || "").trim().toLowerCase().replace(/\s+/g, "-");
+      if (formId && formId === this._previewPanelId()) this._applyPreviewModel(wallModel(ev.target.value));
+    });
     this.shadowRoot.getElementById("wpPreviewTaps")?.addEventListener("change", (ev) => {
       this._previewTaps = ev.target.checked;
       const label = ev.target.closest(".wp-preview-taps");
@@ -1559,13 +1611,9 @@ class NeatThermostatPanel extends HTMLElement {
 
   _loadWallPanelIntoForm(panel) {
     if (!panel) return;
-    if (panel.id !== this._previewPanelId()) {
-      this._previewPanel = panel.id;
-      const select = this.shadowRoot?.getElementById("wpPreviewPanel");
-      const frame = this.shadowRoot?.getElementById("wpPreviewFrame");
-      if (select) select.value = panel.id;
-      if (frame) frame.src = this._wallPreviewSrc(panel.id);
-    }
+    if (panel.id !== this._previewPanelId()) this._showPreviewPanel(panel.id);
+    const modelEl = this.shadowRoot?.getElementById("wpModel");
+    if (modelEl) modelEl.value = wallModel(panel.model).id;
     const idEl = this.shadowRoot?.getElementById("wpId");
     const labelEl = this.shadowRoot?.getElementById("wpLabel");
     const idleEl = this.shadowRoot?.getElementById("wpIdle");
@@ -2266,6 +2314,7 @@ class NeatThermostatPanel extends HTMLElement {
               },
               display: { idleMs: idleSec * 1000, panelEntity: "" },
               temperature_lock: this.shadowRoot.getElementById("wpLock")?.value === "true",
+              model: wallModel(this.shadowRoot.getElementById("wpModel")?.value).id,
             },
           });
           this._previewPanel = id;

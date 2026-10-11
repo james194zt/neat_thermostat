@@ -23,6 +23,7 @@ from .const import (
     DEFAULT_SAFETY_MIN_TEMP,
     DEFAULT_SAFETY_TEMP_ENABLED,
     DEFAULT_SEASONAL_SAVINGS,
+    DEFAULT_WALL_PANEL_MODEL,
     DEFAULT_TARGET_TEMP,
     DEFAULT_TRUE_RADIANT,
     DEFAULT_WALL_PIN,
@@ -111,6 +112,7 @@ class WallPanelConfig:
     sensors: dict[str, str] = field(default_factory=dict)
     display: dict[str, Any] = field(default_factory=dict)
     temperature_lock: bool = False
+    model: str = DEFAULT_WALL_PANEL_MODEL
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -125,6 +127,7 @@ class WallPanelConfig:
             sensors=dict(data.get("sensors") or {}),
             display=dict(data.get("display") or {"idleMs": 30000, "panelEntity": ""}),
             temperature_lock=bool(data.get("temperature_lock", False)),
+            model=str(data.get("model") or DEFAULT_WALL_PANEL_MODEL),
         )
 
 
