@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
@@ -49,6 +49,21 @@ HEAT_CHECK_STALE_HOURS = 6
 HEAT_CHECK_MAX_TICK_MINUTES = 5
 INITIAL_LEARNING_DAYS = 7
 
+# True Radiant coast: how far the house keeps warming after the boiler stops.
+# Measured after each house run instead of guessed. Starts at one sensor step,
+# so until it has learned Neat behaves almost like a plain thermostat (a
+# little overshoot is safer than stopping short of the target).
+DEFAULT_COAST_C = 0.1
+MAX_COAST_C = 1.0
+# Runs shorter than this never got the radiators properly hot.
+COAST_MIN_RUN_MINUTES = 15
+# The peak is passed once the house has cooled this far below it.
+COAST_PEAK_PASSED_C = 0.2
+# A peak later than this after the boiler stopped isn't radiator coast
+# (sun, cooking); give up watching after COAST_MAX_WATCH_MINUTES.
+COAST_MAX_PEAK_MINUTES = 60
+COAST_MAX_WATCH_MINUTES = 120
+
 # Leaf (heating hard floor ≈ 62°F)
 LEAF_HARD_FLOOR_C = 16.5
 LEAF_CHALLENGE_OFFSET_C = 0.5
@@ -65,6 +80,9 @@ class WarmupModel:
     c_per_hour: float = DEFAULT_WARMUP_C_PER_HOUR
     samples: int = 0
     last_outdoor: float | None = None
+    # Learned True Radiant coast (°C the house rises after the boiler stops).
+    coast_c: float = DEFAULT_COAST_C
+    coast_samples: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -81,6 +99,8 @@ class WarmupModel:
                 if data.get("last_outdoor") is not None
                 else None
             ),
+            coast_c=float(data.get("coast_c", DEFAULT_COAST_C)),
+            coast_samples=int(data.get("coast_samples", 0)),
         )
 
 
@@ -332,11 +352,123 @@ def _restart_heat_check(check: HeatCheck, run_temp: float | None, now: datetime)
 
 
 @dataclass
+class CoastWatch:
+    """Measures one run's radiator coast (persisted across restarts)."""
+
+    # The boiler run in progress.
+    run_started_at: str | None = None
+    house_called: bool = False
+    # After the boiler stopped: temperature then, and the highest seen since.
+    off_at: str | None = None
+    off_temp: float | None = None
+    peak_temp: float | None = None
+    peak_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> CoastWatch:
+        if not data:
+            return cls()
+        known = {k: data[k] for k in cls.__dataclass_fields__ if k in data}
+        try:
+            return cls(**known)
+        except TypeError:
+            return cls()
+
+    def clear(self) -> None:
+        for name, f in self.__dataclass_fields__.items():
+            setattr(self, name, f.default)
+
+
+def update_coast_watch(
+    watch: CoastWatch,
+    warmup: WarmupModel,
+    *,
+    boiler_on: bool,
+    house_calling: bool,
+    current_temp: float | None,
+    disturbed: bool = False,
+    learn: bool = True,
+    now: datetime | None = None,
+) -> WarmupModel | None:
+    """Advance the coast measurement by one tick.
+
+    Coast = highest house temperature after the boiler stops, less the
+    temperature when it stopped. Only runs the house itself called for (rooms
+    alone may not reach the house sensor) and that lasted long enough to get
+    the radiators hot are measured. A window opening, the boiler starting
+    again or a late peak throws the measurement away. Returns the updated
+    model when a measurement completes and ``learn`` is set, else None.
+    """
+    now = now or clock()
+    if disturbed:
+        watch.clear()
+        return None
+
+    if boiler_on:
+        if watch.off_at is not None:
+            # Back on before the peak passed: this coast can't be measured.
+            watch.clear()
+        if watch.run_started_at is None:
+            watch.run_started_at = now.isoformat()
+        if house_calling:
+            watch.house_called = True
+        return None
+
+    if watch.off_at is None:
+        started = _parse_ts(watch.run_started_at)
+        if started is None:
+            return None
+        long_enough = now - started >= timedelta(minutes=COAST_MIN_RUN_MINUTES)
+        house_called = watch.house_called
+        watch.clear()
+        if long_enough and house_called and current_temp is not None:
+            watch.off_at = now.isoformat()
+            watch.off_temp = watch.peak_temp = current_temp
+            watch.peak_at = watch.off_at
+        return None
+
+    off_at = _parse_ts(watch.off_at)
+    if off_at is None or watch.off_temp is None or watch.peak_temp is None:
+        watch.clear()
+        return None
+    elapsed = now - off_at
+    if current_temp is not None and current_temp > watch.peak_temp:
+        watch.peak_temp = current_temp
+        watch.peak_at = now.isoformat()
+    peak_passed = current_temp is not None and current_temp <= watch.peak_temp - COAST_PEAK_PASSED_C
+    if not peak_passed and elapsed < timedelta(minutes=COAST_MAX_WATCH_MINUTES):
+        return None
+
+    peak_at = _parse_ts(watch.peak_at) or off_at
+    coast = watch.peak_temp - watch.off_temp
+    watch.clear()
+    if peak_at - off_at > timedelta(minutes=COAST_MAX_PEAK_MINUTES) or not learn:
+        return None
+    return learn_coast(warmup, coast)
+
+
+def learn_coast(warmup: WarmupModel, observed: float) -> WarmupModel:
+    """Blend one measured coast into the model, like the warm-up rate."""
+    observed = max(0.0, min(MAX_COAST_C, observed))
+    n = warmup.coast_samples
+    weight = min(0.35, 1.0 / (n + 1) + 0.15)
+    return replace(
+        warmup,
+        coast_c=round(warmup.coast_c * (1 - weight) + observed * weight, 3),
+        coast_samples=n + 1,
+    )
+
+
+@dataclass
 class IntelligenceState:
     """Persisted intelligence state."""
 
     warmup: WarmupModel = field(default_factory=WarmupModel)
     heat_check: HeatCheck = field(default_factory=HeatCheck)
+    coast_watch: CoastWatch = field(default_factory=CoastWatch)
     recent_cycles: list[dict[str, Any]] = field(default_factory=list)
     adjustments: list[dict[str, Any]] = field(default_factory=list)
     learning_started_at: str | None = None
@@ -351,6 +483,7 @@ class IntelligenceState:
         return {
             "warmup": self.warmup.to_dict(),
             "heat_check": self.heat_check.to_dict(),
+            "coast_watch": self.coast_watch.to_dict(),
             "recent_cycles": self.recent_cycles[-40:],
             "adjustments": self.adjustments[-200:],
             "learning_started_at": self.learning_started_at,
@@ -368,6 +501,7 @@ class IntelligenceState:
         return cls(
             warmup=WarmupModel.from_dict(data.get("warmup")),
             heat_check=HeatCheck.from_dict(data.get("heat_check")),
+            coast_watch=CoastWatch.from_dict(data.get("coast_watch")),
             recent_cycles=list(data.get("recent_cycles") or []),
             adjustments=list(data.get("adjustments") or []),
             learning_started_at=data.get("learning_started_at"),
@@ -507,7 +641,8 @@ def update_warmup_from_cycle(
     n = warmup.samples
     weight = min(0.35, 1.0 / (n + 1) + 0.15)
     new_rate = warmup.c_per_hour * (1 - weight) + observed * weight
-    return WarmupModel(
+    return replace(
+        warmup,
         c_per_hour=round(new_rate, 3),
         samples=n + 1,
         last_outdoor=outdoor_temp if outdoor_temp is not None else warmup.last_outdoor,

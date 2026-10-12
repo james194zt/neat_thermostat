@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.13
+ * @version 0.6.14
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.13";
+const PANEL_VERSION = "0.6.14";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -1531,6 +1531,8 @@ class NeatThermostatPanel extends HTMLElement {
       </div>`;
     const samples = Number(intel.warmup_samples ?? 0);
     const rate = intel.warmup_c_per_hour;
+    const coast = intel.coast_c;
+    const coastSamples = Number(intel.coast_samples ?? 0);
 
     return `
       ${heaterWarning}
@@ -1571,12 +1573,14 @@ class NeatThermostatPanel extends HTMLElement {
             </div>
           </div>
           <div class="feature-list">
-            ${feature("True Radiant", "Starts heating early so the house is warm when a schedule block begins", onOff(intel.true_radiant))}
+            ${feature("True Radiant", "Starts heating early so the house is warm when a schedule block begins, and stops early by the radiator coast", onOff(intel.true_radiant))}
             ${feature("Auto-Schedule", "Learns schedule changes from your manual adjustments", onOff(intel.auto_schedule))}
             ${feature("Leaf coaching", "Shows the leaf when you're saving energy", onOff(intel.leaf_enabled !== false))}
             ${feature("Away delay", "Switches to Eco once nobody's been home this long", `${this._escape(intel.away_delay_minutes ?? 20)} min`)}
             ${feature("Warm-up rate", "How fast the house heats, used to time preheating",
               `${rate != null ? `${this._escape(rate)} °C/h` : "—"}<small>${samples ? `${samples} sample${samples === 1 ? "" : "s"}` : "Default · still learning"}</small>`)}
+            ${feature("Radiator coast", "How far the house keeps warming after the boiler stops, so it stops early",
+              `${coast != null ? `${this._escape(Number(coast).toFixed(2))} °C` : "—"}<small>${coastSamples ? `${coastSamples} run${coastSamples === 1 ? "" : "s"}` : "Default · still learning"}</small>`)}
           </div>
         </div>
       </div>
@@ -3010,7 +3014,7 @@ class NeatThermostatPanel extends HTMLElement {
         </div>
         <div class="card">
           ${head(ICONS.sparkle, "intel", "Neat Intelligence", "Learning and comfort features for the house.")}
-          ${row("True Radiant", "Starts heating early so it's warm when a schedule block begins.", toggle("trueRadiant", cfg.true_radiant !== false))}
+          ${row("True Radiant", "Starts heating early so it's warm when a schedule block begins, and stops early by the learned radiator coast.", toggle("trueRadiant", cfg.true_radiant !== false))}
           ${row("Auto-Schedule", "Learns schedule changes from your manual adjustments.", toggle("autoSchedule", cfg.auto_schedule))}
           ${row("Leaf coaching", "Shows the leaf when you're saving energy.", toggle("leafEnabled", cfg.leaf_enabled !== false))}
           ${row("Seasonal Savings", "Gently lowers comfort over 21 days.", toggle("seasonalSavings", cfg.seasonal_savings))}
@@ -3041,18 +3045,23 @@ class NeatThermostatPanel extends HTMLElement {
     `;
   }
 
-  /** Learned warm-up rate with a Reset (e.g. after it learned from a faulty boiler). */
+  /** Learned warm-up rate and radiator coast with a Reset (e.g. after learning from a faulty boiler). */
   _warmupRow(row) {
     const intel = this._live().intelligence || {};
     const rate = intel.warmup_c_per_hour;
     const samples = Number(intel.warmup_samples ?? 0);
+    const coast = Number(intel.coast_c ?? 0.1).toFixed(2);
+    const coastSamples = Number(intel.coast_samples ?? 0);
     const learned = samples
       ? `Learned ${rate} °C/h from ${samples} heat run${samples === 1 ? "" : "s"}.`
       : `Using the default ${rate ?? 1.5} °C/h until it has learned from a few heat runs.`;
+    const coasted = coastSamples
+      ? `Radiators coast ${coast} °C after the boiler stops (${coastSamples} run${coastSamples === 1 ? "" : "s"}).`
+      : `Radiator coast: default ${coast} °C until measured.`;
     return row(
-      "Warm-up rate",
-      `${this._escape(learned)} Times preheating. Reset it if it was learned while the heating was faulty.`,
-      `<button type="button" class="secondary" id="resetWarmup" ${samples ? "" : "disabled"}>Reset</button>`
+      "Warm-up rate & coast",
+      `${this._escape(learned)} ${this._escape(coasted)} Times preheating and when to stop. Reset if they were learned while the heating was faulty.`,
+      `<button type="button" class="secondary" id="resetWarmup" ${samples || coastSamples ? "" : "disabled"}>Reset</button>`
     );
   }
 
@@ -3177,12 +3186,12 @@ class NeatThermostatPanel extends HTMLElement {
     });
 
     this.shadowRoot.getElementById("resetWarmup")?.addEventListener("click", async () => {
-      if (!window.confirm("Forget the learned warm-up rate? Neat goes back to its default and learns again from the next heat runs.")) return;
+      if (!window.confirm("Forget the learned warm-up rate and radiator coast? Neat goes back to its defaults and learns again from the next heat runs.")) return;
       try {
         await this._ws("neat_thermostat/reset_warmup");
         // Update just this row: a full redraw would drop unsaved Settings edits.
         const live = this._state?.live;
-        if (live) live.intelligence = { ...(live.intelligence || {}), warmup_c_per_hour: 1.5, warmup_samples: 0 };
+        if (live) live.intelligence = { ...(live.intelligence || {}), warmup_c_per_hour: 1.5, warmup_samples: 0, coast_c: 0.1, coast_samples: 0 };
         const btn = this.shadowRoot.getElementById("resetWarmup");
         const html = this._warmupRow((name, desc, control) => `<div class="set-row-desc">${desc}</div>${control}`);
         const tmp = document.createElement("div");

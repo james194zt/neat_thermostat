@@ -8,9 +8,6 @@ from typing import Any
 from .const import DAYS
 from .schedule import _parse_hhmm
 
-# True Radiant: radiators keep warming the room for roughly this long after
-# the boiler stops, so the house cut-off is pulled down by that coast.
-COAST_MINUTES = 12.0
 # Never let the cut-off get closer than this to the cut-in point, otherwise
 # the boiler short-cycles on sensor noise.
 MIN_HYSTERESIS_C = 0.2
@@ -22,13 +19,16 @@ def house_off_threshold(
     cold_tolerance: float,
     hot_tolerance: float,
     true_radiant: bool,
-    warmup_c_per_hour: float,
+    coast_c: float,
 ) -> float:
-    """Temperature at which a running house call stops."""
+    """Temperature at which a running house call stops.
+
+    True Radiant pulls the cut-off down by ``coast_c``: how far the house is
+    measured to keep warming after the boiler stops (see intelligence.py).
+    """
     off_at = target + hot_tolerance
     if true_radiant:
-        coast = max(0.0, warmup_c_per_hour) / 60.0 * COAST_MINUTES
-        off_at -= coast
+        off_at -= max(0.0, coast_c)
     return max(off_at, target - cold_tolerance + MIN_HYSTERESIS_C)
 
 
@@ -40,7 +40,7 @@ def house_calls_for_heat(
     cold_tolerance: float,
     hot_tolerance: float,
     true_radiant: bool,
-    warmup_c_per_hour: float,
+    coast_c: float,
 ) -> bool:
     """Hysteresis thermostat: cut in below target-cold, cut out at off threshold."""
     if current is None:
@@ -51,7 +51,7 @@ def house_calls_for_heat(
             cold_tolerance=cold_tolerance,
             hot_tolerance=hot_tolerance,
             true_radiant=true_radiant,
-            warmup_c_per_hour=warmup_c_per_hour,
+            coast_c=coast_c,
         )
     return current <= target - cold_tolerance
 

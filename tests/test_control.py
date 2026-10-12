@@ -28,7 +28,7 @@ def _load(name):
 
 control = _load("control")
 
-HOUSE = dict(cold_tolerance=0.3, hot_tolerance=0.3, true_radiant=True, warmup_c_per_hour=1.5)
+HOUSE = dict(cold_tolerance=0.3, hot_tolerance=0.3, true_radiant=True, coast_c=0.3)
 
 
 class HouseHysteresis(unittest.TestCase):
@@ -41,12 +41,12 @@ class HouseHysteresis(unittest.TestCase):
         self.assertTrue(control.house_calls_for_heat(19.8, 20.0, was_calling=True, **HOUSE))
 
     def test_true_radiant_stops_before_overshoot(self):
-        # 1.5C/h * 12min = 0.3C coast -> stop at target + 0.3 - 0.3 = 20.0
+        # 0.3C learned coast -> stop at target + 0.3 - 0.3 = 20.0
         self.assertTrue(control.house_calls_for_heat(19.95, 20.0, was_calling=True, **HOUSE))
         self.assertFalse(control.house_calls_for_heat(20.0, 20.0, was_calling=True, **HOUSE))
 
-    def test_fast_house_keeps_minimum_gap(self):
-        fast = {**HOUSE, "warmup_c_per_hour": 4.0}
+    def test_big_coast_keeps_minimum_gap(self):
+        fast = {**HOUSE, "coast_c": 0.8}
         off_at = control.house_off_threshold(20.0, **{k: v for k, v in fast.items()})
         self.assertAlmostEqual(off_at, 19.9)
 

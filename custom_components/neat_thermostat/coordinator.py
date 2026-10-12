@@ -41,6 +41,7 @@ from .intelligence import (
     stop_seasonal_savings,
     track_heat_interval,
     update_away_tracking,
+    update_coast_watch,
     update_heat_check,
     update_warmup_from_cycle,
 )
@@ -211,8 +212,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return await self.async_save_config({"seasonal_savings": False})
 
     async def async_reset_warmup(self) -> None:
-        """Forget the learned warm-up rate (e.g. it was learned while the boiler was faulty)."""
+        """Forget the learned warm-up rate and coast (e.g. learned while the boiler was faulty)."""
         self.intel.state.warmup = WarmupModel()
+        self.intel.state.coast_watch.clear()
         self.intel.state.recent_cycles = []
         await self.intel.async_save()
         await self.async_request_refresh()
@@ -250,6 +252,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "away_delay_minutes": self.config.away_delay_minutes,
                 "warmup_c_per_hour": self.intel.state.warmup.c_per_hour,
                 "warmup_samples": self.intel.state.warmup.samples,
+                "coast_c": self.intel.state.warmup.coast_c,
+                "coast_samples": self.intel.state.warmup.coast_samples,
                 "leaf_enabled": self.config.leaf_enabled,
                 "safety_temp_enabled": self.config.safety_temp_enabled,
                 "seasonal_savings": self.config.seasonal_savings,
@@ -529,7 +533,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             cold_tolerance=self.config.cold_tolerance,
             hot_tolerance=self.config.hot_tolerance,
             true_radiant=self.config.true_radiant,
-            warmup_c_per_hour=self.intel.state.warmup.c_per_hour,
+            coast_c=self.intel.state.warmup.coast_c,
         )
 
     def _heater_is_available(self) -> bool:
@@ -666,6 +670,31 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._heat_cycle_start_temp = None
         self._last_boiler_on = want_heat
 
+    def _track_coast(self, heating: bool) -> None:
+        """Measure how far the house keeps warming after each run (True Radiant)."""
+        watch = self.intel.state.coast_watch
+        before = watch.to_dict()
+        learned = update_coast_watch(
+            watch,
+            self.intel.state.warmup,
+            boiler_on=heating,
+            house_calling=self._house_calling or self._safety_active,
+            current_temp=self._state_float(self.config.temperature_sensor),
+            disturbed=self._any_window_open(self.config.window_sensors),
+            # A boiler that isn't heating has no coast to learn.
+            learn=self.intel.state.heat_check.fault_since is None,
+            now=self._now(),
+        )
+        if learned is not None:
+            _LOGGER.info(
+                "Neat: radiator coast now %.2f°C (%d runs)",
+                learned.coast_c,
+                learned.coast_samples,
+            )
+            self.intel.state.warmup = learned
+        if learned is not None or watch.to_dict() != before:
+            self._dirty_intel = True
+
     async def _async_check_warming(self, house_heating: bool) -> None:
         """Flag (and notify) when boiler time isn't warming the house."""
         check = self.intel.state.heat_check
@@ -794,6 +823,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._async_check_warming(
             heating and (self._house_calling or self._safety_active)
         )
+        self._track_coast(heating)
 
         await self._async_set_heater(want_heat)
 
