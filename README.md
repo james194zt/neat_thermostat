@@ -51,6 +51,29 @@ show_modes: true
 show_rooms: true
 ```
 
+### Radiators card
+
+**Add card → Neat Radiators** lists every room's radiator / TRV with its own controls. Use it
+instead of HA's thermostat card on the TRVs themselves: Neat owns the TRV setpoints, so a TRV
+changed directly is put back to Neat's target on the next update. This card changes the Neat
+room instead, and Neat then sets the TRV.
+
+- Per room: small dial (drag or **− / +**), Heat / Off, Eco / Boost, and what it's doing
+  ("Heating to 21°", "Window open — paused", "until 22:00" for a manual change that lasts until
+  the next schedule change)
+- TRV status: online / offline, battery and valve opening (found on the TRV's device), and
+  "TRV at 18°" while Neat is still sending a new setpoint. Tap a pill for that entity's details
+- Header: how many rooms are heating, TRVs offline, boiler on
+
+```yaml
+type: custom:neat-radiators-card
+title: Radiators         # optional
+entities:                # optional — all Neat rooms, in your Rooms order, when left out
+  - climate.neat_thermostat_neat_kitchen
+show_trv: true
+show_modes: true
+```
+
 ## NSPanel / wall UI
 
 The wall panel app lives in [`nspanel-thermostat/`](nspanel-thermostat/) and **ships with the

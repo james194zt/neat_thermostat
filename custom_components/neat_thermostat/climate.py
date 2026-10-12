@@ -273,6 +273,9 @@ class NeatRoomClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
             "room_id": self.room.id,
             "room_name": self.room.name,
             "trv_entity": self.room.trv_entity,
+            "calls_for_heat": bool(getattr(self.room, "calls_for_heat", True)),
+            # Manual setpoint in force until this time (ISO), then the schedule resumes.
+            "hold_until": self.coordinator.room_hold_until(self.room),
             "needs_heat": bool(
                 self.coordinator.data.get("rooms", {})
                 .get(self.room.id, {})

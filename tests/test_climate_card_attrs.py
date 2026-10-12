@@ -42,3 +42,20 @@ async def test_house_lists_room_entities_in_order_and_rooms_name_themselves(hass
     attrs = room.extra_state_attributes
     assert attrs["room_name"] == "Lounge"
     assert attrs["room_id"] == "lounge"
+    assert attrs["calls_for_heat"] is True
+    assert attrs["hold_until"] is None
+
+
+async def test_room_hold_until_for_the_radiators_card(hass, setup, freezer):
+    coord, _calls = setup
+    coord.config.schedule_enabled = True
+    freezer.move_to(f"{MONDAY} 12:00:00+01:00")
+    await _tick(hass, coord)
+    room = coord.config.rooms[0]
+    coord.set_room_temperature(room.id, 21.5)
+    until = coord.room_hold_until(room)
+    assert until is not None and until == coord.room_control(room.id)["hold"]["until"]
+    assert NeatRoomClimate(coord, room).extra_state_attributes["hold_until"] == until
+    # A preset replaces the manual setpoint, so there's no hold to show.
+    coord.set_room_preset(room.id, "boost")
+    assert coord.room_hold_until(room) is None

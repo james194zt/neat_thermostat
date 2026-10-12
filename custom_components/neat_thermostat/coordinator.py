@@ -432,6 +432,18 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return float(room.target_temp)
         return self._apply_adaptive(room.eco_temp, eco_mode=True)
 
+    def room_hold_until(self, room: RoomConfig) -> str | None:
+        """When a manual room setpoint hands back to the schedule (ISO), if one is in force."""
+        st = self._room_states.get(room.id, {})
+        if not self.config.schedule_enabled or st.get("preset", PRESET_NONE) != PRESET_NONE:
+            return None
+        if self._away_eco_active:
+            return None
+        hold = st.get("hold")
+        if self._active_hold(hold, self._now()) is None:
+            return None
+        return hold.get("until")
+
     def room_current_temp(self, room: RoomConfig) -> float | None:
         readings: list[float] = []
         if room.temperature_sensor:
