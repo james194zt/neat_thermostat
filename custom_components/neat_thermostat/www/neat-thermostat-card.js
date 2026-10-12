@@ -3,7 +3,7 @@
  * Loaded automatically by the integration; pick "Neat Thermostat" in the card list.
  * Everything comes from the Neat climate entities, so it updates live with no polling.
  */
-const NEAT_CARD_VERSION = "0.6.11";
+const NEAT_CARD_VERSION = "0.6.12";
 
 const NC_STYLES = `
 :host { display: block; }
@@ -1220,10 +1220,34 @@ class NeatRadiatorsCardEditor extends HTMLElement {
   }
 }
 
-if (!customElements.get("neat-thermostat-card")) customElements.define("neat-thermostat-card", NeatThermostatCard);
-if (!customElements.get("neat-thermostat-card-editor")) customElements.define("neat-thermostat-card-editor", NeatThermostatCardEditor);
-if (!customElements.get("neat-radiators-card")) customElements.define("neat-radiators-card", NeatRadiatorsCard);
-if (!customElements.get("neat-radiators-card-editor")) customElements.define("neat-radiators-card-editor", NeatRadiatorsCardEditor);
+const NC_ELEMENTS = {
+  "neat-thermostat-card": NeatThermostatCard,
+  "neat-thermostat-card-editor": NeatThermostatCardEditor,
+  "neat-radiators-card": NeatRadiatorsCard,
+  "neat-radiators-card-editor": NeatRadiatorsCardEditor,
+};
+
+function ncDefineElements() {
+  // Read window.customElements now, not when the script started: see below.
+  const registry = window.customElements;
+  for (const [tag, cls] of Object.entries(NC_ELEMENTS)) {
+    if (!registry.get(tag)) registry.define(tag, cls);
+  }
+}
+
+// This file is loaded with add_extra_js_url, so from cache it can run before
+// HA's frontend boots. The frontend swaps in its own custom-element registry
+// as it starts, and anything defined in the old one is invisible to Lovelace
+// ("Custom element doesn't exist" until a lucky refresh). So wait until the
+// app element is registered in the current registry, then define there;
+// cards already drawn as errors rebuild themselves once their tag appears.
+(function ncRegisterWhenReady(started = Date.now()) {
+  if (window.customElements.get("home-assistant") || Date.now() - started > 15000) {
+    ncDefineElements();
+    return;
+  }
+  setTimeout(() => ncRegisterWhenReady(started), 25);
+})();
 
 window.customCards = window.customCards || [];
 if (!window.customCards.some((c) => c.type === "neat-thermostat-card")) {
