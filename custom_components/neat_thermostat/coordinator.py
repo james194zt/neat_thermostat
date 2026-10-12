@@ -92,6 +92,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._preheat: dict[str, Any] | None = None
         self._heat_cycle_start: datetime | None = None
         self._heat_cycle_start_temp: float | None = None
+        self._heat_cycle_house_called = False
         self._last_boiler_on = False
         # Hysteresis state: is the house currently calling for heat?
         self._house_calling = False
@@ -383,6 +384,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 warmup=self.intel.state.warmup,
                 outdoor_temp=outdoor,
                 away_eco_active=self._away_eco_active,
+                cycles=self.intel.state.recent_cycles,
                 now=now,
             )
             self._preheat = status
@@ -642,10 +644,19 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if want_heat and not self._last_boiler_on:
             self._heat_cycle_start = now
             self._heat_cycle_start_temp = current
+            self._heat_cycle_house_called = False
+        if want_heat and (self._house_calling or self._safety_active):
+            self._heat_cycle_house_called = True
         elif not want_heat and self._last_boiler_on and self._heat_cycle_start:
-            # A boiler that isn't heating would teach Neat a bogus warm-up rate.
+            # A boiler that isn't heating would teach Neat a bogus warm-up rate,
+            # and a run only the rooms wanted may not reach the house sensor.
             faulty = self.intel.state.heat_check.fault_since is not None
-            if current is not None and self._heat_cycle_start_temp is not None and not faulty:
+            if (
+                current is not None
+                and self._heat_cycle_start_temp is not None
+                and not faulty
+                and self._heat_cycle_house_called
+            ):
                 duration = (now - self._heat_cycle_start).total_seconds() / 60.0
                 self.intel.state.warmup = update_warmup_from_cycle(
                     self.intel.state.warmup,
@@ -774,11 +785,15 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _maybe_learn_schedule(self) -> None:
         if not self.config.auto_schedule:
             return
+        before = len(self.intel.state.adjustments)
         new_schedule, changed = learn_schedule_from_adjustments(
             self.config.schedule,
             self.intel.state,
             auto_schedule=True,
+            eco_temp=self.config.eco_temp,
         )
+        if len(self.intel.state.adjustments) != before:
+            self.intel.async_delay_save()  # old adjustments were forgotten
         if changed:
             _LOGGER.info("Auto-Schedule updated house weekly schedule from adjustments")
             await self.async_save_config({"schedule": new_schedule})
@@ -909,7 +924,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._manual_hold = self._new_hold(temperature)
         self._persist_control()
         record_manual_adjustment(self.intel.state, temperature)
-        note_comfort_setpoint(self.intel.state.leaf, temperature)
+        if temperature > self.config.eco_temp:
+            # Turning down to save energy mustn't drag the comfort baseline down.
+            note_comfort_setpoint(self.intel.state.leaf, temperature)
         self._dirty_intel = True
         self.hass.async_create_task(self._after_manual_setpoint())
 

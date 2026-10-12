@@ -41,9 +41,10 @@ DEFAULT_TARGET_TEMP = 20.0
 DEFAULT_COLD_TOLERANCE = 0.3
 DEFAULT_HOT_TOLERANCE = 0.3
 DEFAULT_MIN_TEMP = 5.0
-# Boiler anti-short-cycle protection (minutes).
-DEFAULT_MIN_ON_MINUTES = 1.0
-DEFAULT_MIN_OFF_MINUTES = 1.0
+# Boiler anti-short-cycle protection (minutes). Boiler makers generally
+# want runs and rests of a few minutes; 1 min let the relay chatter.
+DEFAULT_MIN_ON_MINUTES = 3.0
+DEFAULT_MIN_OFF_MINUTES = 3.0
 DEFAULT_MAX_TEMP = 30.0
 DEFAULT_TRUE_RADIANT = True
 DEFAULT_AUTO_SCHEDULE = False

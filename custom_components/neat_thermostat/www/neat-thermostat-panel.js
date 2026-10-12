@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.14
+ * @version 0.6.15
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.14";
+const PANEL_VERSION = "0.6.15";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -3015,7 +3015,7 @@ class NeatThermostatPanel extends HTMLElement {
         <div class="card">
           ${head(ICONS.sparkle, "intel", "Neat Intelligence", "Learning and comfort features for the house.")}
           ${row("True Radiant", "Starts heating early so it's warm when a schedule block begins, and stops early by the learned radiator coast.", toggle("trueRadiant", cfg.true_radiant !== false))}
-          ${row("Auto-Schedule", "Learns schedule changes from your manual adjustments.", toggle("autoSchedule", cfg.auto_schedule))}
+          ${row("Auto-Schedule", "Adds or adjusts a schedule block when you make the same change at the same time on the same weekday, on two or more different days.", toggle("autoSchedule", cfg.auto_schedule))}
           ${row("Leaf coaching", "Shows the leaf when you're saving energy.", toggle("leafEnabled", cfg.leaf_enabled !== false))}
           ${row("Seasonal Savings", "Gently lowers comfort over 21 days.", toggle("seasonalSavings", cfg.seasonal_savings))}
           ${row("Adaptive Comfort", "Nudges Eco using the outdoor temperature.", toggle("adaptiveComfort", cfg.adaptive_comfort))}
@@ -3033,8 +3033,8 @@ class NeatThermostatPanel extends HTMLElement {
           ${head(ICONS.gauge, "", "Boiler behaviour", "Fine-tuning. The defaults suit most homes.")}
           ${row("Cold tolerance", "Heat starts this far below the target.", num("coldTol", cfg.cold_tolerance ?? 0.3, "°C", 'step="0.1" min="0"'))}
           ${row("Hot tolerance", "Heat stops this far above the target.", num("hotTol", cfg.hot_tolerance ?? 0.3, "°C", 'step="0.1" min="0"'))}
-          ${row("Minimum on time", "Shortest boiler run.", num("minOnMin", cfg.min_on_minutes ?? 1, "min", 'step="1" min="0" max="30"'))}
-          ${row("Minimum off time", "Shortest rest between runs.", num("minOffMin", cfg.min_off_minutes ?? 1, "min", 'step="1" min="0" max="30"'))}
+          ${row("Minimum on time", "Shortest boiler run. 3–5 min suits most boilers.", num("minOnMin", cfg.min_on_minutes ?? 3, "min", 'step="1" min="0" max="30"'))}
+          ${row("Minimum off time", "Shortest rest between runs. 3–5 min suits most boilers.", num("minOffMin", cfg.min_off_minutes ?? 3, "min", 'step="1" min="0" max="30"'))}
         </div>
       </div>
       ${this._renderAlertsCard(cfg, { row, toggle, num, head })}

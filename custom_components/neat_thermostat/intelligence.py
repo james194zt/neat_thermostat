@@ -47,7 +47,15 @@ HEAT_CHECK_COAST_MINUTES = 30
 HEAT_CHECK_SENSOR_STEP_C = 0.1
 HEAT_CHECK_STALE_HOURS = 6
 HEAT_CHECK_MAX_TICK_MINUTES = 5
-INITIAL_LEARNING_DAYS = 7
+# Auto-Schedule: a change must repeat on this many different dates, agree
+# within this spread, and be this recent.
+AUTO_SCHEDULE_MIN_DAYS = 2
+AUTO_SCHEDULE_MAX_SPREAD_C = 1.0
+AUTO_SCHEDULE_KEEP_DAYS = 28
+# Preheat: fit warm-up rate against outdoor temperature from this many runs
+# spanning at least this much outdoor range; otherwise use the plain rate.
+OUTDOOR_FIT_MIN_RUNS = 6
+OUTDOOR_FIT_MIN_SPREAD_C = 4.0
 
 # True Radiant coast: how far the house keeps warming after the boiler stops.
 # Measured after each house run instead of guessed. Starts at one sensor step,
@@ -540,12 +548,59 @@ def next_upcoming_block(
     return best
 
 
+def _cycle_rate(cycle: dict[str, Any]) -> tuple[float, float] | None:
+    """(outdoor °C, warm-up °C/h) of a recorded run that says something about the house."""
+    try:
+        outdoor = float(cycle["outdoor_temp"])
+        rise = float(cycle["end_temp"]) - float(cycle["start_temp"])
+        minutes = float(cycle["duration_minutes"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if minutes < WARMUP_MIN_CYCLE_MINUTES or rise < WARMUP_MIN_RISE_C:
+        return None
+    rate = rise / (minutes / 60.0)
+    if rate < MIN_WARMUP_C_PER_HOUR:
+        return None
+    return outdoor, min(MAX_WARMUP_C_PER_HOUR, rate)
+
+
+def outdoor_rate_factor(cycles: list[dict[str, Any]], outdoor_temp: float | None) -> float:
+    """How much faster/slower the house warms at this outdoor temperature.
+
+    A straight-line fit of measured warm-up rate against outdoor temperature
+    over the recorded runs, as a ratio to the fit at their average outdoor
+    temperature (the learned rate is roughly that average). 1.0 until there
+    are enough runs over a wide enough range of weather; never extrapolated
+    past the weather seen; a fit saying colder weather warms faster is noise.
+    """
+    if outdoor_temp is None:
+        return 1.0
+    points = [p for p in (_cycle_rate(c) for c in cycles) if p is not None]
+    if len(points) < OUTDOOR_FIT_MIN_RUNS:
+        return 1.0
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    if max(xs) - min(xs) < OUTDOOR_FIT_MIN_SPREAD_C:
+        return 1.0
+    mean_x = sum(xs) / len(xs)
+    mean_y = sum(ys) / len(ys)
+    slope = sum((x - mean_x) * (y - mean_y) for x, y in points) / sum(
+        (x - mean_x) ** 2 for x in xs
+    )
+    if slope <= 0:
+        return 1.0
+    x = max(min(xs), min(max(xs), outdoor_temp))
+    predicted = mean_y + slope * (x - mean_x)
+    return max(0.25, predicted / mean_y)
+
+
 def estimate_preheat_minutes(
     *,
     current_temp: float | None,
     target_temp: float,
     warmup: WarmupModel,
     outdoor_temp: float | None = None,
+    cycles: list[dict[str, Any]] | None = None,
 ) -> int:
     """Minutes of preheat needed to reach target from current."""
     if current_temp is None:
@@ -554,12 +609,8 @@ def estimate_preheat_minutes(
     if delta <= 0.2:
         return 0
 
-    rate = warmup.c_per_hour
+    rate = warmup.c_per_hour * outdoor_rate_factor(cycles or [], outdoor_temp)
     if outdoor_temp is not None:
-        if outdoor_temp < 5:
-            rate *= 0.75
-        elif outdoor_temp < 10:
-            rate *= 0.85
         warmup.last_outdoor = outdoor_temp
 
     rate = max(MIN_WARMUP_C_PER_HOUR, min(MAX_WARMUP_C_PER_HOUR, rate))
@@ -576,6 +627,7 @@ def preheat_status(
     warmup: WarmupModel,
     outdoor_temp: float | None,
     away_eco_active: bool,
+    cycles: list[dict[str, Any]] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any] | None:
     """Return preheat status dict when approaching an upcoming block."""
@@ -591,6 +643,7 @@ def preheat_status(
         target_temp=block.temperature,
         warmup=warmup,
         outdoor_temp=outdoor_temp,
+        cycles=cycles,
     )
     if needed <= 0:
         return None
@@ -668,14 +721,18 @@ def record_manual_adjustment(
     return state
 
 
-def _learning_mature(state: IntelligenceState, now: datetime) -> bool:
-    if not state.learning_started_at:
-        return False
-    try:
-        started = datetime.fromisoformat(state.learning_started_at)
-    except ValueError:
-        return False
-    return (now - started).days >= INITIAL_LEARNING_DAYS
+def _hhmm(minute: int) -> str:
+    return f"{minute // 60:02d}:{minute % 60:02d}"
+
+
+def _block_span(raw: dict[str, Any]) -> tuple[int, int]:
+    """(start, end) minutes of a block; an overnight block ends past 24:00."""
+    block = ScheduleBlock.from_dict(raw)
+    start = _minutes(_parse_hhmm(block.start))
+    end = _minutes(_parse_hhmm(block.end))
+    if end <= start:
+        end += 24 * 60
+    return start, end
 
 
 def learn_schedule_from_adjustments(
@@ -683,66 +740,83 @@ def learn_schedule_from_adjustments(
     state: IntelligenceState,
     *,
     auto_schedule: bool,
+    eco_temp: float = DEFAULT_ECO_TEMP,
     now: datetime | None = None,
     default_block_minutes: int = 120,
 ) -> tuple[dict[str, list[dict[str, Any]]], bool]:
-    """Pattern-match recent manual adjustments into schedule setpoints."""
+    """Turn a repeated manual change into a schedule block.
+
+    A pattern is the same half-hour on the same weekday, on at least
+    AUTO_SCHEDULE_MIN_DAYS different dates, with the final setting each date
+    within AUTO_SCHEDULE_MAX_SPREAD_C
+    of each other. Several dial taps on one date count once (the last one
+    wins); changes older than AUTO_SCHEDULE_KEEP_DAYS are forgotten; turning
+    the heat down to Eco or below never creates a comfort block.
+
+    Near an existing block's start only its temperature changes. Elsewhere a
+    new block is added in a gap, ending before the next block; a change in
+    the middle of an existing block is left to the manual hold.
+    """
     if not auto_schedule:
         return schedule, False
     now = now or clock()
-    adjustments = [ManualAdjustment.from_dict(a) for a in state.adjustments]
-    if len(adjustments) < 2:
-        return schedule, False
+    cutoff = now - timedelta(days=AUTO_SCHEDULE_KEEP_DAYS)
+    kept: list[ManualAdjustment] = []
+    for adj in (ManualAdjustment.from_dict(a) for a in state.adjustments):
+        at = _parse_ts(adj.at)
+        if at is not None and at >= cutoff:
+            kept.append(adj)
+    if len(kept) != len(state.adjustments):
+        state.adjustments = [a.to_dict() for a in kept]
 
-    mature = _learning_mature(state, now)
-    required = 3 if mature else 2
+    # (weekday, half-hour) -> {date: last setting that date}
+    buckets: dict[tuple[str, int], dict[str, ManualAdjustment]] = {}
+    for adj in sorted(kept, key=lambda a: a.at):
+        key = (adj.day, adj.minute_of_day // LEARNING_WINDOW_MINUTES)
+        buckets.setdefault(key, {})[adj.at[:10]] = adj
+
     changed = False
     new_schedule = {d: list(schedule.get(d) or []) for d in DAYS}
-
-    buckets: dict[tuple[str, int], list[ManualAdjustment]] = {}
-    for adj in adjustments:
-        bucket = adj.minute_of_day // LEARNING_WINDOW_MINUTES
-        key = (adj.day, bucket)
-        buckets.setdefault(key, []).append(adj)
-
-    for (day, bucket), group in buckets.items():
-        if len(group) < required:
+    for (day, bucket), by_date in sorted(buckets.items()):
+        latest = sorted(by_date.values(), key=lambda a: a.at, reverse=True)[:5]
+        if len(latest) < AUTO_SCHEDULE_MIN_DAYS:
             continue
-        group_sorted = sorted(group, key=lambda a: a.at, reverse=True)
-        temps = [g.temperature for g in group_sorted[:5]]
+        temps = [a.temperature for a in latest]
+        if max(temps) - min(temps) > AUTO_SCHEDULE_MAX_SPREAD_C:
+            continue  # no consistent setting to learn
         avg_temp = round(sum(temps) / len(temps) * 2) / 2.0
-        center_minute = bucket * LEARNING_WINDOW_MINUTES + LEARNING_WINDOW_MINUTES // 2
-        start = f"{center_minute // 60:02d}:{center_minute % 60:02d}"
-        end_minute = min(center_minute + default_block_minutes, 24 * 60 - 1)
-        end = f"{end_minute // 60:02d}:{end_minute % 60:02d}"
+        if avg_temp <= eco_temp:
+            continue
+        center = bucket * LEARNING_WINDOW_MINUTES + LEARNING_WINDOW_MINUTES // 2
 
         blocks = new_schedule[day]
-        merged = False
-        for i, raw in enumerate(blocks):
-            block = ScheduleBlock.from_dict(raw)
-            bstart = _minutes(_parse_hhmm(block.start))
-            if abs(bstart - center_minute) <= LEARNING_WINDOW_MINUTES:
-                if abs(block.temperature - avg_temp) < 0.25 and block.start == start:
-                    merged = True
-                    break
-                blocks[i] = ScheduleBlock(
-                    start=start,
-                    end=block.end if block.end else end,
-                    temperature=avg_temp,
-                    enabled=True,
-                ).to_dict()
+        spans = [
+            (i, *_block_span(raw))
+            for i, raw in enumerate(blocks)
+            if raw.get("enabled", True)
+        ]
+        near = [i for i, s, _e in spans if abs(s - center) <= LEARNING_WINDOW_MINUTES]
+        if near:
+            i = near[0]
+            if abs(float(blocks[i].get("temperature", 0)) - avg_temp) >= 0.25:
+                blocks[i] = {**blocks[i], "temperature": avg_temp}
                 changed = True
-                merged = True
-                break
-        if not merged:
-            blocks.append(
-                ScheduleBlock(
-                    start=start, end=end, temperature=avg_temp, enabled=True
-                ).to_dict()
-            )
-            blocks.sort(key=lambda b: _minutes(_parse_hhmm(b.get("start", "00:00"))))
-            new_schedule[day] = blocks
-            changed = True
+            continue
+        if any(s <= c < e for _i, s, e in spans for c in (center, center + 24 * 60)):
+            continue
+        next_start = min(
+            [s for _i, s, _e in spans if s > center] + [24 * 60 - 1]
+        )
+        end = min(center + default_block_minutes, next_start)
+        if end - center < LEARNING_WINDOW_MINUTES:
+            continue
+        blocks.append(
+            ScheduleBlock(
+                start=_hhmm(center), end=_hhmm(end), temperature=avg_temp, enabled=True
+            ).to_dict()
+        )
+        blocks.sort(key=lambda b: _minutes(_parse_hhmm(b.get("start", "00:00"))))
+        changed = True
 
     return new_schedule, changed
 
