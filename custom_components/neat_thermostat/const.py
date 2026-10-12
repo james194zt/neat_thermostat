@@ -60,8 +60,12 @@ DEFAULT_NO_HEAT_ALERT = True
 DEFAULT_NO_HEAT_ALERT_MINUTES = 60
 # Wall panel hardware model; the panel JS holds each model's screen size.
 DEFAULT_WALL_PANEL_MODEL = "nspanel_pro_gen2"
+# Seasonal Savings: over this many days, take this much off each schedule
+# block every few days, up to the max; blocks the user turns up are left be.
 SEASONAL_SAVINGS_DAYS = 21
-SEASONAL_SAVINGS_OFFSET_C = -0.5
+SEASONAL_STEP_DAYS = 3
+SEASONAL_STEP_C = 0.1
+SEASONAL_MAX_C = 0.5
 ENERGY_HISTORY_KEEP_DAYS = 45
 
 ATTR_WINDOW_OPEN = "window_open"

@@ -23,10 +23,12 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN, PRESET_AWAY, PRESET_BOOST, PRESET_ECO, PRESET_NONE
 from . import intelligence
 from .intelligence import (
+    LONG_PREHEAT_MINUTES,
+    MAX_PREHEAT_MINUTES,
     IntelligenceStore,
     WarmupModel,
     accrue_leaf_minutes,
-    adaptive_eco_offset_c,
+    active_block_key,
     energy_history_payload,
     estimate_time_to_temp_minutes,
     evaluate_leaf,
@@ -37,7 +39,10 @@ from .intelligence import (
     preheat_status,
     presence_anyone_home,
     record_manual_adjustment,
-    seasonal_comfort_offset_c,
+    seasonal_bake,
+    seasonal_offset,
+    seasonal_push_back,
+    seasonal_savings_step,
     stop_seasonal_savings,
     track_heat_interval,
     update_away_tracking,
@@ -105,7 +110,6 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._safety_active = False
         self._time_to_temp: int | None = None
         self._seasonal_info: dict[str, Any] = {"active": False, "offset_c": 0.0}
-        self._adaptive_offset = 0.0
         self._last_logged_setpoint: float | None = None
         self.data = self._snapshot()
 
@@ -246,7 +250,6 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "time_to_temp_minutes": self._time_to_temp,
             "heating_fault": self._heating_fault_info(),
             "seasonal_savings": self._seasonal_info,
-            "adaptive_offset_c": self._adaptive_offset,
             "intelligence": {
                 "true_radiant": self.config.true_radiant,
                 "auto_schedule": self.config.auto_schedule,
@@ -315,30 +318,24 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self.intel.state.away_since != prev_since:
             self._dirty_intel = True
 
-    def _apply_adaptive(self, base: float, *, eco_mode: bool) -> float:
-        if not eco_mode:
-            return base
-        adjusted = base + self._adaptive_offset
+    def _eco_target(self, base: float) -> float:
+        """Eco/Away setpoint, never within 1 °C of the safety floor."""
         floor = float(self.config.safety_min_temp) + 1.0
-        return max(floor, round(adjusted, 1))
-
-    def _apply_seasonal_comfort(self, base: float, *, comfort: bool) -> float:
-        if not comfort:
-            return base
-        offset = float(self._seasonal_info.get("offset_c") or 0.0)
-        return round(base + offset, 1)
+        return max(floor, round(base, 1))
 
     def effective_main_target(self) -> tuple[float, bool]:
         """Return (target_temp, schedule_or_preheat_active)."""
         outdoor = self._state_float(self.config.outdoor_temp_sensor)
-        self._adaptive_offset = adaptive_eco_offset_c(
-            adaptive_comfort=self.config.adaptive_comfort,
-            outdoor_temp=outdoor,
+        seasonal = self.intel.state.seasonal
+        # Seasonal Savings only lowers schedule blocks; it needs the schedule.
+        self._seasonal_info, stepped = seasonal_savings_step(
+            seasonal,
+            self.config.schedule,
+            enabled=self.config.seasonal_savings and self.config.schedule_enabled,
+            now=self._now(),
         )
-        self._seasonal_info = seasonal_comfort_offset_c(
-            self.intel.state.seasonal,
-            seasonal_savings_enabled=self.config.seasonal_savings,
-        )
+        if stepped:
+            self._dirty_intel = True
 
         self._preheat = None
         self._house_comfort = True
@@ -347,15 +344,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._house_comfort = False
         if self._away_eco_active or self._main_preset == PRESET_AWAY:
-            return (
-                self._apply_adaptive(self.config.away_temp, eco_mode=True),
-                False,
-            )
+            return self._eco_target(self.config.away_temp), False
         if self._main_preset == PRESET_ECO:
-            return (
-                self._apply_adaptive(self.config.eco_temp, eco_mode=True),
-                False,
-            )
+            return self._eco_target(self.config.eco_temp), False
 
         if self.config.schedule_enabled and self._main_preset == PRESET_NONE:
             now = self._now()
@@ -374,7 +365,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             if active:
                 self._house_comfort = True
-                return self._apply_seasonal_comfort(temp, comfort=True), True
+                key = active_block_key(self.config.schedule, now)
+                return round(temp + seasonal_offset(seasonal, key), 1), True
 
             status = preheat_status(
                 self.config.schedule,
@@ -385,27 +377,50 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 outdoor_temp=outdoor,
                 away_eco_active=self._away_eco_active,
                 cycles=self.intel.state.recent_cycles,
+                max_minutes=(
+                    LONG_PREHEAT_MINUTES if self.config.adaptive_comfort else MAX_PREHEAT_MINUTES
+                ),
+                offsets=seasonal.offsets if seasonal.started_at else None,
                 now=now,
             )
             self._preheat = status
             if status and status.get("preheating"):
                 self._house_comfort = True
-                return (
-                    self._apply_seasonal_comfort(
-                        float(status["temperature"]), comfort=True
-                    ),
-                    True,
-                )
+                return float(status["temperature"]), True
             # Schedule eco fallback
-            return (
-                self._apply_adaptive(float(temp), eco_mode=True),
-                False,
-            )
+            return self._eco_target(float(temp)), False
 
         self._house_comfort = True
-        return (
-            self._apply_seasonal_comfort(self._main_target, comfort=True),
-            False,
+        return self._main_target, False
+
+    def _seasonal_block_now(self) -> str | None:
+        """The schedule block Seasonal Savings is lowering right now (running or preheating)."""
+        if not self.intel.state.seasonal.started_at or self._main_preset != PRESET_NONE:
+            return None
+        key = active_block_key(self.config.schedule, self._now())
+        if key is None and (self._preheat or {}).get("preheating"):
+            key = self._preheat.get("block_key")
+        return key
+
+    async def _async_finish_seasonal(self) -> None:
+        """Seasonal Savings ran its course: keep the result in the schedule."""
+        seasonal = self.intel.state.seasonal
+        schedule, count = seasonal_bake(self.config.schedule, seasonal)
+        lowest = min(seasonal.offsets.values(), default=0.0)
+        kept = len(seasonal.kept)
+        await self.async_save_config({"schedule": schedule, "seasonal_savings": False})
+        message = (
+            f"Seasonal Savings has finished. {count} schedule block"
+            f"{'' if count == 1 else 's'} now run up to {abs(lowest):.1f}°C cooler"
+            + (f"; {kept} you turned up were eased off and left there" if kept else "")
+            + ". The new temperatures are in your schedule — change them there any time."
+        )
+        _LOGGER.info("Neat: %s", message)
+        persistent_notification.async_create(
+            self.hass,
+            message,
+            title="Neat: Seasonal Savings finished",
+            notification_id=f"{DOMAIN}_seasonal_{self.entry.entry_id}",
         )
 
     @staticmethod
@@ -447,7 +462,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if preset == PRESET_BOOST:
             return room.boost_temp
         if preset == PRESET_ECO or self._away_eco_active:
-            return self._apply_adaptive(room.eco_temp, eco_mode=True)
+            return self._eco_target(room.eco_temp)
         if not self.config.schedule_enabled:
             return float(st.get("target", room.target_temp))
         # Rooms follow the house schedule: own comfort temp while the house is
@@ -457,7 +472,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return hold
         if self._house_comfort:
             return float(room.target_temp)
-        return self._apply_adaptive(room.eco_temp, eco_mode=True)
+        return self._eco_target(room.eco_temp)
 
     def room_hold_until(self, room: RoomConfig) -> str | None:
         """When a manual room setpoint hands back to the schedule (ISO), if one is in force."""
@@ -801,6 +816,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         self._refresh_away()
         self.effective_main_target()
+        if self._seasonal_info.get("finished"):
+            await self._async_finish_seasonal()
+            self.effective_main_target()
 
         for room in self.config.rooms:
             needs = self.room_needs_heat(room)
@@ -917,6 +935,11 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @callback
     def set_main_temperature(self, temperature: float) -> None:
+        before, _ = self.effective_main_target()
+        if temperature > before and seasonal_push_back(
+            self.intel.state.seasonal, self._seasonal_block_now()
+        ):
+            _LOGGER.info("Neat: Seasonal Savings eases off this block (turned up)")
         self._main_target = temperature
         self._main_preset = PRESET_NONE
         if self.config.schedule_enabled:

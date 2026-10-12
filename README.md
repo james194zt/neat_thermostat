@@ -98,18 +98,18 @@ Intelligence applies to **`climate.neat_home` / the boiler**, not per-room TRV l
 
 | Feature | Neat setting | Behaviour |
 |--------------|--------------|-----------|
-| **True Radiant / Early-On** | Settings → True Radiant (default On) | Learns °C/h warm-up; preheats so the house hits the scheduled temp *at* block start; early-off to limit overshoot. |
-| **Auto-Schedule** | Settings → Auto-Schedule (default Off) | Manual Home setpoint changes learn into schedule blocks. |
+| **True Radiant / Early-On** | Settings → True Radiant (default On) | Learns °C/h warm-up; preheats so the house hits the scheduled temp *at* block start; stops early by the measured radiator coast to limit overshoot. |
+| **Auto-Schedule** | Settings → Auto-Schedule (default Off) | The same change at the same half-hour on the same weekday, on 2+ different days (within 1°C, last 4 weeks), becomes a schedule block or adjusts one. |
 | **Home/Away Assist** | Presence entities + Away delay | Away Eco when **all** presence entities are away, after the delay. |
 | **Leaf** | Settings → Leaf coaching (default On) | Live Leaf when efficient; earned Leaf hours only accumulate. |
 | **Safety Temperatures** | Settings → Safety (default On, 7°C) | Forces heat if the house sensor hits the min floor (even Away/Off/summer). |
 | **Time-to-Temp** | Automatic from warm-up model | ETA on Overview dial and NSPanel while heating. |
 | **Energy History** | Energy tab | 24h heat segments + setpoint bubbles + Leaf per day. |
-| **Seasonal Savings** | Settings → Seasonal Savings | Ramps comfort −0.5°C over 21 days; Stop from Energy banner. |
-| **Adaptive Comfort** | Settings → Adaptive Comfort | Outdoor bands nudge Eco/Away (±0.5°C). Needs outdoor sensor. |
+| **Seasonal Savings** | Settings → Seasonal Savings | Over 21 days lowers each schedule block 0.1°C every 3 days (max 0.5°C); a block you turn up eases off and is left alone; at the end the result is saved into the schedule. Stop (Energy banner) puts it back. |
+| **Cold-weather preheat** | Settings → Cold-weather preheat | Lets preheat start up to 4 h before a block (normally 2 h) when the house warms slowly. |
 | **Temperature Lock** | Wall PIN + per-panel lock | NSPanel only; HA sidebar stays unlocked. |
 
-Optional: set an **outdoor temp sensor** for preheat scaling and Adaptive Comfort.
+Optional: set an **outdoor temp sensor** so preheat learns (from your own heating runs) how much cold weather slows warming up.
 
 ## Migrating from Better Thermostat
 

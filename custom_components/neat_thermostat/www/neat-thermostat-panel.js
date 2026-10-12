@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.15
+ * @version 0.6.16
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.15";
+const PANEL_VERSION = "0.6.16";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -1383,10 +1383,7 @@ class NeatThermostatPanel extends HTMLElement {
     if (live.window_open) pill("warn", "Window open");
     if (live.summer_mode) pill("warn", "Summer mode");
     if (preset && preset !== "none" && !live.away) pill("info", preset[0].toUpperCase() + preset.slice(1));
-    if (Number(live.adaptive_offset_c)) {
-      const off = Number(live.adaptive_offset_c);
-      pill("info", `Adaptive ${off > 0 ? "+" : ""}${off}°C`);
-    } else if (intel.true_radiant && intel.warmup_c_per_hour != null) {
+    if (intel.true_radiant && intel.warmup_c_per_hour != null) {
       pill("info", `True Radiant · ${intel.warmup_c_per_hour}°C/h`);
     }
     return pills.join("");
@@ -1759,13 +1756,22 @@ class NeatThermostatPanel extends HTMLElement {
   _renderEnergy() {
     const hist = this._energy?.history?.days || [];
     const seasonal = this._energy?.seasonal_savings || this._live().seasonal_savings || {};
+    const seasonalSummary = (s) => {
+      const days = Number(s.days_remaining ?? 0);
+      const lowered = Number(s.blocks_lowered ?? 0);
+      const kept = Number(s.blocks_kept ?? 0);
+      const parts = [`${days} day${days === 1 ? "" : "s"} to go`];
+      parts.push(lowered ? `${lowered} schedule block${lowered === 1 ? "" : "s"} up to ${Math.abs(Number(s.offset_c ?? 0)).toFixed(1)}°C cooler` : "starting");
+      if (kept) parts.push(`${kept} eased off because you turned ${kept === 1 ? "it" : "them"} up`);
+      return parts.join(" · ");
+    };
     const banner = seasonal.active
       ? `<div class="eh-banner">
           <div class="eh-copy">
             <strong>Winter Seasonal Savings</strong>
-            <span class="muted">${this._escape(seasonal.days_remaining ?? 0)} days to go · comfort offset ${this._escape(seasonal.offset_c ?? 0)}°C</span>
+            <span class="muted">${this._escape(seasonalSummary(seasonal))}</span>
           </div>
-          <button type="button" class="secondary" id="stopSeasonal">Stop</button>
+          <button type="button" class="secondary" id="stopSeasonal" title="Stop and put the schedule temperatures back">Stop</button>
         </div>`
       : "";
     let lastMonth = null;
@@ -2987,7 +2993,7 @@ class NeatThermostatPanel extends HTMLElement {
         <div class="set-fields">
           ${field("Boiler relay", "heater", "Changing it turns the old relay off first.")}
           ${field("House temperature", "temperature_sensor", "The temperature Neat heats the house to.")}
-          ${field("Outdoor temperature", "outdoor_temp_sensor", "Optional — used by Adaptive Comfort.")}
+          ${field("Outdoor temperature", "outdoor_temp_sensor", "Optional — lets preheat learn how cold weather slows warming up.")}
         </div>
       </div>
       ${this._renderRoomsCard()}
@@ -3017,8 +3023,8 @@ class NeatThermostatPanel extends HTMLElement {
           ${row("True Radiant", "Starts heating early so it's warm when a schedule block begins, and stops early by the learned radiator coast.", toggle("trueRadiant", cfg.true_radiant !== false))}
           ${row("Auto-Schedule", "Adds or adjusts a schedule block when you make the same change at the same time on the same weekday, on two or more different days.", toggle("autoSchedule", cfg.auto_schedule))}
           ${row("Leaf coaching", "Shows the leaf when you're saving energy.", toggle("leafEnabled", cfg.leaf_enabled !== false))}
-          ${row("Seasonal Savings", "Gently lowers comfort over 21 days.", toggle("seasonalSavings", cfg.seasonal_savings))}
-          ${row("Adaptive Comfort", "Nudges Eco using the outdoor temperature.", toggle("adaptiveComfort", cfg.adaptive_comfort))}
+          ${row("Seasonal Savings", "For 3 weeks, lowers each schedule block 0.1°C every 3 days (up to 0.5°C). Turn the heat up during a block and that block eases off and is left alone. At the end the new temperatures are saved into your schedule. Needs the schedule on.", toggle("seasonalSavings", cfg.seasonal_savings))}
+          ${row("Cold-weather preheat", "Lets True Radiant start warming up to 4 hours before a schedule block (normally 2) when the house is slow to heat, so it's still warm on time. Cheaper than keeping the house warmer overnight.", toggle("adaptiveComfort", cfg.adaptive_comfort))}
           ${this._warmupRow(row)}
         </div>
       </div>

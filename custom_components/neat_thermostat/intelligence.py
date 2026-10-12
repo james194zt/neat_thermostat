@@ -14,8 +14,10 @@ from .const import (
     DEFAULT_ECO_TEMP,
     DOMAIN,
     ENERGY_HISTORY_KEEP_DAYS,
+    SEASONAL_MAX_C,
     SEASONAL_SAVINGS_DAYS,
-    SEASONAL_SAVINGS_OFFSET_C,
+    SEASONAL_STEP_C,
+    SEASONAL_STEP_DAYS,
 )
 from .models import ScheduleBlock
 from .schedule import _minutes, _parse_hhmm, day_key
@@ -33,6 +35,9 @@ DEFAULT_WARMUP_C_PER_HOUR = 1.5
 MIN_WARMUP_C_PER_HOUR = 0.4
 MAX_WARMUP_C_PER_HOUR = 4.0
 MAX_PREHEAT_MINUTES = 120
+# With Adaptive Comfort on, a slow (cold-weather) warm-up may start this early:
+# cheaper than holding the house warmer all night, and just as warm on time.
+LONG_PREHEAT_MINUTES = 240
 MIN_PREHEAT_MINUTES = 5
 WARMUP_MIN_CYCLE_MINUTES = 15
 WARMUP_MIN_RISE_C = 0.3
@@ -217,18 +222,31 @@ class EnergyHistoryState:
 
 @dataclass
 class SeasonalSavingsState:
-    """Ramp start for Seasonal Savings comfort offset."""
+    """Seasonal Savings run: per-block reductions and the blocks the user kept."""
 
     started_at: str | None = None
+    last_step_at: str | None = None
+    # "mon|06:30" -> °C taken off that schedule block (negative).
+    offsets: dict[str, float] = field(default_factory=dict)
+    # Blocks the user turned back up: never lowered further this run.
+    kept: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"started_at": self.started_at}
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> SeasonalSavingsState:
         if not data:
             return cls()
-        return cls(started_at=data.get("started_at"))
+        try:
+            return cls(
+                started_at=data.get("started_at"),
+                last_step_at=data.get("last_step_at"),
+                offsets={str(k): float(v) for k, v in (data.get("offsets") or {}).items()},
+                kept=[str(k) for k in (data.get("kept") or [])],
+            )
+        except (TypeError, ValueError, AttributeError):
+            return cls()
 
 
 @dataclass
@@ -601,6 +619,7 @@ def estimate_preheat_minutes(
     warmup: WarmupModel,
     outdoor_temp: float | None = None,
     cycles: list[dict[str, Any]] | None = None,
+    max_minutes: int = MAX_PREHEAT_MINUTES,
 ) -> int:
     """Minutes of preheat needed to reach target from current."""
     if current_temp is None:
@@ -615,7 +634,7 @@ def estimate_preheat_minutes(
 
     rate = max(MIN_WARMUP_C_PER_HOUR, min(MAX_WARMUP_C_PER_HOUR, rate))
     minutes = int((delta / rate) * 60) + 5
-    return max(0, min(MAX_PREHEAT_MINUTES, minutes))
+    return max(0, min(max_minutes, minutes))
 
 
 def preheat_status(
@@ -628,9 +647,15 @@ def preheat_status(
     outdoor_temp: float | None,
     away_eco_active: bool,
     cycles: list[dict[str, Any]] | None = None,
+    max_minutes: int = MAX_PREHEAT_MINUTES,
+    offsets: dict[str, float] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any] | None:
-    """Return preheat status dict when approaching an upcoming block."""
+    """Return preheat status dict when approaching an upcoming block.
+
+    ``offsets`` are Seasonal Savings reductions by block key; the block's
+    temperature is aimed for with its reduction applied.
+    """
     if not true_radiant or not schedule_enabled or away_eco_active:
         return None
     now = now or clock()
@@ -638,29 +663,25 @@ def preheat_status(
     if upcoming is None:
         return None
     block, start_dt = upcoming
+    key = schedule_block_key(DAYS[start_dt.weekday()], block.start)
+    target = round(block.temperature + (offsets or {}).get(key, 0.0), 1)
     needed = estimate_preheat_minutes(
         current_temp=current_temp,
-        target_temp=block.temperature,
+        target_temp=target,
         warmup=warmup,
         outdoor_temp=outdoor_temp,
         cycles=cycles,
+        max_minutes=max_minutes,
     )
     if needed <= 0:
         return None
     preheat_start = start_dt - timedelta(minutes=needed)
-    if now < preheat_start:
-        return {
-            "preheating": False,
-            "temperature": block.temperature,
-            "block_start": start_dt.strftime("%H:%M"),
-            "preheat_start": preheat_start.strftime("%H:%M"),
-            "preheat_minutes": needed,
-        }
     if now >= start_dt:
         return None
     return {
-        "preheating": True,
-        "temperature": block.temperature,
+        "preheating": now >= preheat_start,
+        "temperature": target,
+        "block_key": key,
         "block_start": start_dt.strftime("%H:%M"),
         "preheat_start": preheat_start.strftime("%H:%M"),
         "preheat_minutes": needed,
@@ -1069,59 +1090,125 @@ def estimate_time_to_temp_minutes(
     return max(1, min(24 * 60, minutes))
 
 
-def adaptive_eco_offset_c(
-    *,
-    adaptive_comfort: bool,
-    outdoor_temp: float | None,
-) -> float:
-    """Live Eco/Away offset from outdoor bands (heat-only)."""
-    if not adaptive_comfort or outdoor_temp is None:
-        return 0.0
-    if outdoor_temp >= 12.0:
-        return -0.5
-    if outdoor_temp <= 2.0:
-        return 0.5
-    return 0.0
+def schedule_block_key(day: str, start: str) -> str:
+    """Stable name for a schedule block: weekday + start time."""
+    return f"{day}|{start}"
 
 
-def seasonal_comfort_offset_c(
-    seasonal: SeasonalSavingsState,
-    *,
-    seasonal_savings_enabled: bool,
-    now: datetime | None = None,
-) -> dict[str, Any]:
-    """Ramp comfort offset 0 → SEASONAL_SAVINGS_OFFSET_C over SEASONAL_SAVINGS_DAYS."""
+def active_block_key(
+    schedule: dict[str, list[dict[str, Any]]], now: datetime | None = None
+) -> str | None:
+    """Key of the schedule block running at ``now`` (same rules as schedule.active_block)."""
     now = now or clock()
-    if not seasonal_savings_enabled:
-        return {
-            "active": False,
-            "offset_c": 0.0,
-            "days_elapsed": 0,
-            "days_remaining": SEASONAL_SAVINGS_DAYS,
-            "started_at": None,
-        }
-    if seasonal.started_at is None:
-        seasonal.started_at = now.isoformat()
-    try:
-        started = datetime.fromisoformat(seasonal.started_at)
-    except ValueError:
+    day = day_key(now)
+    current = _minutes(now.time())
+    for raw in schedule.get(day) or []:
+        block = ScheduleBlock.from_dict(raw)
+        if not block.enabled:
+            continue
+        start = _minutes(_parse_hhmm(block.start))
+        end = _minutes(_parse_hhmm(block.end))
+        inside = start <= current < end if start <= end else (current >= start or current < end)
+        if inside:
+            return schedule_block_key(day, block.start)
+    return None
+
+
+def _enabled_block_keys(schedule: dict[str, list[dict[str, Any]]]) -> list[str]:
+    return [
+        schedule_block_key(day, str(raw.get("start", "06:00")))
+        for day in DAYS
+        for raw in schedule.get(day) or []
+        if raw.get("enabled", True)
+    ]
+
+
+def seasonal_savings_step(
+    seasonal: SeasonalSavingsState,
+    schedule: dict[str, list[dict[str, Any]]],
+    *,
+    enabled: bool,
+    now: datetime | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """Advance Seasonal Savings; return (status, state_changed).
+
+    Every SEASONAL_STEP_DAYS (starting on day one) each schedule block the
+    user hasn't pushed back on loses SEASONAL_STEP_C, down to
+    SEASONAL_MAX_C. ``status["finished"]`` is set once SEASONAL_SAVINGS_DAYS
+    have passed: the caller then writes the result into the schedule.
+    """
+    now = now or clock()
+    if not enabled:
+        return {"active": False, "offset_c": 0.0, "days_remaining": SEASONAL_SAVINGS_DAYS}, False
+    changed = False
+    started = _parse_ts(seasonal.started_at)
+    if started is None:
         seasonal.started_at = now.isoformat()
         started = now
+        changed = True
+    last_step = _parse_ts(seasonal.last_step_at)
     elapsed = max(0, (now.date() - started.date()).days)
-    progress = min(1.0, elapsed / float(SEASONAL_SAVINGS_DAYS))
-    offset = round(SEASONAL_SAVINGS_OFFSET_C * progress, 2)
-    remaining = max(0, SEASONAL_SAVINGS_DAYS - elapsed)
+    finished = elapsed >= SEASONAL_SAVINGS_DAYS
+    if not finished and (
+        last_step is None or now - last_step >= timedelta(days=SEASONAL_STEP_DAYS)
+    ):
+        for key in _enabled_block_keys(schedule):
+            if key in seasonal.kept:
+                continue
+            seasonal.offsets[key] = round(
+                max(-SEASONAL_MAX_C, seasonal.offsets.get(key, 0.0) - SEASONAL_STEP_C), 2
+            )
+        seasonal.last_step_at = now.isoformat()
+        changed = True
+    lowered = [v for v in seasonal.offsets.values() if v < 0]
     return {
         "active": True,
-        "offset_c": offset,
+        "finished": finished,
+        "offset_c": min(lowered) if lowered else 0.0,
+        "blocks_lowered": len(lowered),
+        "blocks_kept": len(seasonal.kept),
         "days_elapsed": elapsed,
-        "days_remaining": remaining,
+        "days_remaining": max(0, SEASONAL_SAVINGS_DAYS - elapsed),
         "started_at": seasonal.started_at,
-    }
+    }, changed
+
+
+def seasonal_offset(seasonal: SeasonalSavingsState, key: str | None) -> float:
+    if not key or seasonal.started_at is None:
+        return 0.0
+    return float(seasonal.offsets.get(key, 0.0))
+
+
+def seasonal_push_back(seasonal: SeasonalSavingsState, key: str | None) -> bool:
+    """The user turned a lowered block up: give one step back and stop lowering it."""
+    if not key or seasonal.started_at is None or key in seasonal.kept:
+        return False
+    seasonal.kept.append(key)
+    offset = seasonal.offsets.get(key, 0.0)
+    seasonal.offsets[key] = round(min(0.0, offset + SEASONAL_STEP_C), 2)
+    return True
+
+
+def seasonal_bake(
+    schedule: dict[str, list[dict[str, Any]]], seasonal: SeasonalSavingsState
+) -> tuple[dict[str, list[dict[str, Any]]], int]:
+    """Write the run's reductions into the schedule; returns (schedule, blocks changed)."""
+    new_schedule = {d: [dict(b) for b in schedule.get(d) or []] for d in DAYS}
+    count = 0
+    for day, blocks in new_schedule.items():
+        for block in blocks:
+            offset = seasonal.offsets.get(schedule_block_key(day, str(block.get("start", "06:00"))), 0.0)
+            if offset < 0 and block.get("enabled", True):
+                block["temperature"] = round(float(block.get("temperature", 20.0)) + offset, 1)
+                count += 1
+    return new_schedule, count
 
 
 def stop_seasonal_savings(seasonal: SeasonalSavingsState) -> SeasonalSavingsState:
     seasonal.started_at = None
+    seasonal.last_step_at = None
+    seasonal.offsets = {}
+    seasonal.kept = []
     return seasonal
 
 
