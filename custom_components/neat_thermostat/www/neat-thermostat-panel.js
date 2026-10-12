@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.12
+ * @version 0.6.13
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.12";
+const PANEL_VERSION = "0.6.13";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -456,6 +456,7 @@ button.secondary {
 button.danger {
   background: color-mix(in srgb, var(--nt-red) 18%, transparent); color: var(--nt-red);
 }
+button.primary:disabled, button.secondary:disabled, button.danger:disabled { opacity: 0.45; cursor: default; }
 button.linkish {
   background: transparent; color: var(--secondary-text-color); padding: 8px 10px;
   letter-spacing: 0.06em; text-transform: uppercase; font-size: 12px;
@@ -1575,7 +1576,7 @@ class NeatThermostatPanel extends HTMLElement {
             ${feature("Leaf coaching", "Shows the leaf when you're saving energy", onOff(intel.leaf_enabled !== false))}
             ${feature("Away delay", "Switches to Eco once nobody's been home this long", `${this._escape(intel.away_delay_minutes ?? 20)} min`)}
             ${feature("Warm-up rate", "How fast the house heats, used to time preheating",
-              `${rate != null ? `${this._escape(rate)} °C/h` : "—"}<small>${samples ? `${samples} sample${samples === 1 ? "" : "s"} · <button type="button" class="link-btn" id="resetWarmup" title="Forget the learned rate, e.g. after a boiler fault">Reset</button>` : "Default · still learning"}</small>`)}
+              `${rate != null ? `${this._escape(rate)} °C/h` : "—"}<small>${samples ? `${samples} sample${samples === 1 ? "" : "s"}` : "Default · still learning"}</small>`)}
           </div>
         </div>
       </div>
@@ -3014,6 +3015,7 @@ class NeatThermostatPanel extends HTMLElement {
           ${row("Leaf coaching", "Shows the leaf when you're saving energy.", toggle("leafEnabled", cfg.leaf_enabled !== false))}
           ${row("Seasonal Savings", "Gently lowers comfort over 21 days.", toggle("seasonalSavings", cfg.seasonal_savings))}
           ${row("Adaptive Comfort", "Nudges Eco using the outdoor temperature.", toggle("adaptiveComfort", cfg.adaptive_comfort))}
+          ${this._warmupRow(row)}
         </div>
       </div>
       <div class="ov-grid">
@@ -3037,6 +3039,21 @@ class NeatThermostatPanel extends HTMLElement {
         <button class="primary" id="saveSettings">Save settings</button>
       </div>
     `;
+  }
+
+  /** Learned warm-up rate with a Reset (e.g. after it learned from a faulty boiler). */
+  _warmupRow(row) {
+    const intel = this._live().intelligence || {};
+    const rate = intel.warmup_c_per_hour;
+    const samples = Number(intel.warmup_samples ?? 0);
+    const learned = samples
+      ? `Learned ${rate} °C/h from ${samples} heat run${samples === 1 ? "" : "s"}.`
+      : `Using the default ${rate ?? 1.5} °C/h until it has learned from a few heat runs.`;
+    return row(
+      "Warm-up rate",
+      `${this._escape(learned)} Times preheating. Reset it if it was learned while the heating was faulty.`,
+      `<button type="button" class="secondary" id="resetWarmup" ${samples ? "" : "disabled"}>Reset</button>`
+    );
   }
 
   /** Notify services that can reach a person (phones etc.), plus any saved ones that have gone. */
@@ -3163,7 +3180,15 @@ class NeatThermostatPanel extends HTMLElement {
       if (!window.confirm("Forget the learned warm-up rate? Neat goes back to its default and learns again from the next heat runs.")) return;
       try {
         await this._ws("neat_thermostat/reset_warmup");
-        await this._loadState();
+        // Update just this row: a full redraw would drop unsaved Settings edits.
+        const live = this._state?.live;
+        if (live) live.intelligence = { ...(live.intelligence || {}), warmup_c_per_hour: 1.5, warmup_samples: 0 };
+        const btn = this.shadowRoot.getElementById("resetWarmup");
+        const html = this._warmupRow((name, desc, control) => `<div class="set-row-desc">${desc}</div>${control}`);
+        const tmp = document.createElement("div");
+        tmp.innerHTML = html;
+        btn?.closest(".set-row")?.querySelector(".set-row-desc")?.replaceWith(tmp.querySelector(".set-row-desc"));
+        if (btn) btn.disabled = true;
         this._showToast("Warm-up rate reset");
       } catch (e) {
         this._showToast(`Couldn't reset it: ${e?.message || e}`, "err");
