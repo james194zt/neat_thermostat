@@ -41,6 +41,7 @@ def async_register_ws_handlers(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_energy_history)
     websocket_api.async_register_command(hass, ws_verify_wall_pin)
     websocket_api.async_register_command(hass, ws_stop_seasonal_savings)
+    websocket_api.async_register_command(hass, ws_reset_warmup)
     websocket_api.async_register_command(hass, ws_kiosk_status)
     websocket_api.async_register_command(hass, ws_kiosk_apply)
     websocket_api.async_register_command(hass, ws_kiosk_read)
@@ -100,6 +101,9 @@ async def ws_get_state(
         vol.Optional("seasonal_savings"): cv.boolean,
         vol.Optional("adaptive_comfort"): cv.boolean,
         vol.Optional("wall_pin"): cv.string,
+        vol.Optional("no_heat_alert"): cv.boolean,
+        vol.Optional("no_heat_alert_minutes"): vol.All(vol.Coerce(int), vol.Range(min=20, max=240)),
+        vol.Optional("alert_notify"): [cv.string],
         vol.Optional("kiosk_defaults"): dict,
         vol.Optional("kiosk_auto_sync"): cv.boolean,
     }
@@ -140,11 +144,18 @@ async def ws_update_settings(
             "seasonal_savings",
             "adaptive_comfort",
             "wall_pin",
+            "no_heat_alert",
+            "no_heat_alert_minutes",
+            "alert_notify",
             "kiosk_defaults",
             "kiosk_auto_sync",
         )
         if k in msg
     }
+    if "alert_notify" in updates:
+        updates["alert_notify"] = [
+            s.removeprefix("notify.") for s in updates["alert_notify"] if s.strip()
+        ]
     if "kiosk_defaults" in updates:
         updates["kiosk_defaults"] = kiosk.clean_settings(updates["kiosk_defaults"])
     if "heater" in updates and updates["heater"].split(".", 1)[0] not in HEATER_DOMAINS:
@@ -394,6 +405,24 @@ async def ws_stop_seasonal_savings(
         return
     config = await coordinator.async_stop_seasonal_savings()
     connection.send_result(msg["id"], {"config": config.to_dict()})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "neat_thermostat/reset_warmup",
+        vol.Optional("entry_id"): cv.string,
+    }
+)
+@websocket_api.async_response
+async def ws_reset_warmup(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
+        return
+    await coordinator.async_reset_warmup()
+    connection.send_result(msg["id"], {"ok": True})
 
 
 @websocket_api.websocket_command(

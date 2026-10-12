@@ -54,6 +54,9 @@ DEFAULT_SAFETY_MIN_TEMP = 7.0
 DEFAULT_SEASONAL_SAVINGS = False
 DEFAULT_ADAPTIVE_COMFORT = False
 DEFAULT_WALL_PIN = ""
+# Alert when this many boiler-on minutes haven't warmed the house.
+DEFAULT_NO_HEAT_ALERT = True
+DEFAULT_NO_HEAT_ALERT_MINUTES = 60
 # Wall panel hardware model; the panel JS holds each model's screen size.
 DEFAULT_WALL_PANEL_MODEL = "nspanel_pro_gen2"
 SEASONAL_SAVINGS_DAYS = 21

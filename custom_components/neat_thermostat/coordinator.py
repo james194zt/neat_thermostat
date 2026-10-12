@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_ON, STATE_OPEN
 from homeassistant.core import HomeAssistant, callback
@@ -23,6 +24,7 @@ from .const import DOMAIN, PRESET_AWAY, PRESET_BOOST, PRESET_ECO, PRESET_NONE
 from . import intelligence
 from .intelligence import (
     IntelligenceStore,
+    WarmupModel,
     accrue_leaf_minutes,
     adaptive_eco_offset_c,
     energy_history_payload,
@@ -39,6 +41,7 @@ from .intelligence import (
     stop_seasonal_savings,
     track_heat_interval,
     update_away_tracking,
+    update_heat_check,
     update_warmup_from_cycle,
 )
 from .control import boiler_cycle_guard, house_calls_for_heat, next_schedule_change, room_calls_for_heat
@@ -207,6 +210,13 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._dirty_intel = False
         return await self.async_save_config({"seasonal_savings": False})
 
+    async def async_reset_warmup(self) -> None:
+        """Forget the learned warm-up rate (e.g. it was learned while the boiler was faulty)."""
+        self.intel.state.warmup = WarmupModel()
+        self.intel.state.recent_cycles = []
+        await self.intel.async_save()
+        await self.async_request_refresh()
+
     def energy_history(self, days: int = 31) -> dict[str, Any]:
         return energy_history_payload(
             self.intel.state.energy,
@@ -231,6 +241,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "leaf": self._leaf,
             "safety_active": self._safety_active,
             "time_to_temp_minutes": self._time_to_temp,
+            "heating_fault": self._heating_fault_info(),
             "seasonal_savings": self._seasonal_info,
             "adaptive_offset_c": self._adaptive_offset,
             "intelligence": {
@@ -244,6 +255,16 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "seasonal_savings": self.config.seasonal_savings,
                 "adaptive_comfort": self.config.adaptive_comfort,
             },
+        }
+
+    def _heating_fault_info(self) -> dict[str, Any] | None:
+        check = self.intel.state.heat_check
+        if not check.fault_since:
+            return None
+        return {
+            "since": check.fault_since,
+            "on_minutes": round(check.on_minutes),
+            "rise_c": round(check.total_rise(), 1),
         }
 
     def _state_float(self, entity_id: str | None) -> float | None:
@@ -618,7 +639,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._heat_cycle_start = now
             self._heat_cycle_start_temp = current
         elif not want_heat and self._last_boiler_on and self._heat_cycle_start:
-            if current is not None and self._heat_cycle_start_temp is not None:
+            # A boiler that isn't heating would teach Neat a bogus warm-up rate.
+            faulty = self.intel.state.heat_check.fault_since is not None
+            if current is not None and self._heat_cycle_start_temp is not None and not faulty:
                 duration = (now - self._heat_cycle_start).total_seconds() / 60.0
                 self.intel.state.warmup = update_warmup_from_cycle(
                     self.intel.state.warmup,
@@ -642,6 +665,82 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._heat_cycle_start = None
             self._heat_cycle_start_temp = None
         self._last_boiler_on = want_heat
+
+    async def _async_check_warming(self, house_heating: bool) -> None:
+        """Flag (and notify) when boiler time isn't warming the house."""
+        check = self.intel.state.heat_check
+        before = {k: v for k, v in check.to_dict().items() if k != "last_tick"}
+        current = self._state_float(self.config.temperature_sensor)
+        event = update_heat_check(
+            check,
+            heating=house_heating,
+            current_temp=current,
+            alert_minutes=(
+                self.config.no_heat_alert_minutes if self.config.no_heat_alert else 0
+            ),
+            now=self._now(),
+        )
+        if event is not None:
+            # Alerts must survive a restart straight after they fire.
+            await self.intel.async_save()
+        elif {k: v for k, v in check.to_dict().items() if k != "last_tick"} != before:
+            self._dirty_intel = True
+        if event == "fault":
+            await self._async_alert_not_warming(current)
+        elif event == "recovered":
+            await self._async_alert_warming_again(current)
+
+    def _alert_id(self) -> str:
+        return f"{DOMAIN}_not_warming_{self.entry.entry_id}"
+
+    async def _async_alert_not_warming(self, current: float | None) -> None:
+        check = self.intel.state.heat_check
+        target, _ = self.effective_main_target()
+        minutes = round(check.on_minutes)
+        rise = round(check.total_rise(), 1)
+        title = "Neat: the house isn't warming up"
+        message = (
+            f"The boiler has been called for {minutes} minutes but the house has "
+            f"only warmed {rise:.1f}°C"
+            + (f" (now {current:.1f}°C, target {target:.1f}°C)" if current is not None else "")
+            + ". Check the boiler is firing: power, pressure, any fault code, "
+            "and the call-for-heat relay wiring."
+        )
+        _LOGGER.warning("Neat: %s — %s", title, message)
+        persistent_notification.async_create(
+            self.hass, message, title=title, notification_id=self._alert_id()
+        )
+        self.hass.bus.async_fire(
+            f"{DOMAIN}_heating_fault",
+            {"on_minutes": minutes, "rise_c": rise, "temperature": current, "target": target},
+        )
+        await self._async_notify_phones(title, message)
+
+    async def _async_alert_warming_again(self, current: float | None) -> None:
+        title = "Neat: heating is working again"
+        message = "The house is warming up again" + (
+            f" ({current:.1f}°C now)." if current is not None else "."
+        )
+        _LOGGER.info("Neat: %s", message)
+        persistent_notification.async_dismiss(self.hass, self._alert_id())
+        self.hass.bus.async_fire(f"{DOMAIN}_heating_recovered", {"temperature": current})
+        await self._async_notify_phones(title, message)
+
+    async def _async_notify_phones(self, title: str, message: str) -> None:
+        for service in self.config.alert_notify:
+            if not self.hass.services.has_service("notify", service):
+                _LOGGER.warning("Neat: notify.%s doesn't exist — alert not sent there", service)
+                continue
+            try:
+                await self.hass.services.async_call(
+                    "notify",
+                    service,
+                    # Same tag: the "working again" message replaces the alert.
+                    {"title": title, "message": message, "data": {"tag": "neat_heating"}},
+                    blocking=False,
+                )
+            except Exception:  # noqa: BLE001 — one bad phone mustn't stop the loop
+                _LOGGER.exception("Neat: couldn't send alert via notify.%s", service)
 
     async def _maybe_learn_schedule(self) -> None:
         if not self.config.auto_schedule:
@@ -692,6 +791,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._track_heat_cycle(heating)
         if track_heat_interval(self.intel.state.energy, want_heat=heating):
             self._dirty_intel = True
+        await self._async_check_warming(
+            heating and (self._house_calling or self._safety_active)
+        )
 
         await self._async_set_heater(want_heat)
 

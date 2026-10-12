@@ -21,6 +21,8 @@ from .const import (
     DEFAULT_MIN_OFF_MINUTES,
     DEFAULT_MIN_ON_MINUTES,
     DEFAULT_MIN_TEMP,
+    DEFAULT_NO_HEAT_ALERT,
+    DEFAULT_NO_HEAT_ALERT_MINUTES,
     DEFAULT_SAFETY_MIN_TEMP,
     DEFAULT_SAFETY_TEMP_ENABLED,
     DEFAULT_SEASONAL_SAVINGS,
@@ -171,6 +173,10 @@ class NeatConfig:
     seasonal_savings: bool = DEFAULT_SEASONAL_SAVINGS
     adaptive_comfort: bool = DEFAULT_ADAPTIVE_COMFORT
     wall_pin: str = DEFAULT_WALL_PIN
+    no_heat_alert: bool = DEFAULT_NO_HEAT_ALERT
+    no_heat_alert_minutes: int = DEFAULT_NO_HEAT_ALERT_MINUTES
+    # notify services (e.g. "mobile_app_my_phone") that get Neat's alerts.
+    alert_notify: list[str] = field(default_factory=list)
     # Fully Kiosk settings every panel shares (a missing key = not managed).
     kiosk_defaults: dict[str, Any] = field(default_factory=dict)
     kiosk_auto_sync: bool = True
@@ -208,6 +214,9 @@ class NeatConfig:
             "adaptive_comfort": self.adaptive_comfort,
             "wall_pin": self.wall_pin,
             "wall_pin_configured": bool(str(self.wall_pin or "").strip()),
+            "no_heat_alert": self.no_heat_alert,
+            "no_heat_alert_minutes": self.no_heat_alert_minutes,
+            "alert_notify": self.alert_notify,
             "kiosk_defaults": self.kiosk_defaults,
             "kiosk_auto_sync": self.kiosk_auto_sync,
         }
@@ -267,6 +276,15 @@ class NeatConfig:
                 data.get("adaptive_comfort", DEFAULT_ADAPTIVE_COMFORT)
             ),
             wall_pin=pin,
+            no_heat_alert=bool(data.get("no_heat_alert", DEFAULT_NO_HEAT_ALERT)),
+            no_heat_alert_minutes=int(
+                data.get("no_heat_alert_minutes", DEFAULT_NO_HEAT_ALERT_MINUTES)
+            ),
+            alert_notify=[
+                str(s).removeprefix("notify.")
+                for s in (data.get("alert_notify") or [])
+                if str(s).strip()
+            ],
             kiosk_defaults=clean_settings(data.get("kiosk_defaults")),
             kiosk_auto_sync=bool(data.get("kiosk_auto_sync", True)),
         )

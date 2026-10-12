@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.10
+ * @version 0.6.11
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.10";
+const PANEL_VERSION = "0.6.11";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -397,6 +397,12 @@ input[readonly] { opacity: 0.7; cursor: default; }
 .feature-desc { font-size: 12px; color: var(--secondary-text-color); margin-top: 2px; line-height: 1.35; }
 .feature-value { font-size: 14px; font-weight: 600; white-space: nowrap; text-align: right; }
 .feature-value small { display: block; font-size: 11px; font-weight: 500; color: var(--secondary-text-color); }
+.link-btn {
+  border: 0; background: none; padding: 0; font: inherit; color: var(--primary-color);
+  cursor: pointer; text-decoration: underline;
+}
+.notify-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.notify-list .set-row { padding-top: 6px; padding-bottom: 6px; }
 details.card > summary {
   list-style: none; cursor: pointer; display: flex; align-items: center; gap: 12px;
 }
@@ -947,6 +953,7 @@ const ICONS = {
   sparkle: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10 2l1.9 5.6L17.5 9.5l-5.6 1.9L10 17l-1.9-5.6L2.5 9.5l5.6-1.9zM18 13l1 2.9 3 1.1-3 1-1 3-1-3-3-1 3-1.1z"/></svg>`,
   people: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16 11c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 3-1.34 3-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>`,
   shield: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-1 15-4-4 1.41-1.41L11 13.17l5.59-5.59L18 9l-7 7z"/></svg>`,
+  bell: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4a1.5 1.5 0 0 0-3 0v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>`,
   gauge: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M5.6 18.4a9 9 0 1 1 12.8 0M12 13l4-4"/><circle cx="12" cy="13" r="1.6" fill="currentColor"/></svg>`,
   thermo: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15 13V5a3 3 0 0 0-6 0v8a5 5 0 1 0 6 0zm-3 7a3 3 0 0 1-1.5-5.6l.5-.29V5a1 1 0 0 1 2 0v9.11l.5.29A3 3 0 0 1 12 20z"/></svg>`,
   plus: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>`,
@@ -1502,6 +1509,10 @@ class NeatThermostatPanel extends HTMLElement {
       live.heater_available === false
         ? `<div class="banner err">Boiler relay <code>${this._escape(heater || "not set")}</code> is unavailable — Neat cannot switch the boiler. Check the device, or pick another relay in Settings.</div>`
         : "";
+    const fault = live.heating_fault;
+    const faultWarning = fault
+      ? `<div class="banner err">The house isn't warming up — the boiler has been called for ${this._escape(fault.on_minutes)} min and the house has only warmed ${this._escape(Number(fault.rise_c).toFixed(1))}°C. Check the boiler is firing (power, pressure, fault code, call-for-heat wiring). This clears once the house warms again.</div>`
+      : "";
     const preset = (live.main || {}).preset;
     const presetLabel = !preset || preset === "none" ? "Normal" : preset[0].toUpperCase() + preset.slice(1);
 
@@ -1522,6 +1533,7 @@ class NeatThermostatPanel extends HTMLElement {
 
     return `
       ${heaterWarning}
+      ${faultWarning}
       ${this._renderHero()}
       <div style="height:14px"></div>
       <div class="stats-row">
@@ -1563,7 +1575,7 @@ class NeatThermostatPanel extends HTMLElement {
             ${feature("Leaf coaching", "Shows the leaf when you're saving energy", onOff(intel.leaf_enabled !== false))}
             ${feature("Away delay", "Switches to Eco once nobody's been home this long", `${this._escape(intel.away_delay_minutes ?? 20)} min`)}
             ${feature("Warm-up rate", "How fast the house heats, used to time preheating",
-              `${rate != null ? `${this._escape(rate)} °C/h` : "—"}<small>${samples ? `${samples} sample${samples === 1 ? "" : "s"}` : "Default · still learning"}</small>`)}
+              `${rate != null ? `${this._escape(rate)} °C/h` : "—"}<small>${samples ? `${samples} sample${samples === 1 ? "" : "s"} · <button type="button" class="link-btn" id="resetWarmup" title="Forget the learned rate, e.g. after a boiler fault">Reset</button>` : "Default · still learning"}</small>`)}
           </div>
         </div>
       </div>
@@ -3019,11 +3031,50 @@ class NeatThermostatPanel extends HTMLElement {
           ${row("Minimum off time", "Shortest rest between runs.", num("minOffMin", cfg.min_off_minutes ?? 1, "min", 'step="1" min="0" max="30"'))}
         </div>
       </div>
+      ${this._renderAlertsCard(cfg, { row, toggle, num, head })}
       <div class="save-bar">
         <span class="muted">Changes apply when you save.</span>
         <button class="primary" id="saveSettings">Save settings</button>
       </div>
     `;
+  }
+
+  /** Notify services that can reach a person (phones etc.), plus any saved ones that have gone. */
+  _notifyServices(saved) {
+    const skip = new Set(["notify", "send_message", "persistent_notification"]);
+    const names = Object.keys(this._hass?.services?.notify || {}).filter((n) => !skip.has(n));
+    for (const s of saved) if (!names.includes(s)) names.push(s);
+    return names.sort();
+  }
+
+  _renderAlertsCard(cfg, { row, toggle, num, head }) {
+    const saved = Array.isArray(cfg.alert_notify) ? cfg.alert_notify : [];
+    const available = new Set(Object.keys(this._hass?.services?.notify || {}));
+    const label = (name) =>
+      name.startsWith("mobile_app_") ? `Phone: ${name.slice(11).replace(/_/g, " ")}` : name.replace(/_/g, " ");
+    const services = this._notifyServices(saved);
+    const list = services.length
+      ? services
+          .map(
+            (name) => `
+            <div class="set-row">
+              <div class="set-row-text">
+                <div class="set-row-name">${this._escape(label(name))}</div>
+                <div class="set-row-desc"><code>notify.${this._escape(name)}</code>${available.has(name) ? "" : " · no longer exists"}</div>
+              </div>
+              <div class="set-row-control"><label class="switch"><input type="checkbox" data-alert-notify="${this._escape(name)}" ${saved.includes(name) ? "checked" : ""} /><span></span></label></div>
+            </div>`
+          )
+          .join("")
+      : `<p class="muted">No notify services found. Install the Home Assistant Companion app on a phone to get alerts there.</p>`;
+    return `
+      <div class="card">
+        ${head(ICONS.bell, "warn", "Alerts", "Tells you when the heating isn't working. Alerts always appear in Home Assistant's notifications too.")}
+        ${row("House not warming", "Alert when the boiler has been called this long without the house warming up.", toggle("noHeatAlert", cfg.no_heat_alert !== false))}
+        ${row("Alert after", "Boiler-on time, added up across runs.", num("noHeatMinutes", cfg.no_heat_alert_minutes ?? 60, "min", 'step="10" min="20" max="240"'))}
+        <div class="set-field-label" style="margin-top:10px">Send to</div>
+        <div class="notify-list">${list}</div>
+      </div>`;
   }
 
   _mutateSchedule(mutator) {
@@ -3106,6 +3157,17 @@ class NeatThermostatPanel extends HTMLElement {
 
     this.shadowRoot.querySelectorAll(".tab[data-view]").forEach((btn) => {
       btn.addEventListener("click", () => this._setView(btn.dataset.view));
+    });
+
+    this.shadowRoot.getElementById("resetWarmup")?.addEventListener("click", async () => {
+      if (!window.confirm("Forget the learned warm-up rate? Neat goes back to its default and learns again from the next heat runs.")) return;
+      try {
+        await this._ws("neat_thermostat/reset_warmup");
+        await this._loadState();
+        this._showToast("Warm-up rate reset");
+      } catch (e) {
+        this._showToast(`Couldn't reset it: ${e?.message || e}`, "err");
+      }
     });
 
     this.shadowRoot.getElementById("stopSeasonal")?.addEventListener("click", async () => {
@@ -3277,6 +3339,11 @@ class NeatThermostatPanel extends HTMLElement {
             safety_min_temp: Number(this.shadowRoot.getElementById("safetyMin").value),
             wall_pin: this.shadowRoot.getElementById("wallPin").value.trim(),
             away_delay_minutes: Number(this.shadowRoot.getElementById("awayDelay").value),
+            no_heat_alert: this.shadowRoot.getElementById("noHeatAlert").checked,
+            no_heat_alert_minutes: Math.min(240, Math.max(20, Math.round(Number(this.shadowRoot.getElementById("noHeatMinutes").value) || 60))),
+            alert_notify: [...this.shadowRoot.querySelectorAll("[data-alert-notify]")]
+              .filter((el) => el.checked)
+              .map((el) => el.dataset.alertNotify),
           });
           this._settingsDraft = null;
           await this._loadState();

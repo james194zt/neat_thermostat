@@ -151,6 +151,8 @@ class NeatHomeClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
                 "boiler_cycle_wait_seconds"
             ),
             "warmup_c_per_hour": self.coordinator.intel.state.warmup.c_per_hour,
+            # Boiler time isn't warming the house (see the Neat notification).
+            "heating_fault": self.coordinator.data.get("heating_fault") is not None,
             # Neat room climates in the user's order (the dashboard card lists them).
             "room_entities": [
                 entity_id

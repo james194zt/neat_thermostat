@@ -3,7 +3,7 @@
  * Loaded automatically by the integration; pick "Neat Thermostat" in the card list.
  * Everything comes from the Neat climate entities, so it updates live with no polling.
  */
-const NEAT_CARD_VERSION = "0.6.10";
+const NEAT_CARD_VERSION = "0.6.11";
 
 const NC_STYLES = `
 :host { display: block; }
@@ -502,6 +502,7 @@ class NeatThermostatCard extends HTMLElement {
       const out = [];
       const pill = (cls, text, icon = "") => out.push(`<span class="nc-pill ${cls}">${icon}${ncEsc(text)}</span>`);
       if (a.heater_available === false) pill("bad", "Boiler relay offline");
+      if (a.heating_fault) pill("bad", "Not warming up");
       if (a.safety_active) pill("heat", "Safety heat", NC_ICONS.flame);
       else if (a.boiler_on) pill("heat", "Boiler on", NC_ICONS.flame);
       if (a.leaf) pill("leaf", "Leaf", NC_ICONS.leaf);

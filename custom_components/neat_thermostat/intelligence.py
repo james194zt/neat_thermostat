@@ -34,8 +34,19 @@ MIN_WARMUP_C_PER_HOUR = 0.4
 MAX_WARMUP_C_PER_HOUR = 4.0
 MAX_PREHEAT_MINUTES = 120
 MIN_PREHEAT_MINUTES = 5
+WARMUP_MIN_CYCLE_MINUTES = 15
+WARMUP_MIN_RISE_C = 0.3
 DEFAULT_AWAY_DELAY_MINUTES = 20
 LEARNING_WINDOW_MINUTES = 30
+
+# "Not warming" check: boiler-on minutes that should have warmed the house.
+# A run is credited with its rise (plus radiator coast), less one sensor step
+# so noise across many runs doesn't add up to fake warming.
+WARMING_RISE_C = 0.3
+HEAT_CHECK_COAST_MINUTES = 30
+HEAT_CHECK_SENSOR_STEP_C = 0.1
+HEAT_CHECK_STALE_HOURS = 6
+HEAT_CHECK_MAX_TICK_MINUTES = 5
 INITIAL_LEARNING_DAYS = 7
 
 # Leaf (heating hard floor ≈ 62°F)
@@ -193,10 +204,139 @@ class SeasonalSavingsState:
 
 
 @dataclass
+class HeatCheck:
+    """Is the boiler actually warming the house? (persisted across restarts)"""
+
+    # Boiler-on minutes (house calling) since the house last warmed properly.
+    on_minutes: float = 0.0
+    # Warming credited to finished runs over the same period.
+    rise_c: float = 0.0
+    # The current/last run: temperature when it started, highest seen since.
+    run_start_temp: float | None = None
+    run_max_temp: float | None = None
+    run_ended_at: str | None = None
+    last_tick: str | None = None
+    last_heat_at: str | None = None
+    # Set while the house is flagged as not warming.
+    fault_since: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> HeatCheck:
+        if not data:
+            return cls()
+        known = {k: data[k] for k in cls.__dataclass_fields__ if k in data}
+        try:
+            return cls(**known)
+        except TypeError:
+            return cls()
+
+    def total_rise(self) -> float:
+        rise = self.rise_c
+        if self.run_start_temp is not None and self.run_max_temp is not None:
+            rise += _credited_rise(self.run_start_temp, self.run_max_temp)
+        return rise
+
+
+def _credited_rise(start: float, peak: float) -> float:
+    return max(0.0, peak - start - HEAT_CHECK_SENSOR_STEP_C)
+
+
+def _parse_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def update_heat_check(
+    check: HeatCheck,
+    *,
+    heating: bool,
+    current_temp: float | None,
+    alert_minutes: float,
+    now: datetime | None = None,
+) -> str | None:
+    """Advance the not-warming check by one tick.
+
+    ``heating`` = the boiler is on because the house (or safety floor) wants
+    heat — rooms alone don't count, the house sensor may not see them.
+    Returns "fault" when the house is newly flagged, "recovered" when a
+    flagged house warms again, else None.
+    """
+    now = now or clock()
+    last = _parse_ts(check.last_tick)
+    check.last_tick = now.isoformat()
+    if current_temp is None:
+        return None
+    elapsed = 0.0
+    if last is not None:
+        elapsed = max(0.0, min(HEAT_CHECK_MAX_TICK_MINUTES, (now - last).total_seconds() / 60.0))
+
+    if heating:
+        if check.run_start_temp is None or check.run_ended_at is not None:
+            # New run: bank what the previous one achieved.
+            if check.run_start_temp is not None and check.run_max_temp is not None:
+                check.rise_c += _credited_rise(check.run_start_temp, check.run_max_temp)
+            check.run_start_temp = current_temp
+            check.run_max_temp = current_temp
+            check.run_ended_at = None
+        check.on_minutes += elapsed
+        check.last_heat_at = now.isoformat()
+    elif check.run_start_temp is not None and check.run_ended_at is None:
+        check.run_ended_at = now.isoformat()
+
+    # Radiators keep warming the room for a while after the boiler stops.
+    if check.run_start_temp is not None:
+        ended = _parse_ts(check.run_ended_at)
+        if ended is None or now - ended <= timedelta(minutes=HEAT_CHECK_COAST_MINUTES):
+            check.run_max_temp = max(check.run_max_temp or current_temp, current_temp)
+
+    if check.total_rise() >= WARMING_RISE_C:
+        recovered = check.fault_since is not None
+        _restart_heat_check(check, current_temp if heating else None, now)
+        return "recovered" if recovered else None
+
+    last_heat = _parse_ts(check.last_heat_at)
+    if not heating and (
+        last_heat is None or now - last_heat > timedelta(hours=HEAT_CHECK_STALE_HOURS)
+    ):
+        # Nothing to judge for hours: start afresh next time the house calls.
+        # A standing fault stays until the house is seen warming again.
+        if check.on_minutes or check.run_start_temp is not None:
+            fault_since = check.fault_since
+            _restart_heat_check(check, None, now)
+            check.fault_since = fault_since
+            check.last_heat_at = None
+        return None
+
+    if check.fault_since is None and alert_minutes > 0 and check.on_minutes >= alert_minutes:
+        check.fault_since = now.isoformat()
+        return "fault"
+    return None
+
+
+def _restart_heat_check(check: HeatCheck, run_temp: float | None, now: datetime) -> None:
+    check.on_minutes = 0.0
+    check.rise_c = 0.0
+    check.run_start_temp = run_temp
+    check.run_max_temp = run_temp
+    check.run_ended_at = None
+    check.fault_since = None
+    if run_temp is not None:
+        check.last_heat_at = now.isoformat()
+
+
+@dataclass
 class IntelligenceState:
     """Persisted intelligence state."""
 
     warmup: WarmupModel = field(default_factory=WarmupModel)
+    heat_check: HeatCheck = field(default_factory=HeatCheck)
     recent_cycles: list[dict[str, Any]] = field(default_factory=list)
     adjustments: list[dict[str, Any]] = field(default_factory=list)
     learning_started_at: str | None = None
@@ -210,6 +350,7 @@ class IntelligenceState:
     def to_dict(self) -> dict[str, Any]:
         return {
             "warmup": self.warmup.to_dict(),
+            "heat_check": self.heat_check.to_dict(),
             "recent_cycles": self.recent_cycles[-40:],
             "adjustments": self.adjustments[-200:],
             "learning_started_at": self.learning_started_at,
@@ -226,6 +367,7 @@ class IntelligenceState:
             return cls()
         return cls(
             warmup=WarmupModel.from_dict(data.get("warmup")),
+            heat_check=HeatCheck.from_dict(data.get("heat_check")),
             recent_cycles=list(data.get("recent_cycles") or []),
             adjustments=list(data.get("adjustments") or []),
             learning_started_at=data.get("learning_started_at"),
@@ -346,18 +488,25 @@ def update_warmup_from_cycle(
     duration_minutes: float,
     outdoor_temp: float | None = None,
 ) -> WarmupModel:
-    """Blend a completed heat cycle into the warm-up model."""
-    if duration_minutes < 5 or end_temp <= start_temp:
+    """Blend a completed heat cycle into the warm-up model.
+
+    Short runs and rises within sensor resolution say nothing about the house,
+    and a rate below the floor means the boiler didn't really heat (a fault,
+    not a slow house), so all of those are skipped rather than clamped in.
+    """
+    if duration_minutes < WARMUP_MIN_CYCLE_MINUTES:
         return warmup
-    hours = duration_minutes / 60.0
-    observed = (end_temp - start_temp) / hours
-    observed = max(MIN_WARMUP_C_PER_HOUR, min(MAX_WARMUP_C_PER_HOUR, observed))
+    rise = end_temp - start_temp
+    if rise < WARMUP_MIN_RISE_C:
+        return warmup
+    observed = rise / (duration_minutes / 60.0)
+    if observed < MIN_WARMUP_C_PER_HOUR:
+        return warmup
+    observed = min(MAX_WARMUP_C_PER_HOUR, observed)
+    # Always blend (the first cycle too), so one odd run can't set the rate.
     n = warmup.samples
-    if n <= 0:
-        new_rate = observed
-    else:
-        weight = min(0.35, 1.0 / (n + 1) + 0.15)
-        new_rate = warmup.c_per_hour * (1 - weight) + observed * weight
+    weight = min(0.35, 1.0 / (n + 1) + 0.15)
+    new_rate = warmup.c_per_hour * (1 - weight) + observed * weight
     return WarmupModel(
         c_per_hour=round(new_rate, 3),
         samples=n + 1,
@@ -514,6 +663,7 @@ class IntelligenceStore:
     def __init__(self, hass: Any, entry_id: str) -> None:
         self._store: Store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry_id}")
         self.state = IntelligenceState()
+        self._save_pending = False
 
     async def async_load(self) -> IntelligenceState:
         data = await self._store.async_load()
@@ -521,11 +671,24 @@ class IntelligenceStore:
         return self.state
 
     async def async_save(self) -> None:
+        # Replaces any pending delayed write.
+        self._save_pending = False
         await self._store.async_save(self.state.to_dict())
 
     def async_delay_save(self, delay: float = 30.0) -> None:
-        """Coalesce routine writes (the 30s tick shouldn't hit disk every time)."""
-        self._store.async_delay_save(self.state.to_dict, delay)
+        """Coalesce routine writes (the 30s tick shouldn't hit disk every time).
+
+        HA's Store restarts its timer on every call, so calling it each tick
+        could postpone the write indefinitely; arm it once and let it fire.
+        """
+        if self._save_pending:
+            return
+        self._save_pending = True
+        self._store.async_delay_save(self._data_to_save, delay)
+
+    def _data_to_save(self) -> dict[str, Any]:
+        self._save_pending = False
+        return self.state.to_dict()
 
 
 def note_comfort_setpoint(leaf: LeafState, temperature: float) -> LeafState:
