@@ -3,7 +3,7 @@
  * Loaded automatically by the integration; pick "Neat Thermostat" in the card list.
  * Everything comes from the Neat climate entities, so it updates live with no polling.
  */
-const NEAT_CARD_VERSION = "0.6.9";
+const NEAT_CARD_VERSION = "0.6.10";
 
 const NC_STYLES = `
 :host { display: block; }
@@ -610,6 +610,7 @@ ha-card { overflow: hidden; }
   color: var(--primary-text-color); font-family: var(--ha-font-family-body, var(--paper-font-body1_-_font-family, Roboto, sans-serif));
 }
 .nr.heating { --nc-tint: var(--nc-heat-soft); }
+.nr.off { --nc-tint: #9aa0a6; }
 .nr-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .nr-title { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
 .nr-summary { font-size: 13px; color: var(--secondary-text-color); margin-top: 2px; }
@@ -1001,6 +1002,7 @@ class NeatRadiatorsCard extends HTMLElement {
     // Only redraw when something shown changed (hass updates arrive constantly).
     const key = [
       ids.join(","),
+      hass.states[ncFindHome(hass)]?.last_updated, // house state drives the header and tint
       ...ids.map((id) => {
         const st = hass.states[id];
         const trv = st?.attributes?.trv_entity;
@@ -1036,7 +1038,13 @@ class NeatRadiatorsCard extends HTMLElement {
       else if (st.state !== "off" && st.attributes.hvac_action === "heating") heating += 1;
       if (st?.attributes?.window_open) open += 1;
     });
-    root.querySelector(".nr").classList.toggle("heating", heating > 0);
+    // Same background tint as the house card next to it: grey when the house is off,
+    // warm while heating, teal otherwise.
+    const home = hass.states[ncFindHome(hass)];
+    const houseOff = home?.state === "off";
+    const card = root.querySelector(".nr");
+    card.classList.toggle("off", houseOff);
+    card.classList.toggle("heating", !houseOff && (heating > 0 || home?.attributes?.hvac_action === "heating"));
     const n = ids.length;
     root.querySelector(".nr-summary").textContent = !n
       ? ""
@@ -1046,7 +1054,6 @@ class NeatRadiatorsCard extends HTMLElement {
     const out = [];
     if (offline) out.push(`<span class="nc-pill bad">${NR_ICONS.radio}${offline} TRV${offline === 1 ? "" : "s"} offline</span>`);
     if (open) out.push(`<span class="nc-pill warn">Window open</span>`);
-    const home = hass.states[ncFindHome(hass)];
     if (home?.attributes?.boiler_on) out.push(`<span class="nc-pill heat">${NC_ICONS.flame}Boiler on</span>`);
     if (home?.attributes?.summer_mode) out.push(`<span class="nc-pill warn">Summer</span>`);
     const pills = root.querySelector(".nr-pills");
