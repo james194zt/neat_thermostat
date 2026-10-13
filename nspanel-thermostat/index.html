@@ -12,8 +12,15 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <title>Neat · Wall panel</title>
+    <!-- Before app.css arrives: nothing unstyled may flash (the overlays below would
+         show as raw text), so the page is blank until the app says it's ready. -->
+    <style>
+      html, body { margin: 0; background: #16191d; color: #f4f5f6; }
+      .hidden, [hidden] { display: none !important; }
+      body.booting > * { visibility: hidden !important; }
+    </style>
   </head>
-  <body>
+  <body class="booting">
     <div class="app" id="app" hidden>
       <header class="top">
         <button class="top-back hidden" id="backToHome" type="button" aria-label="Back to the house">

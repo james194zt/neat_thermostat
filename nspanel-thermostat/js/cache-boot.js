@@ -42,10 +42,19 @@
     window.location.replace(url.toString());
   }
 
+  // Resolves when the app's stylesheet has loaded (or failed): the app only
+  // shows itself after this, so nothing appears unstyled.
+  let cssDone;
+  window.__neatCssReady = new Promise((resolve) => {
+    cssDone = resolve;
+  });
+
   function injectStylesheet(href) {
     const link = document.createElement("link");
     link.rel = "stylesheet";
     link.href = href;
+    link.onload = () => cssDone();
+    link.onerror = () => cssDone();
     document.head.appendChild(link);
   }
 

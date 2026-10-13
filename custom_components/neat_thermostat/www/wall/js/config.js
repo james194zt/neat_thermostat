@@ -162,15 +162,40 @@ export async function loadRegistry(hassClient = null) {
   return normalizeRegistry(await resolveRegistry(hassClient));
 }
 
+const NEAT_CONFIG_CACHE_PREFIX = "neat-wall-neat-config:";
+
+/** Last config Neat gave this panel, so a (re)load starts with the real setup. */
+function readCachedNeatConfig(deviceId) {
+  if (!deviceId) return null;
+  try {
+    return JSON.parse(localStorage.getItem(NEAT_CONFIG_CACHE_PREFIX + deviceId) || "null");
+  } catch {
+    return null;
+  }
+}
+
 async function loadFromNeat(hassClient, deviceId) {
-  if (!hassClient?.request || !deviceId) return null;
+  if (!deviceId) return null;
+  if (!hassClient?.request) {
+    // Not connected yet (page load): the last config Neat sent beats the stale
+    // bundled devices.json/defaults, which point at a different thermostat.
+    return readCachedNeatConfig(deviceId);
+  }
   try {
     const result = await hassClient.request("neat_thermostat/get_wall_panel_config", {
       panel_id: deviceId,
     });
-    return result?.config || null;
+    const config = result?.config || null;
+    if (config) {
+      try {
+        localStorage.setItem(NEAT_CONFIG_CACHE_PREFIX + deviceId, JSON.stringify(config));
+      } catch {
+        // Storage full/blocked: just no fast start next time.
+      }
+    }
+    return config;
   } catch {
-    return null;
+    return readCachedNeatConfig(deviceId);
   }
 }
 
@@ -227,7 +252,7 @@ export async function loadConfig(hassClient = null) {
       mergeConfig(DEFAULT_CONFIG, mergeConfig(fromNeat, localOverrides)),
       bundledSensors
     );
-    return sanitizeConfig(merged);
+    return { ...sanitizeConfig(merged), fromNeat: true };
   }
 
   // Fallback: legacy devices.json / HA user-data registry (pre-Neat).

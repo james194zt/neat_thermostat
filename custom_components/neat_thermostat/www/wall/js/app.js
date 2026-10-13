@@ -785,6 +785,59 @@ function setConnectionState(connected) {
   }
 }
 
+/* —— Clean start: the page stays blank (body.booting) until it can show the real
+   thermostat — Neat's config plus the house state — so a reload (e.g. waking from
+   screen-off) never flashes setup screens or an empty dial. —— */
+const BOOT_STATES_KEY = "neat-wall-states-v1";
+const BOOT_STATES_EVERY_MS = 10000;
+let revealed = false;
+let bootStatesSavedAt = 0;
+
+function revealApp() {
+  if (revealed) return;
+  revealed = true;
+  (window.__neatCssReady || Promise.resolve()).then(() =>
+    requestAnimationFrame(() => document.body.classList.remove("booting"))
+  );
+}
+
+// Never stay blank: if the data doesn't come, show what there is.
+setTimeout(revealApp, 6000);
+
+function readyToShow() {
+  return Boolean(config.fromNeat && getPrimaryState());
+}
+
+/** The last states this panel showed, so the first frame after a reload is complete. */
+function readBootStates() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(BOOT_STATES_KEY) || "null");
+    return saved && saved.deviceId === getStoredDeviceId() ? saved.states || {} : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveBootStates() {
+  if (!client || Date.now() - bootStatesSavedAt < BOOT_STATES_EVERY_MS) return;
+  bootStatesSavedAt = Date.now();
+  const ids = new Set(getWatchedEntities());
+  for (const room of config.rooms || []) {
+    const trv = client.getState(room.entity)?.attributes?.trv_entity;
+    if (trv) ids.add(trv);
+  }
+  const states = {};
+  for (const id of ids) {
+    const state = client.getState(id);
+    if (state) states[id] = state;
+  }
+  try {
+    localStorage.setItem(BOOT_STATES_KEY, JSON.stringify({ deviceId: getStoredDeviceId(), states }));
+  } catch {
+    // Storage full/blocked: just no instant start next time.
+  }
+}
+
 function showApp() {
   ui.errorOverlay.classList.add("hidden");
   ui.deviceOverlay?.classList.add("hidden");
@@ -796,6 +849,7 @@ function showError(message) {
   ui.errorOverlay.classList.remove("hidden");
   ui.deviceOverlay?.classList.add("hidden");
   ui.app.hidden = true;
+  revealApp();
 }
 
 function openSetupPage() {
@@ -840,6 +894,7 @@ async function refreshConfigFromCentral() {
     } else {
       config = next;
     }
+    if (readyToShow()) revealApp();
   } catch {
     // Keep current config if refresh fails.
   }
@@ -849,6 +904,7 @@ async function showDevicePicker() {
   ui.app.hidden = true;
   ui.errorOverlay.classList.add("hidden");
   ui.deviceOverlay.classList.remove("hidden");
+  revealApp();
 
   let devices = [];
   try {
@@ -900,6 +956,13 @@ function getWatchedEntities() {
 }
 
 function handleStateChange(entityId) {
+  if (!revealed && readyToShow()) {
+    renderActiveClimate();
+    renderSensors();
+    renderRooms();
+    revealApp();
+  }
+  saveBootStates();
   const weatherRelated =
     entityId.startsWith("weather.") ||
     entityId.endsWith("_weather_condition") ||
@@ -1024,6 +1087,8 @@ async function connect() {
         token: config.accessToken,
         ...callbacks,
       });
+      // Start from what the panel last showed; live states replace these in a moment.
+      for (const [id, state] of Object.entries(readBootStates())) client.states.set(id, state);
       client.connect();
     }
 
@@ -1034,6 +1099,7 @@ async function connect() {
     updateRoomNavigation();
     goToPrimaryView();
     renderSensors();
+    if (readyToShow()) revealApp();
 
     screenSaver?.destroy();
     displayPower?.destroy();
