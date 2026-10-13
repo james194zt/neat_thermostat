@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.33
+ * @version 0.6.34
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.33";
+const PANEL_VERSION = "0.6.34";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -547,7 +547,9 @@ table.data tbody tr.room-row.selected {
 
 /* —— Overview hero —— */
 .hero {
-  --hero-tint: #FFB74D;
+  /* Idle: a faint teal, like the dashboard card and wall panel. Orange only while the
+     boiler is actually heating (.heating), grey when off — amber here read as "heating". */
+  --hero-tint: var(--nt-accent-hi);
   position: relative;
   display: grid;
   grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
