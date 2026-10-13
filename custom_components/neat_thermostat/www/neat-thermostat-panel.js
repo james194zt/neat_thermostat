@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.26
+ * @version 0.6.27
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.26";
+const PANEL_VERSION = "0.6.27";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -3127,8 +3127,9 @@ class NeatThermostatPanel extends HTMLElement {
       let text;
       if (!r.supported) text = "not a Zigbee (ZHA) sensor — unchanged";
       else if (r.ok) text = r.fast ? "reporting every 0.1°C / 5 min" : "back to ZHA's normal reporting";
+      else if (r.pending) text = `${this._escape(r.error || "waiting for ZHA")}…`;
       else text = `not set yet: ${this._escape(r.error || "unknown error")}`;
-      return `<br><span class="${r.supported && !r.ok ? "warn-text" : ""}">${name}: ${text}</span>`;
+      return `<br><span class="${r.supported && !r.ok && !r.pending ? "warn-text" : ""}">${name}: ${text}</span>`;
     });
     return lines.join("");
   }

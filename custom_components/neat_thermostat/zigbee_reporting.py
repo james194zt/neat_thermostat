@@ -31,6 +31,11 @@ TIMEOUT_S = 30
 class ReportingError(Exception):
     """Couldn't configure reporting (message is shown to the user)."""
 
+    def __init__(self, message: str, *, not_ready: bool = False) -> None:
+        super().__init__(message)
+        # ZHA is still starting (normal right after an HA restart): retry soon, quietly.
+        self.not_ready = not_ready
+
 
 def zha_ieee(hass: HomeAssistant, entity_id: str) -> str | None:
     """The ZHA IEEE address behind a sensor entity, or None if it isn't a ZHA entity."""
@@ -55,10 +60,10 @@ def _zha_device(hass: HomeAssistant, ieee: str) -> Any:
     try:
         gateway = get_zha_gateway(hass)
     except ValueError as err:
-        raise ReportingError("ZHA isn't running") from err
+        raise ReportingError("waiting for ZHA to start", not_ready=True) from err
     zha_device = gateway.get_device(EUI64.convert(ieee))
     if zha_device is None:
-        raise ReportingError("ZHA doesn't know this device")
+        raise ReportingError("waiting for ZHA to load this device", not_ready=True)
     return zha_device
 
 

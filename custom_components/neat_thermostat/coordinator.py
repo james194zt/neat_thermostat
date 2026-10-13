@@ -75,6 +75,8 @@ SENSOR_SWITCH_CONFIRM = timedelta(minutes=3)
 # a sleeping sensor this soon.
 REPORTING_REFRESH = timedelta(hours=24)
 REPORTING_RETRY = timedelta(minutes=30)
+# ZHA still starting after an HA restart: try again shortly.
+REPORTING_RETRY_SOON = timedelta(minutes=2)
 # A "run" longer than this (e.g. HA was down while it ended) teaches nothing.
 MAX_LEARN_RUN_HOURS = 6
 
@@ -506,11 +508,17 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             try:
                 await zigbee_reporting.async_configure(self.hass, entity_id, fast=fast)
             except zigbee_reporting.ReportingError as err:
-                _LOGGER.warning("Neat: couldn't set %s reporting: %s", entity_id, err)
+                if err.not_ready:
+                    _LOGGER.debug("Neat: %s reporting: %s", entity_id, err)
+                else:
+                    _LOGGER.warning("Neat: couldn't set %s reporting: %s", entity_id, err)
                 self._reporting_status[entity_id] = {
-                    "supported": True, "fast": fast, "ok": False, "error": str(err), "at": now.isoformat(),
+                    "supported": True, "fast": fast, "ok": False, "error": str(err),
+                    "pending": err.not_ready, "at": now.isoformat(),
                 }
-                self._reporting_next_try[entity_id] = now + REPORTING_RETRY
+                self._reporting_next_try[entity_id] = now + (
+                    REPORTING_RETRY_SOON if err.not_ready else REPORTING_RETRY
+                )
                 continue
             self._reporting_status[entity_id] = {
                 "supported": True, "fast": fast, "ok": True, "at": now.isoformat(),

@@ -245,6 +245,30 @@ async def test_fast_reporting_on_off_and_retry(hass, backed_up, freezer, zha):
     assert coord.intel.state.fast_reporting == []
 
 
+async def test_zha_still_starting_retries_soon_and_quietly(hass, backed_up, freezer, monkeypatch, caplog):
+    coord = backed_up[0]
+    calls = []
+    ready = {"on": False}
+
+    async def configure(hass, entity_id, *, fast):
+        calls.append(entity_id)
+        if not ready["on"]:
+            raise zigbee_reporting.ReportingError("waiting for ZHA to start", not_ready=True)
+
+    monkeypatch.setattr(zigbee_reporting, "zha_ieee", lambda hass, e: "aa:bb" if e == "sensor.house" else None)
+    monkeypatch.setattr(zigbee_reporting, "async_configure", configure)
+    await coord.async_save_config({"fast_sensor_reporting": True})
+    await _at(hass, coord, freezer, 0, house=18.0, backup=19.5)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    rep = coord._sensor_info()["reporting"]["sensor.house"]  # noqa: SLF001
+    assert rep["pending"] is True and rep["ok"] is False
+    assert "couldn't set" not in caplog.text  # no warning in the log for a normal start-up
+    ready["on"] = True
+    await _at(hass, coord, freezer, 3, house=18.0, backup=19.5)  # 2 min later is enough
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert coord._sensor_info()["reporting"]["sensor.house"]["ok"] is True  # noqa: SLF001
+
+
 def test_zigpy_result_parsing():
     ok = SimpleNamespace(status=0)
     bad = SimpleNamespace(status=134)
