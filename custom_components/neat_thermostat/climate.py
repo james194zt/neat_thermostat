@@ -255,6 +255,8 @@ class NeatRoomClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
             return HVACAction.OFF
         if self.coordinator.config.summer_mode:
             return HVACAction.OFF
+        if self.coordinator._room_follows_house_off(self.room):  # noqa: SLF001
+            return HVACAction.OFF
         if self.coordinator._any_window_open(self.room.window_sensors):  # noqa: SLF001
             return HVACAction.OFF
         if (
@@ -282,6 +284,12 @@ class NeatRoomClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
             "calls_for_heat": bool(getattr(self.room, "calls_for_heat", True)),
             # Manual setpoint in force until this time (ISO), then the schedule resumes.
             "hold_until": self.coordinator.room_hold_until(self.room),
+            # A change made on the room is in force (hold_until is None when it
+            # lasts until the house changes or the room is changed again).
+            "held": self.coordinator.room_held(self.room),
+            "hold_ends": self.room.hold_ends,
+            "follow_house": self.room.follow_house,
+            "house_offset": self.room.house_offset,
             "needs_heat": bool(
                 self.coordinator.data.get("rooms", {})
                 .get(self.room.id, {})

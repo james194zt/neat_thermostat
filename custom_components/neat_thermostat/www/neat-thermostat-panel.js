@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.37
+ * @version 0.6.38
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,9 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.37";
+const PANEL_VERSION = "0.6.38";
+// New-room defaults (match RoomConfig / DEFAULT_TARGET_TEMP / DEFAULT_ECO_TEMP).
+const ROOM_TEMP_DEFAULTS = { follow_house: true, house_offset: 0, hold_ends: "house_change", target_temp: 20, eco_temp: 16 };
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -329,6 +331,9 @@ button.primary svg, button.secondary svg { vertical-align: -4px; margin: 0 6px 0
 .dlg-section .set-row { padding: 0; border-top: 0; }
 .dlg-section .set-row + .set-row { padding-top: 14px; border-top: 1px solid var(--divider-color); }
 .dlg-section .set-list { margin-bottom: 8px; }
+.set-field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+.set-field-pair > .set-row-desc { grid-column: 1 / -1; }
+.dlg-section [hidden] { display: none; }
 .dlg-foot { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--divider-color); }
 input[readonly] { opacity: 0.7; cursor: default; }
 @keyframes dlg-fade { from { opacity: 0; } }
@@ -366,7 +371,7 @@ input[readonly] { opacity: 0.7; cursor: default; }
 .room-card-now { font-size: 34px; font-weight: 400; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; }
 .room-card-now.unknown { color: var(--secondary-text-color); }
 .room-card-target { font-size: 13px; color: var(--secondary-text-color); }
-.room-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.room-card-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; }
 .room-card-sensors { font-size: 12px; color: var(--secondary-text-color); }
 .room-card-calls {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -1463,6 +1468,7 @@ class NeatThermostatPanel extends HTMLElement {
     if (live.summer_mode) pill("warn", "Summer mode");
     if (attrs.preset_mode && attrs.preset_mode !== "none") pill("info", attrs.preset_mode[0].toUpperCase() + attrs.preset_mode.slice(1));
     else if (attrs.hold_until) pill("info", `Until ${new Date(attrs.hold_until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+    else if (attrs.held) pill("info", attrs.hold_ends === "manual" ? "Held" : "Until the house changes");
     if (room.calls_for_heat === false) pill("", "Doesn't call the boiler");
     return pills.join("");
   }
@@ -2014,6 +2020,9 @@ class NeatThermostatPanel extends HTMLElement {
             <div class="room-card-meta">
               <span class="set-state ${trvBad ? "bad" : "good"}" title="${this._escape(r.trv_entity)}">TRV ${trvBad ? (trv ? trv.state : "missing") : "online"}</span>
               <span class="room-card-sensors">${sensors ? `${sensors} sensor${sensors === 1 ? "" : "s"}` : "TRV temperature"}</span>
+              <span class="room-card-sensors">${r.follow_house !== false
+                ? `Follows house${Number(r.house_offset) ? ` ${Number(r.house_offset) > 0 ? "+" : "−"}${formatTemp(Math.abs(Number(r.house_offset)))}°` : ""}`
+                : "Own temps"}</span>
             </div>
             <div class="room-card-calls">
               <span>Calls boiler</span>
@@ -2042,6 +2051,7 @@ class NeatThermostatPanel extends HTMLElement {
   _renderRoomDialog() {
     const editing = this._editingRoomId;
     const room = editing ? (this._cfg().rooms || []).find((r) => r.id === editing) : null;
+    const d = { ...ROOM_TEMP_DEFAULTS, ...this._roomDraft };
     return this._dialog({
       icon: editing ? ICONS.tune : ICONS.home,
       title: editing ? `Edit ${this._escape(room?.name || "room")}` : "Add a room",
@@ -2073,6 +2083,43 @@ class NeatThermostatPanel extends HTMLElement {
           </div>
         </div>
         <div class="dlg-section">
+          <div class="dlg-section-title">Room temperature</div>
+          <div class="set-row">
+            <div class="set-row-text">
+              <div class="set-row-name">Follow the house</div>
+              <div class="set-row-desc">The room uses the house temperature (plus the offset below), so the house dial, schedule and presets move it too. Turn off to give the room its own temperatures.</div>
+            </div>
+            <div class="set-row-control"><label class="switch"><input type="checkbox" id="roomFollowHouse" ${d.follow_house ? "checked" : ""} /><span></span></label></div>
+          </div>
+          <div class="set-field" data-follow="on" ${d.follow_house ? "" : "hidden"}>
+            <div class="set-field-label">Offset from the house</div>
+            <div class="num-input"><input id="roomOffset" type="number" step="0.5" min="-5" max="5" value="${this._escape(d.house_offset)}" /><span>°C</span></div>
+            <div class="set-row-desc">e.g. −1 keeps a bedroom a degree cooler than the house. 0 = same as the house.</div>
+          </div>
+          <div class="set-field-pair" data-follow="off" ${d.follow_house ? "hidden" : ""}>
+            <div class="set-field">
+              <div class="set-field-label">Comfort</div>
+              <div class="num-input"><input id="roomComfort" type="number" step="0.5" min="5" max="30" value="${this._escape(d.target_temp)}" /><span>°C</span></div>
+            </div>
+            <div class="set-field">
+              <div class="set-field-label">Eco</div>
+              <div class="num-input"><input id="roomEco" type="number" step="0.5" min="5" max="30" value="${this._escape(d.eco_temp)}" /><span>°C</span></div>
+            </div>
+            <div class="set-row-desc">Comfort during the house's schedule blocks, Eco between them. Neat still decides when this room needs the boiler.</div>
+          </div>
+          <div class="set-field">
+            <div class="set-field-label">A change made on this room lasts until</div>
+            <select id="roomHoldEnds">
+              ${[
+                ["house_change", "The next house change"],
+                ["block_change", "The next schedule block"],
+                ["manual", "The room is changed again"],
+              ].map(([v, label]) => `<option value="${v}" ${d.hold_ends === v ? "selected" : ""}>${label}</option>`).join("")}
+            </select>
+            <div class="set-row-desc">"House change" means the next schedule block or anyone changing the house temperature, mode or preset — whichever comes first.</div>
+          </div>
+        </div>
+        <div class="dlg-section">
           <div class="set-row">
             <div class="set-row-text">
               <div class="set-row-name">Call for heat</div>
@@ -2087,6 +2134,23 @@ class NeatThermostatPanel extends HTMLElement {
         <button class="secondary" data-close-dialog type="button">Cancel</button>
         <button class="primary" id="saveRoom" type="button">${editing ? "Save changes" : "Add room"}</button>`,
     });
+  }
+
+  /** The room dialog's temperature fields, as RoomConfig values (bad numbers fall back). */
+  _readRoomTempFields() {
+    const el = (id) => this.shadowRoot.getElementById(id);
+    const d = { ...ROOM_TEMP_DEFAULTS, ...this._roomDraft };
+    const numOr = (id, fallback, lo, hi) => {
+      const n = Number(el(id)?.value);
+      return el(id) && el(id).value !== "" && Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
+    };
+    return {
+      follow_house: el("roomFollowHouse") ? el("roomFollowHouse").checked : d.follow_house,
+      house_offset: numOr("roomOffset", d.house_offset, -5, 5),
+      target_temp: numOr("roomComfort", d.target_temp, 5, 30),
+      eco_temp: numOr("roomEco", d.eco_temp, 5, 30),
+      hold_ends: el("roomHoldEnds")?.value || d.hold_ends,
+    };
   }
 
   _renderRoomExtras() {
@@ -2113,6 +2177,11 @@ class NeatThermostatPanel extends HTMLElement {
       sensor: room?.temperature_sensor || "",
       extras: [...(room?.extra_temperature_sensors || [])],
       calls_for_heat: room ? room.calls_for_heat !== false : true,
+      follow_house: room ? room.follow_house !== false : true,
+      house_offset: room?.house_offset ?? ROOM_TEMP_DEFAULTS.house_offset,
+      hold_ends: room?.hold_ends || ROOM_TEMP_DEFAULTS.hold_ends,
+      target_temp: room?.target_temp ?? ROOM_TEMP_DEFAULTS.target_temp,
+      eco_temp: room?.eco_temp ?? ROOM_TEMP_DEFAULTS.eco_temp,
     };
     this._openDialog("room");
   }
@@ -3654,8 +3723,7 @@ class NeatThermostatPanel extends HTMLElement {
           extra_temperature_sensors: extras,
           enabled: existing?.enabled !== false,
           calls_for_heat: callsForHeat,
-          target_temp: existing?.target_temp,
-          eco_temp: existing?.eco_temp,
+          ...this._readRoomTempFields(),
           boost_temp: existing?.boost_temp,
           window_sensors: existing?.window_sensors || [],
         };
@@ -3698,6 +3766,16 @@ class NeatThermostatPanel extends HTMLElement {
 
       this.shadowRoot.getElementById("roomCallsForHeat")?.addEventListener("change", (ev) => {
         this._roomDraft.calls_for_heat = ev.target.checked;
+      });
+      // Keep the draft current (the dialog can re-render) and swap offset ⇄ own temps.
+      ["roomFollowHouse", "roomOffset", "roomComfort", "roomEco", "roomHoldEnds"].forEach((id) => {
+        this.shadowRoot.getElementById(id)?.addEventListener("change", () => {
+          Object.assign(this._roomDraft, this._readRoomTempFields());
+          const follow = this._roomDraft.follow_house;
+          this.shadowRoot.querySelectorAll("[data-follow]").forEach((el) => {
+            el.hidden = (el.dataset.follow === "on") !== follow;
+          });
+        });
       });
     }
 

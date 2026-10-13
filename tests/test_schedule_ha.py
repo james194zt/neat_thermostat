@@ -161,4 +161,6 @@ async def test_schedule_disabled_uses_dial(hass, setup, freezer):
     coord.set_main_temperature(19.5)
     data = await _tick(hass, coord)
     assert data["main"]["effective_target"] == 19.5
-    assert _room_target(coord) == 20.0
+    assert _room_target(coord) == 19.5  # rooms follow the house by default
+    coord.config.rooms[0].follow_house = False
+    assert _room_target(coord) == 20.0  # an independent room keeps its own

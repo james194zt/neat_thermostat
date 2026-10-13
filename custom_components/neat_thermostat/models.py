@@ -31,6 +31,7 @@ from .const import (
     DEFAULT_TARGET_TEMP,
     DEFAULT_TRUE_RADIANT,
     DEFAULT_WALL_PIN,
+    ROOM_HOLD_ENDS,
 )
 
 
@@ -50,6 +51,12 @@ class RoomConfig:
     enabled: bool = True
     # When True, a cold room can call the boiler on (needed for most TRVs).
     calls_for_heat: bool = True
+    # True: the room's target is the house target + house_offset (so the house
+    # dial, schedule and presets move it). False: its own target/eco temps.
+    follow_house: bool = True
+    house_offset: float = 0.0
+    # How long a change made on the room itself lasts (ROOM_HOLD_ENDS).
+    hold_ends: str = "house_change"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -69,6 +76,13 @@ class RoomConfig:
             boost_temp=float(data.get("boost_temp", DEFAULT_BOOST_TEMP)),
             enabled=bool(data.get("enabled", True)),
             calls_for_heat=bool(data.get("calls_for_heat", True)),
+            follow_house=bool(data.get("follow_house", True)),
+            house_offset=max(-5.0, min(5.0, float(data.get("house_offset") or 0.0))),
+            hold_ends=(
+                data.get("hold_ends")
+                if data.get("hold_ends") in ROOM_HOLD_ENDS
+                else "house_change"
+            ),
         )
 
 

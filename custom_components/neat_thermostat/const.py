@@ -89,6 +89,11 @@ PRESET_ECO = "eco"
 PRESET_BOOST = "boost"
 PRESET_AWAY = "away"
 
+# How long a room's own setpoint change lasts: until the house changes (dial,
+# preset, mode or schedule block), until the next schedule block, or until
+# the room is changed again.
+ROOM_HOLD_ENDS = ("house_change", "block_change", "manual")
+
 PANEL_URL_PATH = "neat-thermostat"
 PANEL_TITLE = "Neat Thermostat"
 PANEL_ICON = "mdi:thermostat"
