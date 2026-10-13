@@ -252,12 +252,12 @@ button {
 
 .dial .track {
   stroke: rgba(255, 255, 255, 0.09);
-  stroke-width: 12;
+  stroke-width: 10;
 }
 
 .dial .fill {
   stroke: url(#dialGrad);
-  stroke-width: 12;
+  stroke-width: 10;
   transition: stroke-dasharray 0.25s ease;
 }
 
@@ -299,7 +299,7 @@ button {
 
 .core {
   position: absolute;
-  inset: 24% 14% 12%;
+  inset: 20% 16% 16%;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -313,9 +313,9 @@ button {
 }
 
 .caption {
-  font-size: 3vmin;
+  font-size: 2.3vmin;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--text-muted);
 }
@@ -333,33 +333,33 @@ button {
   display: flex;
   align-items: flex-start;
   line-height: 1;
-  margin: 1vmin 0 0.6vmin;
+  margin: 0.6vmin 0 0.4vmin;
   font-variant-numeric: tabular-nums;
 }
 
 .temp-int {
-  font-size: 22vmin;
+  font-size: 13vmin;
   font-weight: 300;
   letter-spacing: -0.05em;
 }
 
 .temp-dec {
-  font-size: 9vmin;
+  font-size: 6vmin;
   font-weight: 300;
-  margin-top: 2.4vmin;
+  margin-top: 1.2vmin;
   letter-spacing: -0.03em;
 }
 
 .temp-unit {
-  font-size: 7vmin;
+  font-size: 4.6vmin;
   font-weight: 300;
-  margin-top: 2.4vmin;
+  margin-top: 1.2vmin;
   margin-left: 0.4vmin;
   color: var(--text-muted);
 }
 
 .current-temp.is-off .temp-int {
-  font-size: 15vmin;
+  font-size: 9vmin;
   font-weight: 400;
   letter-spacing: 0.02em;
   color: var(--text-muted);
@@ -376,13 +376,13 @@ button {
 }
 
 .sub {
-  font-size: 3.6vmin;
+  font-size: 2.9vmin;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .eta {
-  font-size: 3.2vmin;
+  font-size: 2.6vmin;
   font-weight: 600;
   color: var(--heat-soft);
   margin-top: 0.6vmin;
@@ -395,8 +395,8 @@ button {
 
 .leaf {
   display: none;
-  width: 5vmin;
-  height: 5vmin;
+  width: 4vmin;
+  height: 4vmin;
   color: var(--green);
   margin-top: 0.4vmin;
 }
