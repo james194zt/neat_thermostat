@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.35
+ * @version 0.6.36
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.35";
+const PANEL_VERSION = "0.6.36";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -911,7 +911,7 @@ const KIOSK_FIELDS = [
   { key: "screen_brightness", label: "Screen brightness", desc: "While the panel is in use.", kind: "pct" },
   { key: "screensaver_timer", label: "Fully screensaver after", desc: "Fully's own screensaver. 0 = never — the Neat app already dims to its clock.", kind: "sec" },
   { key: "screensaver_brightness", label: "Screensaver brightness", desc: "", kind: "pct" },
-  { key: "screen_off_timer", label: "Screen off after", desc: "0 = never.", kind: "sec" },
+  { key: "screen_off_timer", label: "Screen off after", desc: "Time since the last touch before the screen turns off (the clock shows first, after the panel's \"Clock after\"). Walking past then wakes it straight to the thermostat. 0 = never.", kind: "sec" },
   { key: "kiosk_lock", label: "Kiosk lock", desc: "Stops anyone leaving the app on the panel.", kind: "bool" },
   { key: "motion_detection", label: "Camera motion detection", desc: "Uses the panel's camera. Leave this off on panels without a camera, like the NSPanel Pro — Fully fails and restarts every few seconds.", kind: "bool" },
   { key: "proximity_motion", label: "Wave to wake", desc: "Uses the panel's proximity sensor — for panels without a camera, like the NSPanel Pro. Needs the JavaScript interface on. Sent on save or sync; HA can't read it back.", kind: "bool", writeOnly: true },
@@ -2389,7 +2389,7 @@ class NeatThermostatPanel extends HTMLElement {
         <div class="dlg-section">
           <div class="dlg-section-title">Screen</div>
           <div class="set-row">
-            <div class="set-row-text"><div class="set-row-name">Clock after</div><div class="set-row-desc">Idle time before the Neat app dims to its clock.</div></div>
+            <div class="set-row-text"><div class="set-row-name">Clock after</div><div class="set-row-desc">Idle time before the Neat app shows its clock. A tap (or a wave close to the screen) clears it; the screen turns off later — see "Screen off after" in the kiosk settings.</div></div>
             <div class="set-row-control"><div class="num-input"><input id="wpIdle" type="number" min="5" step="5" value="${this._escape(d.idleSec ?? 30)}" /><span>sec</span></div></div>
           </div>
           <div class="set-row">
