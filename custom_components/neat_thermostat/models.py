@@ -246,10 +246,9 @@ class NeatConfig:
             hot_tolerance=float(data.get("hot_tolerance", DEFAULT_HOT_TOLERANCE)),
             min_temp=float(data.get("min_temp", DEFAULT_MIN_TEMP)),
             max_temp=float(data.get("max_temp", DEFAULT_MAX_TEMP)),
-            min_on_minutes=float(data.get("min_on_minutes", DEFAULT_MIN_ON_MINUTES)),
-            min_off_minutes=float(
-                data.get("min_off_minutes", DEFAULT_MIN_OFF_MINUTES)
-            ),
+            # Never 0: an unguarded relay can chatter the boiler on and off.
+            min_on_minutes=min(30.0, max(1.0, float(data.get("min_on_minutes", DEFAULT_MIN_ON_MINUTES)))),
+            min_off_minutes=min(30.0, max(1.0, float(data.get("min_off_minutes", DEFAULT_MIN_OFF_MINUTES)))),
             summer_mode=bool(data.get("summer_mode", False)),
             person_entity=person,
             presence_entities=presence,

@@ -152,6 +152,8 @@ class NeatHomeClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
             ),
             "warmup_c_per_hour": self.coordinator.intel.state.warmup.c_per_hour,
             "radiator_coast_c": self.coordinator.intel.state.warmup.coast_c,
+            # Relay released for a hand test (Neat takes it back at this time).
+            "relay_released_until": self.coordinator.data.get("control_released_until"),
             # Boiler time isn't warming the house (see the Neat notification).
             "heating_fault": self.coordinator.data.get("heating_fault") is not None,
             # Neat room climates in the user's order (the dashboard card lists them).

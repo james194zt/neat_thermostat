@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.16
+ * @version 0.6.17
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.16";
+const PANEL_VERSION = "0.6.17";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -218,6 +218,14 @@ const STYLES = `
 .num-input input:focus { outline: none; }
 .num-input:focus-within { border-color: var(--nt-accent-hi); }
 .num-input span { padding: 0 10px 0 0; font-size: 13px; color: var(--secondary-text-color); }
+.num-input.stepper input { width: 44px; text-align: center; padding: 8px 2px; -moz-appearance: textfield; }
+.num-input.stepper input::-webkit-inner-spin-button, .num-input.stepper input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.num-input.stepper button {
+  border: 0; background: transparent; color: var(--primary-text-color); width: 36px; height: 36px;
+  font-size: 18px; line-height: 1; cursor: pointer; padding: 0;
+}
+.num-input.stepper button:hover:not(:disabled) { background: var(--secondary-background-color); }
+.num-input.stepper button:disabled { opacity: 0.35; cursor: default; }
 .switch { position: relative; display: inline-block; width: 44px; height: 26px; cursor: pointer; }
 .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
 .switch span {
@@ -378,6 +386,7 @@ input[readonly] { opacity: 0.7; cursor: default; }
   background: color-mix(in srgb, var(--primary-text-color) 7%, transparent); color: var(--secondary-text-color);
 }
 .badge.on { background: color-mix(in srgb, var(--nt-green) 16%, transparent); color: var(--nt-green); }
+.badge.warn { background: color-mix(in srgb, var(--nt-amber) 18%, transparent); color: var(--nt-amber); }
 .metric-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .metric {
   padding: 12px 14px; border-radius: 12px;
@@ -475,6 +484,7 @@ table.data th {
 .banner { padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 13px; }
 .banner.err { background: color-mix(in srgb, var(--nt-red) 14%, transparent); color: var(--nt-red); }
 .banner.ok { background: color-mix(in srgb, var(--nt-accent) 14%, transparent); color: var(--nt-accent); }
+.banner.warn { background: color-mix(in srgb, var(--nt-amber) 16%, transparent); color: var(--nt-amber); }
 .muted { color: var(--secondary-text-color); font-size: 12px; }
 code {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.92em;
@@ -1507,6 +1517,9 @@ class NeatThermostatPanel extends HTMLElement {
       live.heater_available === false
         ? `<div class="banner err">Boiler relay <code>${this._escape(heater || "not set")}</code> is unavailable — Neat cannot switch the boiler. Check the device, or pick another relay in Settings.</div>`
         : "";
+    const releasedWarning = live.control_released_until
+      ? `<div class="banner warn">Boiler relay released for testing — Neat isn't switching it until ${this._escape(this._ehClock(live.control_released_until))} (or Take control in Settings).</div>`
+      : "";
     const fault = live.heating_fault;
     const faultWarning = fault
       ? `<div class="banner err">The house isn't warming up — the boiler has been called for ${this._escape(fault.on_minutes)} min and the house has only warmed ${this._escape(Number(fault.rise_c).toFixed(1))}°C. Check the boiler is firing (power, pressure, fault code, call-for-heat wiring). This clears once the house warms again.</div>`
@@ -1533,6 +1546,7 @@ class NeatThermostatPanel extends HTMLElement {
 
     return `
       ${heaterWarning}
+      ${releasedWarning}
       ${faultWarning}
       ${this._renderHero()}
       <div style="height:14px"></div>
@@ -2972,6 +2986,16 @@ class NeatThermostatPanel extends HTMLElement {
     const toggle = (id, on) => `<label class="switch"><input type="checkbox" id="${id}" ${on ? "checked" : ""} /><span></span></label>`;
     const num = (id, value, unit, attrs = "") =>
       `<div class="num-input"><input id="${id}" type="number" value="${this._escape(value)}" ${attrs} />${unit ? `<span>${unit}</span>` : ""}</div>`;
+    // −/+ whole-number stepper that can't leave [min, max].
+    const stepper = (id, value, unit, min, max) => {
+      const v = Math.min(max, Math.max(min, Math.round(Number(value) || min)));
+      return `<div class="num-input stepper" data-stepper="${id}" data-min="${min}" data-max="${max}">
+        <button type="button" data-step="-1" aria-label="Less" ${v <= min ? "disabled" : ""}>−</button>
+        <input id="${id}" type="number" inputmode="numeric" min="${min}" max="${max}" step="1" value="${v}" />
+        <button type="button" data-step="1" aria-label="More" ${v >= max ? "disabled" : ""}>+</button>
+        ${unit ? `<span>${unit}</span>` : ""}
+      </div>`;
+    };
     const head = (icon, cls, title, sub, extra = "") => `
       <div class="card-head">
         <span class="card-icon ${cls}">${icon}</span>
@@ -3039,8 +3063,9 @@ class NeatThermostatPanel extends HTMLElement {
           ${head(ICONS.gauge, "", "Boiler behaviour", "Fine-tuning. The defaults suit most homes.")}
           ${row("Cold tolerance", "Heat starts this far below the target.", num("coldTol", cfg.cold_tolerance ?? 0.3, "°C", 'step="0.1" min="0"'))}
           ${row("Hot tolerance", "Heat stops this far above the target.", num("hotTol", cfg.hot_tolerance ?? 0.3, "°C", 'step="0.1" min="0"'))}
-          ${row("Minimum on time", "Shortest boiler run. 3–5 min suits most boilers.", num("minOnMin", cfg.min_on_minutes ?? 3, "min", 'step="1" min="0" max="30"'))}
-          ${row("Minimum off time", "Shortest rest between runs. 3–5 min suits most boilers.", num("minOffMin", cfg.min_off_minutes ?? 3, "min", 'step="1" min="0" max="30"'))}
+          ${row("Minimum on time", "Shortest boiler run (1–30 min). 3–5 min suits most boilers.", stepper("minOnMin", cfg.min_on_minutes ?? 3, "min", 1, 30))}
+          ${row("Minimum off time", "Shortest rest between runs (1–30 min). 3–5 min suits most boilers.", stepper("minOffMin", cfg.min_off_minutes ?? 3, "min", 1, 30))}
+          ${this._relayControlRow(row)}
         </div>
       </div>
       ${this._renderAlertsCard(cfg, { row, toggle, num, head })}
@@ -3068,6 +3093,23 @@ class NeatThermostatPanel extends HTMLElement {
       "Warm-up rate & coast",
       `${this._escape(learned)} ${this._escape(coasted)} Times preheating and when to stop. Reset if they were learned while the heating was faulty.`,
       `<button type="button" class="secondary" id="resetWarmup" ${samples || coastSamples ? "" : "disabled"}>Reset</button>`
+    );
+  }
+
+  /** Release the boiler relay for a hand test; Neat takes it back by itself. */
+  _relayControlRow(row) {
+    const until = this._live().control_released_until;
+    if (until) {
+      return row(
+        "Boiler relay",
+        `<span class="badge warn">Released</span> Switch the relay by hand to test it. Neat takes control back at ${this._escape(this._ehClock(until))}.`,
+        `<button type="button" class="primary" id="takeControl">Take control now</button>`
+      );
+    }
+    return row(
+      "Boiler relay",
+      "Neat keeps the relay in step with the heating. Release it for up to an hour to test the relay by hand; Neat then takes it back automatically.",
+      `<button type="button" class="secondary" id="releaseControl">Release for testing</button>`
     );
   }
 
@@ -3116,7 +3158,21 @@ class NeatThermostatPanel extends HTMLElement {
     this._state.config.schedule = schedule;
   }
 
+  /** Unsaved Settings fields as {key: value|checked}; room switches and dialogs aren't part of the form. */
+  _settingsFormInputs() {
+    if (this._view !== "settings" || !this.shadowRoot.getElementById("saveSettings")) return [];
+    return [...this.shadowRoot.querySelectorAll(".main-inner input")]
+      .filter((el) => !el.closest(".room-card") && (el.id || el.dataset.alertNotify))
+      .map((el) => [el.id || `alert:${el.dataset.alertNotify}`, el]);
+  }
+
   _render() {
+    // A redraw (e.g. after saving a room) must not throw away Settings edits that aren't saved yet.
+    if (this._settingsDraft) {
+      const form = {};
+      for (const [key, el] of this._settingsFormInputs()) form[key] = el.type === "checkbox" ? el.checked : el.value;
+      if (Object.keys(form).length) this._settingsDraft.form = form;
+    }
     const body =
       this._view === "energy"
         ? this._renderEnergy()
@@ -3162,6 +3218,14 @@ class NeatThermostatPanel extends HTMLElement {
       </div>
       ${this._renderDialog()}
     `;
+    const kept = this._settingsDraft?.form;
+    if (kept) {
+      for (const [key, el] of this._settingsFormInputs()) {
+        if (!(key in kept)) continue;
+        if (el.type === "checkbox") el.checked = kept[key];
+        else el.value = kept[key];
+      }
+    }
     this._bind();
     this._bindWallPreview();
     if (this._view === "wall_panels") this._bindKioskCard();
@@ -3208,6 +3272,39 @@ class NeatThermostatPanel extends HTMLElement {
       } catch (e) {
         this._showToast(`Couldn't reset it: ${e?.message || e}`, "err");
       }
+    });
+
+    this.shadowRoot.querySelectorAll("[data-stepper]").forEach((box) => {
+      const input = box.querySelector("input");
+      const min = Number(box.dataset.min);
+      const max = Number(box.dataset.max);
+      const set = (v) => {
+        const n = Math.min(max, Math.max(min, Math.round(Number(v) || min)));
+        input.value = String(n);
+        box.querySelector('[data-step="-1"]').disabled = n <= min;
+        box.querySelector('[data-step="1"]').disabled = n >= max;
+      };
+      box.querySelectorAll("[data-step]").forEach((btn) =>
+        btn.addEventListener("click", () => set(Number(input.value) + Number(btn.dataset.step)))
+      );
+      input.addEventListener("change", () => set(input.value));
+    });
+
+    const relayAction = async (type, done) => {
+      try {
+        await this._ws(type);
+        await this._loadState();
+        this._showToast(done);
+      } catch (e) {
+        this._showToast(`Couldn't do that: ${e?.message || e}`, "err");
+      }
+    };
+    this.shadowRoot.getElementById("releaseControl")?.addEventListener("click", () => {
+      if (!window.confirm("Release the boiler relay for an hour? Neat stops switching it so you can test it by hand, then takes it back automatically.")) return;
+      void relayAction("neat_thermostat/release_control", "Relay released for an hour");
+    });
+    this.shadowRoot.getElementById("takeControl")?.addEventListener("click", () => {
+      void relayAction("neat_thermostat/take_control", "Neat has the relay again");
     });
 
     this.shadowRoot.getElementById("stopSeasonal")?.addEventListener("click", async () => {
@@ -3367,8 +3464,8 @@ class NeatThermostatPanel extends HTMLElement {
             away_temp: Number(this.shadowRoot.getElementById("awayTemp").value),
             cold_tolerance: Number(this.shadowRoot.getElementById("coldTol").value),
             hot_tolerance: Number(this.shadowRoot.getElementById("hotTol").value),
-            min_on_minutes: Number(this.shadowRoot.getElementById("minOnMin").value),
-            min_off_minutes: Number(this.shadowRoot.getElementById("minOffMin").value),
+            min_on_minutes: Math.min(30, Math.max(1, Math.round(Number(this.shadowRoot.getElementById("minOnMin").value) || 3))),
+            min_off_minutes: Math.min(30, Math.max(1, Math.round(Number(this.shadowRoot.getElementById("minOffMin").value) || 3))),
             summer_mode: this.shadowRoot.getElementById("summerMode").checked,
             true_radiant: this.shadowRoot.getElementById("trueRadiant").checked,
             auto_schedule: this.shadowRoot.getElementById("autoSchedule").checked,

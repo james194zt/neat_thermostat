@@ -42,6 +42,8 @@ def async_register_ws_handlers(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_verify_wall_pin)
     websocket_api.async_register_command(hass, ws_stop_seasonal_savings)
     websocket_api.async_register_command(hass, ws_reset_warmup)
+    websocket_api.async_register_command(hass, ws_release_control)
+    websocket_api.async_register_command(hass, ws_take_control)
     websocket_api.async_register_command(hass, ws_kiosk_status)
     websocket_api.async_register_command(hass, ws_kiosk_apply)
     websocket_api.async_register_command(hass, ws_kiosk_read)
@@ -89,8 +91,8 @@ async def ws_get_state(
         vol.Optional("window_sensors"): [cv.entity_id],
         vol.Optional("cold_tolerance"): vol.Coerce(float),
         vol.Optional("hot_tolerance"): vol.Coerce(float),
-        vol.Optional("min_on_minutes"): vol.All(vol.Coerce(float), vol.Range(min=0, max=30)),
-        vol.Optional("min_off_minutes"): vol.All(vol.Coerce(float), vol.Range(min=0, max=30)),
+        vol.Optional("min_on_minutes"): vol.All(vol.Coerce(float), vol.Range(min=1, max=30)),
+        vol.Optional("min_off_minutes"): vol.All(vol.Coerce(float), vol.Range(min=1, max=30)),
         vol.Optional("true_radiant"): cv.boolean,
         vol.Optional("auto_schedule"): cv.boolean,
         vol.Optional("leaf_enabled"): cv.boolean,
@@ -422,6 +424,40 @@ async def ws_reset_warmup(
         connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
         return
     await coordinator.async_reset_warmup()
+    connection.send_result(msg["id"], {"ok": True})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "neat_thermostat/release_control",
+        vol.Optional("entry_id"): cv.string,
+        vol.Optional("minutes", default=60): vol.All(vol.Coerce(int), vol.Range(min=1, max=60)),
+    }
+)
+@websocket_api.async_response
+async def ws_release_control(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
+        return
+    until = await coordinator.async_release_control(msg["minutes"])
+    connection.send_result(msg["id"], {"released_until": until})
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "neat_thermostat/take_control", vol.Optional("entry_id"): cv.string}
+)
+@websocket_api.async_response
+async def ws_take_control(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
+        return
+    await coordinator.async_take_control()
     connection.send_result(msg["id"], {"ok": True})
 
 

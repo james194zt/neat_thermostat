@@ -103,6 +103,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._house_calling = False
         # Manual setpoint while the schedule runs: {"temperature", "until"}.
         self._manual_hold: dict[str, Any] | None = None
+        # Relay released for a hand test until this time (UTC); Neat leaves it alone.
+        self._released_until: datetime | None = None
         # False while the house schedule is in setback (rooms drop to Eco).
         self._house_comfort = True
         self._dirty_intel = False
@@ -130,6 +132,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         hold = main.get("manual_hold")
         if isinstance(hold, dict) and isinstance(hold.get("temperature"), (int, float)):
             self._manual_hold = hold
+        self._released_until = dt_util.parse_datetime(str(saved.get("released_until") or ""))
         for room_id, room in (saved.get("rooms") or {}).items():
             st = self._room_states.get(room_id)
             if st is None or not isinstance(room, dict):
@@ -145,6 +148,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _persist_control(self) -> None:
         self.intel.state.control = {
+            "released_until": self._released_until.isoformat() if self._released_until else None,
             "main": {
                 "hvac_mode": self._main_hvac_mode,
                 "preset": self._main_preset,
@@ -224,6 +228,35 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.intel.async_save()
         await self.async_request_refresh()
 
+    async def async_release_control(self, minutes: int = 60) -> str:
+        """Stop switching the relay so it can be tested by hand; taken back automatically."""
+        self._released_until = dt_util.utcnow() + timedelta(minutes=max(1, min(60, minutes)))
+        _LOGGER.info("Neat: boiler relay released until %s", self._released_until.isoformat())
+        self._persist_control()
+        await self.intel.async_save()
+        await self.async_request_refresh()
+        return self._released_until.isoformat()
+
+    async def async_take_control(self) -> None:
+        if self._released_until is None:
+            return
+        self._released_until = None
+        _LOGGER.info("Neat: took the boiler relay back")
+        self._persist_control()
+        await self.intel.async_save()
+        await self.async_request_refresh()
+
+    def _relay_released(self) -> bool:
+        """Is the relay released right now? Ends the release once its time is up."""
+        if self._released_until is None:
+            return False
+        if dt_util.utcnow() < self._released_until:
+            return True
+        _LOGGER.info("Neat: relay test time is up; taking the boiler relay back")
+        self._released_until = None
+        self._persist_control()
+        return False
+
     def energy_history(self, days: int = 31) -> dict[str, Any]:
         return energy_history_payload(
             self.intel.state.energy,
@@ -249,6 +282,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "safety_active": self._safety_active,
             "time_to_temp_minutes": self._time_to_temp,
             "heating_fault": self._heating_fault_info(),
+            "control_released_until": (
+                self._released_until.isoformat() if self._released_until else None
+            ),
             "seasonal_savings": self._seasonal_info,
             "intelligence": {
                 "true_radiant": self.config.true_radiant,
@@ -696,7 +732,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._heat_cycle_start_temp = None
         self._last_boiler_on = want_heat
 
-    def _track_coast(self, heating: bool) -> None:
+    def _track_coast(self, heating: bool, *, disturbed: bool = False) -> None:
         """Measure how far the house keeps warming after each run (True Radiant)."""
         watch = self.intel.state.coast_watch
         before = watch.to_dict()
@@ -706,7 +742,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             boiler_on=heating,
             house_calling=self._house_calling or self._safety_active,
             current_temp=self._state_float(self.config.temperature_sensor),
-            disturbed=self._any_window_open(self.config.window_sensors),
+            disturbed=disturbed or self._any_window_open(self.config.window_sensors),
             # A boiler that isn't heating has no coast to learn.
             learn=self.intel.state.heat_check.fault_since is None,
             now=self._now(),
@@ -847,8 +883,12 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
             self._heater_available = heater_available
         # An unavailable relay can't be switched: don't report or learn from
-        # heat that never happened.
-        heating = want_heat and heater_available
+        # heat that never happened. A relay released for a hand test isn't
+        # Neat's heating either, and a half-finished run teaches nothing.
+        released = self._relay_released()
+        heating = want_heat and heater_available and not released
+        if released:
+            self._heat_cycle_start = None
 
         self._track_heat_cycle(heating)
         if track_heat_interval(self.intel.state.energy, want_heat=heating):
@@ -856,9 +896,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._async_check_warming(
             heating and (self._house_calling or self._safety_active)
         )
-        self._track_coast(heating)
+        self._track_coast(heating, disturbed=released)
 
-        await self._async_set_heater(want_heat)
+        if not released:
+            await self._async_set_heater(want_heat)
 
         target, _sched = self.effective_main_target()
         if note_setpoint_event(self.intel.state.energy, float(target)):
@@ -919,7 +960,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._dirty_intel = False
 
         self.data = self._snapshot()
-        self.data["boiler_on"] = heating
+        # While released, show what the relay is really doing.
+        self.data["boiler_on"] = (
+            heater_available and self._is_on(self.config.heater) if released else heating
+        )
         self.data["boiler_demand"] = demand
         self.data["boiler_cycle_wait_seconds"] = round(cycle_wait)
         self.data["heater_available"] = heater_available

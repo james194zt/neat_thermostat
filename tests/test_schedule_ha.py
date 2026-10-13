@@ -17,8 +17,14 @@ MONDAY = "2026-09-28"  # BST (UTC+1)
 
 
 @pytest.fixture
-async def setup(hass):
+async def setup(hass, monkeypatch):
     await hass.config.async_set_time_zone("Europe/London")
+    # Minimum on/off can't be 0 any more; these tests jump the clock around, so
+    # switch the anti-short-cycle guard off here (test_control.py covers it).
+    monkeypatch.setattr(
+        "custom_components.neat_thermostat.coordinator.boiler_cycle_guard",
+        lambda want_on, is_on, seconds, **_kw: (want_on, 0.0),
+    )
     calls = []
 
     async def record(call):
