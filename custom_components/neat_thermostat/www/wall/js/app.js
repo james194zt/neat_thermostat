@@ -50,8 +50,15 @@ const ui = {
   modeIcon: document.getElementById("modeIcon"),
   ringLeaf: document.getElementById("ringLeaf"),
   thermoRing: document.getElementById("thermoRing"),
-  ringTicks: document.getElementById("ringTicks"),
-  ringCallouts: document.getElementById("ringCallouts"),
+  dialFill: document.getElementById("dialFill"),
+  dialHit: document.getElementById("dialHit"),
+  dialKnob: document.getElementById("dialKnob"),
+  nowDot: document.getElementById("nowDot"),
+  dialG0: document.getElementById("dialG0"),
+  dialG1: document.getElementById("dialG1"),
+  dialCaption: document.getElementById("dialCaption"),
+  topStatus: document.getElementById("topStatus"),
+  notices: document.querySelector(".notices"),
   currentTemp: document.getElementById("currentTemp"),
   zonePill: document.getElementById("zonePill"),
   windowBanner: document.getElementById("windowBanner"),
@@ -87,6 +94,10 @@ let optimisticMode = null;
 
 function getDisplayLabel() {
   return activeLabel;
+}
+
+function escapeHtml(text) {
+  return String(text ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
 function formatTemp(value, suffix = "°") {
@@ -320,8 +331,10 @@ function getCurrentTemperature(state) {
     return Number(fromClimate);
   }
 
-  // Fall back to house inside sensor so the dial isn't blank when climate is offline
-  const sensorId = config.sensors?.insideTemp?.trim();
+  // The house can fall back to its inside sensor; a room never borrows the
+  // house's temperature (an offline TRV would otherwise show the hall's).
+  const isHouse = !state || state.entity_id === config.primary.entity;
+  const sensorId = isHouse ? config.sensors?.insideTemp?.trim() : "";
   if (sensorId) {
     const raw = client?.getState(sensorId)?.state;
     if (raw != null && raw !== "unavailable" && raw !== "unknown" && !Number.isNaN(Number(raw))) {
@@ -336,146 +349,74 @@ function getHvacAction(state) {
   return state.attributes.hvac_action || state.state || "unknown";
 }
 
-/* —— Heating gauge (Lovelace-style tick ring) —— */
-const GAUGE = {
-  cx: 100,
-  cy: 100,
-  // Keep ticks tight against the face (face inset ~7.5% → ~r85)
-  rOuter: 96,
-  rInner: 88,
-  // Outside the ticks; viewBox padding keeps these from clipping
-  rLabel: 116,
-  // Sweep leaves a gap at the bottom for the face content rhythm
-  startDeg: -140,
-  sweepDeg: 280,
-  ticks: 70,
-  defaultMin: 5,
-  defaultMax: 30,
+/* —— Dial: a 270° arc like the Neat dashboard card (same path, same colours) —— */
+const DIAL = { cx: 100, cy: 100, r: 84, startDeg: 135, sweepDeg: 270, defaultMin: 5, defaultMax: 30 };
+// [start, end] of the arc gradient per state.
+const DIAL_COLOURS = {
+  heating: ["#FFB74D", "#F4511E"],
+  boost: ["#FFD54F", "#F4511E"],
+  eco: ["#9CCC65", "#43A047"],
+  off: ["#5f656b", "#8a9096"],
+  idle: ["#FFD180", "#FF9800"],
 };
-
-let ringTicksBuilt = false;
-
-function degToRad(deg) {
-  return (deg * Math.PI) / 180;
-}
-
-function polar(cx, cy, r, deg) {
-  // 0° at 12 o'clock, clockwise
-  const rad = degToRad(deg - 90);
-  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
-}
 
 function getGaugeRange(state) {
   const min = Number(state?.attributes?.min_temp);
   const max = Number(state?.attributes?.max_temp);
   return {
-    min: Number.isFinite(min) ? min : GAUGE.defaultMin,
-    max: Number.isFinite(max) && max > min ? max : GAUGE.defaultMax,
+    min: Number.isFinite(min) ? min : DIAL.defaultMin,
+    max: Number.isFinite(max) && max > min ? max : DIAL.defaultMax,
   };
 }
 
-function tempToDeg(temp, min, max) {
-  const clamped = Math.min(max, Math.max(min, temp));
-  const ratio = (clamped - min) / (max - min || 1);
-  return GAUGE.startDeg + ratio * GAUGE.sweepDeg;
+/** 0..1 along the arc for a temperature, or null. */
+function dialPos(temp, min, max) {
+  if (temp == null || !Number.isFinite(Number(temp))) return null;
+  return Math.min(1, Math.max(0, (Number(temp) - min) / (max - min || 1)));
 }
 
-function ensureRingTicks() {
-  if (ringTicksBuilt || !ui.ringTicks) return;
-  const frag = document.createDocumentFragment();
-  for (let i = 0; i < GAUGE.ticks; i++) {
-    const t = i / (GAUGE.ticks - 1);
-    const deg = GAUGE.startDeg + t * GAUGE.sweepDeg;
-    const outer = polar(GAUGE.cx, GAUGE.cy, GAUGE.rOuter, deg);
-    const inner = polar(GAUGE.cx, GAUGE.cy, GAUGE.rInner, deg);
-    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-    line.setAttribute("x1", outer.x.toFixed(2));
-    line.setAttribute("y1", outer.y.toFixed(2));
-    line.setAttribute("x2", inner.x.toFixed(2));
-    line.setAttribute("y2", inner.y.toFixed(2));
-    line.setAttribute("class", i % 5 === 0 ? "tick major" : "tick");
-    line.dataset.index = String(i);
-    frag.appendChild(line);
+function placeOnArc(el, p) {
+  if (!el) return;
+  if (p == null) {
+    el.style.display = "none";
+    return;
   }
-  ui.ringTicks.appendChild(frag);
-  ringTicksBuilt = true;
-}
-
-function formatGaugeLabel(value) {
-  if (value == null || Number.isNaN(Number(value))) return "";
-  return Number(value).toFixed(1).replace(/\.0$/, "");
-}
-
-function addRingCallout(temp, deg) {
-  if (!ui.ringCallouts) return;
-  const label = formatGaugeLabel(temp);
-  if (!label) return;
-
-  const textPos = polar(GAUGE.cx, GAUGE.cy, GAUGE.rLabel, deg);
-
-  const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-  text.setAttribute("class", "ring-callout");
-  text.setAttribute("x", textPos.x.toFixed(2));
-  text.setAttribute("y", textPos.y.toFixed(2));
-  text.setAttribute("text-anchor", "middle");
-  text.setAttribute("dominant-baseline", "middle");
-  text.textContent = label;
-  ui.ringCallouts.appendChild(text);
+  const ang = ((DIAL.startDeg + DIAL.sweepDeg * p) * Math.PI) / 180;
+  el.style.display = "";
+  el.setAttribute("cx", (DIAL.cx + DIAL.r * Math.cos(ang)).toFixed(1));
+  el.setAttribute("cy", (DIAL.cy + DIAL.r * Math.sin(ang)).toFixed(1));
 }
 
 function updateRingGauge(state, current, target) {
-  ensureRingTicks();
-  if (!ui.ringTicks) return;
-
   const { min, max } = getGaugeRange(state);
-  const mode = state?.state;
-  const hasCurrent = current != null && Number.isFinite(current);
-  const hasTarget = target != null && Number.isFinite(target);
-
-  let low = null;
-  let high = null;
-  if (hasCurrent && hasTarget) {
-    low = Math.min(current, target);
-    high = Math.max(current, target);
-  } else if (hasTarget) {
-    low = high = target;
-  } else if (hasCurrent) {
-    low = high = current;
+  const off = state?.state === "off";
+  const p = off ? null : dialPos(target, min, max);
+  if (ui.dialFill) {
+    const fill = (p ?? 0) * 100;
+    ui.dialFill.setAttribute("stroke-dasharray", `${fill.toFixed(1)} 100`);
+    ui.dialFill.style.display = fill > 0 ? "" : "none";
   }
+  placeOnArc(ui.dialKnob, p);
+  placeOnArc(ui.nowDot, dialPos(current, min, max));
+  ui.currentTemp?.classList.toggle("pending", optimisticTarget != null);
+}
 
-  const showBand = low != null && high != null && mode !== "off";
-
-  // Light up ticks between current and target
-  const ticks = ui.ringTicks.querySelectorAll(".tick");
-  ticks.forEach((tick, i) => {
-    const t = i / (GAUGE.ticks - 1);
-    const deg = GAUGE.startDeg + t * GAUGE.sweepDeg;
-    let active = false;
-    if (showBand) {
-      const lowDeg = tempToDeg(low, min, max);
-      const highDeg = tempToDeg(high, min, max);
-      if (Math.abs(highDeg - lowDeg) < 2) {
-        active = Math.abs(deg - lowDeg) <= 2.5;
-      } else {
-        active = deg >= lowDeg - 0.01 && deg <= highDeg + 0.01;
-      }
-    }
-    tick.classList.toggle("active", active);
-  });
-
-  if (ui.ringCallouts) {
-    ui.ringCallouts.innerHTML = "";
-    if (showBand && hasCurrent && hasTarget) {
-      if (Math.abs(current - target) < 0.05) {
-        addRingCallout(current, tempToDeg(current, min, max));
-      } else {
-        addRingCallout(current, tempToDeg(current, min, max));
-        addRingCallout(target, tempToDeg(target, min, max));
-      }
-    } else if (showBand && hasTarget) {
-      addRingCallout(target, tempToDeg(target, min, max));
-    }
+/** Temperature under a pointer on the dial (snapped to the step), or null in the gap. */
+function tempFromPointer(ev) {
+  const rect = ui.thermoRing.getBoundingClientRect();
+  const x = ((ev.clientX - rect.left) / rect.width) * 200 - DIAL.cx;
+  const y = ((ev.clientY - rect.top) / rect.height) * 200 - DIAL.cy;
+  let deg = (Math.atan2(y, x) * 180) / Math.PI; // 0 = 3 o'clock, clockwise
+  let along = (deg - DIAL.startDeg + 360) % 360;
+  if (along > DIAL.sweepDeg) {
+    // In the bottom gap: snap to whichever end is nearer.
+    along = along - DIAL.sweepDeg < (360 - DIAL.sweepDeg) / 2 ? DIAL.sweepDeg : 0;
   }
+  const state = getActiveState();
+  const { min, max } = getGaugeRange(state);
+  const raw = min + (along / DIAL.sweepDeg) * (max - min);
+  const step = activeStep || 0.5;
+  return Math.min(max, Math.max(min, Math.round(raw / step) * step));
 }
 
 function applyTheme(state) {
@@ -490,14 +431,35 @@ function applyTheme(state) {
     target > current + 0.05 &&
     mode !== "off";
 
+  // Heating = what Neat reports (the boiler really is on for this zone); a
+  // fresh tap upwards shows it straight away, before HA catches up.
+  const heating = action === "heating" || (optimisticTarget != null && needsHeat);
+
   let ringState = "idle";
   if (mode === "off") ringState = "off";
   else if (preset === "eco") ringState = "eco";
-  else if (preset === "boost") ringState = needsHeat ? "boost" : "idle";
-  else if (needsHeat) ringState = "heating";
+  else if (preset === "boost") ringState = heating ? "boost" : "idle";
+  else if (heating) ringState = "heating";
   else ringState = "idle";
 
   ui.thermoRing?.setAttribute("data-state", ringState);
+  if (ui.app) ui.app.dataset.state = ringState;
+  const [c0, c1] = DIAL_COLOURS[ringState] || DIAL_COLOURS.idle;
+  ui.dialG0?.setAttribute("stop-color", c0);
+  ui.dialG1?.setAttribute("stop-color", c1);
+  if (ui.dialCaption) {
+    ui.dialCaption.textContent =
+      mode === "off"
+        ? ""
+        : state?.attributes?.preheating
+          ? "Preheating to"
+          : heating
+            ? "Heating to"
+            : preset === "eco"
+              ? "Eco"
+              : "Set to";
+  }
+  if (ui.topStatus) ui.topStatus.textContent = statusText(state, { heating, current, target });
   document.body.style.background = "";
 
   const labels = [];
@@ -516,6 +478,26 @@ function applyTheme(state) {
     "is-active",
     mode === "off" || preset === "eco" || preset === "away"
   );
+}
+
+/** One line under the name: what the heating is doing, in words. */
+function statusText(state, { heating, current, target }) {
+  const a = state?.attributes || {};
+  const primary = getPrimaryState()?.attributes || {};
+  if (!state) return "Connecting…";
+  if (state.state === "unavailable") return "Unavailable";
+  const trv = a.trv_entity ? client?.getState(a.trv_entity) : null;
+  if (a.trv_entity && (!trv || ["unavailable", "unknown"].includes(trv.state))) {
+    return "Radiator valve offline";
+  }
+  if (state.state === "off") return "Heating is off";
+  if (primary.summer_mode_state) return "Summer mode";
+  if (a.window_open || primary.window_open) return "Window open — paused";
+  if (a.preheating) return `Warming up for ${a.preheat_for || "the schedule"}`;
+  if (heating) return isPrimaryView() ? "Warming the house" : "Warming the room";
+  if (a.preset_mode === "away") return "Away";
+  if (current != null && target != null && current >= target - 0.05) return "Up to temperature";
+  return "Holding temperature";
 }
 
 function updateModeButtons(state) {
@@ -543,6 +525,7 @@ function renderBetterThermostatStatus() {
   const summerMode = Boolean(primaryState?.attributes?.summer_mode_state);
   ui.windowBanner?.classList.toggle("hidden", !windowOpen);
   ui.summerPill?.classList.toggle("hidden", !summerMode);
+  ui.notices?.classList.toggle("hidden", !windowOpen && !summerMode);
 }
 
 function renderActiveClimate() {
@@ -559,9 +542,11 @@ function renderActiveClimate() {
     const m = Math.round(Number(etaMins));
     etaText =
       m < 60
-        ? `~${m} min to target`
-        : `~${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""} to target`;
+        ? `~${m} min to go`
+        : `~${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""} to go`;
   }
+  // Only while it's actually heating towards the target.
+  if (getHvacAction(state) !== "heating" || viewState?.state === "off") etaText = "";
 
   if (ui.heroLabel) ui.heroLabel.textContent = getDisplayLabel();
   // Centre dial = setpoint (or OFF); bottom-left = live room temp
@@ -707,7 +692,6 @@ function updateRoomNavigation() {
   ui.backToHome.classList.toggle("hidden", !inRoom);
   if (ui.backToHome) {
     const homeName = config.primary?.name || "Heating";
-    ui.backToHome.textContent = `← ${homeName}`;
     ui.backToHome.setAttribute("aria-label", `Back to ${homeName}`);
   }
   ui.app.classList.toggle("room-view", inRoom);
@@ -734,7 +718,7 @@ function renderRooms() {
     return;
   }
   ui.roomStrip.classList.remove("hidden");
-  ui.roomStrip.classList.toggle("room-strip--few", rooms.length < 4);
+  ui.roomStrip.classList.toggle("room-strip--many", rooms.length > 4);
 
   for (const room of rooms) {
     const state = getClimateState(room.entity);
@@ -743,13 +727,27 @@ function renderRooms() {
     chip.className = "room-chip";
     if (room.entity === activeEntity) chip.classList.add("active");
 
-    const current = getCurrentTemperature(state);
+    // The room's own temperature (not the TRV's); never fall back to the house sensor here.
+    const raw = state?.attributes?.current_temperature;
+    const current = raw != null && Number.isFinite(Number(raw)) ? Number(raw) : null;
     const target = getTargetTemperature(state);
-    const shown = target ?? current;
+    const heat = state?.attributes?.hvac_action === "heating";
+    const trvId = state?.attributes?.trv_entity;
+    const trv = trvId ? client?.getState(trvId) : null;
+    const offline =
+      !state || state.state === "unavailable" || (trvId && (!trv || ["unavailable", "unknown"].includes(trv.state)));
+    chip.classList.toggle("heat", heat && !offline);
+    const name = escapeHtml(room.name);
+    const setLine = offline
+      ? `<span class="room-off">Offline</span>`
+      : state.state === "off"
+        ? "Off"
+        : `${heat ? "Heating to" : "Set"} ${formatTemp(target)}`;
 
     chip.innerHTML = `
-      <div class="name">${room.name}</div>
-      <div class="temp">${formatTemp(shown)}</div>
+      <span class="room-top"><span class="room-name">${name}</span>${heat && !offline ? MODE_ICONS.heat : ""}</span>
+      <span class="room-temp${current == null ? " unknown" : ""}">${formatTemp(current)}</span>
+      <span class="room-set">${setLine}</span>
     `;
 
     chip.addEventListener("click", () => {
@@ -922,30 +920,74 @@ async function adjustTemperature(delta) {
     const max = Number(state?.attributes?.max_temp);
     const lo = Number.isFinite(min) ? min : 5;
     const hi = Number.isFinite(max) ? max : 30;
-    const next = Math.min(hi, Math.max(lo, Number((base + delta).toFixed(1))));
+    showTarget(Math.min(hi, Math.max(lo, Number((base + delta).toFixed(1)))));
+  });
+}
 
-    optimisticTarget = next;
-    updateCentreControls(state, next);
-    const current = getCurrentTemperature(state);
-    if (ui.targetTemp) ui.targetTemp.textContent = formatTemp(current, "°");
-    updateRingGauge(state, current, next);
-    applyTheme(getEffectiveClimateState(state));
+/** Show a new target at once; send it to HA after a short pause (or not yet, mid-drag). */
+function showTarget(next, { send = true } = {}) {
+  const state = getEffectiveClimateState(getActiveState());
+  optimisticTarget = next;
+  updateCentreControls(state, next);
+  const current = getCurrentTemperature(state);
+  if (ui.targetTemp) ui.targetTemp.textContent = formatTemp(current, "°");
+  updateRingGauge(state, current, next);
+  applyTheme(getEffectiveClimateState(state));
 
-    // Debounce HA write so rapid taps stay instant and only the final value is sent
-    clearTimeout(tempSendTimer);
-    const entity = activeEntity;
-    const value = next;
-    const seq = ++tempSendSeq;
-    tempSendTimer = setTimeout(() => {
-      tempSendTimer = null;
-      if (!client || seq !== tempSendSeq) return;
-      client.setTemperature(entity, value).catch(() => {
-        if (seq === tempSendSeq) {
-          clearOptimisticTarget();
-          renderActiveClimate();
-        }
-      });
-    }, 280);
+  // Debounce HA write so rapid taps stay instant and only the final value is sent
+  clearTimeout(tempSendTimer);
+  const seq = ++tempSendSeq;
+  if (!send) return;
+  const entity = activeEntity;
+  const value = next;
+  tempSendTimer = setTimeout(() => {
+    tempSendTimer = null;
+    if (!client || seq !== tempSendSeq) return;
+    client.setTemperature(entity, value).catch(() => {
+      if (seq === tempSendSeq) {
+        clearOptimisticTarget();
+        renderActiveClimate();
+      }
+    });
+  }, 280);
+}
+
+/* Drag the dial: follow the finger, send when it lifts. */
+let dragging = false;
+let dragValue = null;
+
+function dialPointer(ev) {
+  const value = tempFromPointer(ev);
+  if (value == null || value === dragValue) return;
+  dragValue = value;
+  showTarget(value, { send: false });
+}
+
+ui.dialHit?.addEventListener("pointerdown", (ev) => {
+  const state = getEffectiveClimateState(getActiveState());
+  if (!state || state.state === "off") return;
+  ev.preventDefault();
+  ensureUnlocked(() => {
+    dragging = true;
+    dragValue = null;
+    ui.thermoRing.classList.add("dragging");
+    try {
+      ui.dialHit.setPointerCapture(ev.pointerId);
+    } catch {
+      // Capture can fail if the pointer already lifted (e.g. after the PIN pad).
+    }
+    dialPointer(ev);
+  });
+});
+ui.dialHit?.addEventListener("pointermove", (ev) => {
+  if (dragging) dialPointer(ev);
+});
+for (const type of ["pointerup", "pointercancel"]) {
+  ui.dialHit?.addEventListener(type, () => {
+    if (!dragging) return;
+    dragging = false;
+    ui.thermoRing.classList.remove("dragging");
+    if (dragValue != null) showTarget(dragValue);
   });
 }
 
@@ -1059,20 +1101,8 @@ ui.pinPad?.addEventListener("click", async (ev) => {
   if (pinBuffer.length === 4) await submitPin();
 });
 
-function closeModeDrawer() {
-  ui.modeDrawer?.classList.add("hidden");
-  ui.modeFace?.setAttribute("aria-expanded", "false");
-}
-
-function toggleModeDrawer() {
-  if (!ui.modeDrawer) return;
-  const open = ui.modeDrawer.classList.toggle("hidden") === false;
-  ui.modeFace?.setAttribute("aria-expanded", open ? "true" : "false");
-}
-
-ui.modeFace?.addEventListener("click", () => {
-  toggleModeDrawer();
-});
+// The modes are always on screen now (no drawer to close).
+function closeModeDrawer() {}
 
 for (const button of ui.modeButtons) {
   const key = button.dataset.preset || button.dataset.mode;
@@ -1083,10 +1113,13 @@ for (const button of ui.modeButtons) {
       const entity = activeEntity;
 
       if (button.dataset.preset === "eco") {
-        applyOptimisticMode({ mode: "heat", preset: "eco" });
-        closeModeDrawer();
+        // Eco toggles, like Boost: tap again to go back to the normal setting.
+        const state = getActiveState();
+        const ecoOn = state?.attributes?.preset_mode === "eco" || optimisticMode?.preset === "eco";
+        const nextPreset = ecoOn ? "none" : "eco";
+        applyOptimisticMode({ mode: "heat", preset: nextPreset });
         try {
-          await client.setPresetMode(entity, "eco");
+          await client.setPresetMode(entity, nextPreset);
         } catch {
           clearOptimisticMode();
           renderActiveClimate();

@@ -11,105 +11,83 @@
     <meta http-equiv="Expires" content="0" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <title>Neat · ThermoRing</title>
+    <title>Neat · Wall panel</title>
   </head>
   <body>
     <div class="app" id="app" hidden>
-      <header class="ring-header">
-        <button class="top-back hidden" id="backToHome" type="button" aria-label="Back to heating">← Heating</button>
-        <button type="button" class="zone-pill" id="zonePill">
-          <span id="heroLabel">Home</span>
+      <header class="top">
+        <button class="top-back hidden" id="backToHome" type="button" aria-label="Back to the house">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/></svg>
         </button>
-        <div class="conn-dot" id="connectionDot" title="Connection"></div>
+        <button type="button" class="top-title" id="zonePill">
+          <span class="top-name" id="heroLabel">Home</span>
+          <span class="top-status" id="topStatus"></span>
+        </button>
+        <div class="top-side">
+          <span class="conn-pill" id="connectionDot">Offline</span>
+          <span class="chip outdoor" title="Outside">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15 13V5a3 3 0 0 0-6 0v8a5 5 0 1 0 6 0zm-3 7a3 3 0 0 1-1.5-5.6l.5-.29V5a1 1 0 0 1 2 0v9.11l.5.29A3 3 0 0 1 12 20z"/></svg>
+            <span id="outsideTemp">--</span>
+          </span>
+          <span class="chip humidity" title="Humidity">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3.2S6.5 10.1 6.5 14.2a5.5 5.5 0 0 0 11 0C17.5 10.1 12 3.2 12 3.2z"/></svg>
+            <span id="insideHumidity">--</span>
+          </span>
+        </div>
       </header>
 
-      <div class="banner hidden" id="windowBanner">Window open — heating paused</div>
-      <div class="banner warn hidden" id="summerPill">Summer mode</div>
+      <div class="notices">
+        <span class="notice hidden" id="windowBanner">Window open — heating paused</span>
+        <span class="notice hidden" id="summerPill">Summer mode</span>
+      </div>
 
-      <section class="ring-stage">
-        <div class="thermo-ring" id="thermoRing" data-state="idle">
-          <svg class="ring-gauge" id="ringGauge" viewBox="-24 -24 248 248" aria-hidden="true">
-            <g id="ringTicks"></g>
-            <g id="ringCallouts"></g>
+      <section class="stage">
+        <button class="step" id="tempDown" type="button" aria-label="Lower the temperature">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 13H5v-2h14z"/></svg>
+        </button>
+        <div class="dial" id="thermoRing" data-state="idle">
+          <svg class="dial-svg" viewBox="0 0 200 200" aria-hidden="true">
+            <defs>
+              <linearGradient id="dialGrad" x1="0" y1="1" x2="1" y2="0">
+                <stop id="dialG0" offset="0" stop-color="#FFD180" />
+                <stop id="dialG1" offset="1" stop-color="#FF9800" />
+              </linearGradient>
+            </defs>
+            <path class="track" d="M40.6 159.4 A84 84 0 1 1 159.4 159.4" />
+            <path class="fill" id="dialFill" d="M40.6 159.4 A84 84 0 1 1 159.4 159.4" pathLength="100" />
+            <path class="hit" id="dialHit" d="M40.6 159.4 A84 84 0 1 1 159.4 159.4" />
+            <circle class="now-dot" id="nowDot" r="3.6" />
+            <circle class="knob" id="dialKnob" r="9" />
           </svg>
-          <div class="ring-face">
-            <div class="ring-sheen" aria-hidden="true"></div>
-            <div class="ring-face-inner">
-              <div class="ring-top">
-                <div class="stat-row">
-                  <div class="stat-line outdoor" title="Outside temperature">
-                    <svg class="stat-icon outdoor-icon" viewBox="0 0 24 24" aria-hidden="true">
-                      <path
-                        fill="currentColor"
-                        d="M15 13V5a3 3 0 0 0-6 0v8a5 5 0 1 0 6 0zm-3 7a3 3 0 0 1-1.5-5.6l.5-.29V5a1 1 0 0 1 2 0v9.11l.5.29A3 3 0 0 1 12 20z"
-                      />
-                      <circle cx="12" cy="17" r="1.6" fill="currentColor" />
-                    </svg>
-                    <span id="outsideTemp">--</span>
-                  </div>
-                  <div class="stat-line humidity" title="Humidity">
-                    <svg class="stat-icon humidity-icon" viewBox="0 0 24 24" aria-hidden="true">
-                      <path
-                        fill="currentColor"
-                        d="M12 3.2S6.5 10.1 6.5 14.2a5.5 5.5 0 0 0 11 0C17.5 10.1 12 3.2 12 3.2z"
-                      />
-                    </svg>
-                    <span id="insideHumidity">--</span>
-                  </div>
-                </div>
-              </div>
-
-              <div class="ring-mid">
-                <button class="temp-btn" id="tempDown" type="button" aria-label="Decrease target">
-                  <span class="temp-btn-glyph" aria-hidden="true">−</span>
-                </button>
-                <div class="current-temp" id="currentTemp" aria-live="polite">
-                  <span class="temp-int" id="currentTempInt">--</span><span class="temp-dec" id="currentTempDec"></span>
-                </div>
-                <button class="temp-btn" id="tempUp" type="button" aria-label="Increase target">
-                  <span class="temp-btn-glyph" aria-hidden="true">+</span>
-                </button>
-              </div>
-
-              <div class="ring-divider" aria-hidden="true"></div>
-
-              <div class="ring-bottom">
-                <div class="meta-block">
-                  <div class="meta-label">Now</div>
-                  <div class="meta-value" id="targetTemp">--</div>
-                </div>
-                <button type="button" class="meta-block mode-btn-face" id="modeFace" aria-label="Change mode">
-                  <div class="meta-label">Mode</div>
-                  <div class="meta-value mode-icon" id="modeIcon">heat</div>
-                </button>
-              </div>
+          <div class="core">
+            <div class="caption" id="dialCaption">Set to</div>
+            <div class="current-temp" id="currentTemp" aria-live="polite">
+              <span class="temp-int" id="currentTempInt">--</span><span class="temp-dec" id="currentTempDec"></span><span class="temp-unit">°</span>
             </div>
-            <div class="ring-leaf" id="ringLeaf" title="Leaf — efficient (eco, away, or off)" aria-hidden="true">
-              <svg viewBox="0 0 24 24" focusable="false">
-                <path
-                  fill="currentColor"
-                  d="M17 8c-9 2-11.1 8.17-13.18 13.67l1.89.33C8.67 16.37 14.5 12.5 17 11.33V8m0 0c2.67 0 5 1.79 5 5 0 4.5-4.5 8.5-10.5 9.5C13.5 19.5 15 16 17 11.33V8z"
-                />
-              </svg>
+            <div class="sub">Indoor <span id="targetTemp">--</span></div>
+            <div class="eta" id="heroSubtitle"></div>
+            <div class="leaf" id="ringLeaf" title="Leaf — saving energy" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M18.5 3.5c-3.5.2-6.8 1.8-9 4.4C7 10.6 5.9 13.8 6.1 17.1c3.1-.1 6-1.4 8.1-3.7 2.3-2.5 3.6-5.8 4.3-9.9z"/><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4.5 20.5c2.5-4 5.6-7.4 9.5-10"/></svg>
             </div>
           </div>
         </div>
+        <button class="step" id="tempUp" type="button" aria-label="Raise the temperature">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+        </button>
       </section>
 
-      <section class="mode-drawer hidden" id="modeDrawer">
+      <nav class="modes" id="modeDrawer" aria-label="Mode">
         <button class="mode-btn" data-mode="heat" type="button">Heat</button>
         <button class="mode-btn" data-mode="off" type="button">Off</button>
         <button class="mode-btn" data-preset="eco" type="button">Eco</button>
         <button class="mode-btn" data-preset="boost" type="button">Boost</button>
-      </section>
+      </nav>
 
-      <p class="footer-eta muted" id="heroSubtitle"></p>
-
-      <section class="bottom-panel">
+      <section class="rooms">
         <div class="room-strip" id="roomStrip"></div>
       </section>
 
-      <!-- Kept for JS compatibility; visually unused in ring layout -->
+      <!-- Kept for JS compatibility; not shown -->
       <span class="sr-only" id="actionPill">Idle overview</span>
       <span class="sr-only" id="connectionLabel">Connecting</span>
       <span class="sr-only" id="insideTemp">--</span>
@@ -169,7 +147,7 @@
     <div class="screensaver hidden" id="screensaver" aria-hidden="true">
       <div class="screensaver-time" data-clock>--:--</div>
       <div class="screensaver-date" data-date></div>
-      <div class="screensaver-hint">Wave to wake</div>
+      <div class="screensaver-hint">Tap to wake</div>
     </div>
 
     <script>

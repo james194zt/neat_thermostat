@@ -1,25 +1,30 @@
+/* Neat wall panel — touch-first, matches the Neat dashboard card.
+   Sized in vmin so it fills a square 480×480 panel and scales elsewhere. */
 :root {
-  --bg: #2a2e33;
-  --bg-deep: #1e2226;
-  --face: #32363c;
-  --face-hi: #3a3f46;
-  --text: #ffffff;
-  --text-muted: rgba(255, 255, 255, 0.55);
-  --ring-red: #e53935;
-  --ring-orange: #ff9800;
-  --ring-amber: #ffc107;
-  --humidity: #42a5f5;
-  --outdoor: #66bb6a;
-  --danger: #ff5c5c;
-  --pad: 2.2vmin;
-  --gap: 1.6vmin;
-  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --bg: #16191d;
+  --bg-hi: #1f2328;
+  --surface: rgba(255, 255, 255, 0.06);
+  --surface-hi: rgba(255, 255, 255, 0.1);
+  --line: rgba(255, 255, 255, 0.08);
+  --text: #f4f5f6;
+  --text-muted: rgba(244, 245, 246, 0.58);
+  --heat: #f57c00;
+  --heat-soft: #ff9800;
+  --amber: #ffc107;
+  --green: #52c41a;
+  --teal: #19d4de;
+  --blue: #42a5f5;
+  --red: #ef5350;
+  --tint: var(--teal);
+  --tint-wash: rgba(25, 212, 222, 0.1);
+  font-family: Roboto, "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 
 * {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
+  -webkit-user-select: none;
 }
 
 html,
@@ -38,6 +43,8 @@ button {
   color: inherit;
   background: transparent;
   cursor: pointer;
+  padding: 0;
+  touch-action: manipulation;
 }
 
 .sr-only {
@@ -61,608 +68,550 @@ button {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr) auto auto;
-  grid-template-areas:
-    "header"
-    "banner"
-    "stage"
-    "eta"
-    "rooms";
-  padding: var(--pad);
-  gap: var(--gap);
+  /* Named slots: a hidden row (notices) mustn't shift the others up. */
+  grid-template-areas: "top" "notices" "stage" "modes" "rooms";
+  row-gap: 0;
+  padding: 3vmin 3.2vmin 3.2vmin;
   overflow: hidden;
-  background: radial-gradient(ellipse at 50% 35%, #343940 0%, var(--bg) 55%, var(--bg-deep) 100%);
+  /* A soft wash of the state colour from the top-left, like the card. */
+  background:
+    radial-gradient(90% 70% at 0% 0%, var(--tint-wash), transparent 70%),
+    linear-gradient(180deg, var(--bg-hi), var(--bg));
+  transition: background 0.4s ease;
 }
 
-/* —— Header —— */
-.ring-header {
-  grid-area: header;
-  display: grid;
-  grid-template-columns: auto auto 1fr auto;
-  grid-template-areas: "back zone mid conn";
+.app[data-state="heating"],
+.app[data-state="boost"] {
+  --tint: var(--heat-soft);
+  --tint-wash: rgba(255, 152, 0, 0.16);
+}
+.app[data-state="eco"] {
+  --tint: var(--green);
+  --tint-wash: rgba(82, 196, 26, 0.14);
+}
+.app[data-state="off"] {
+  --tint: #8a9096;
+  --tint-wash: rgba(138, 144, 150, 0.12);
+}
+
+/* —— Top bar —— */
+.top {
+  grid-area: top;
+  display: flex;
   align-items: center;
-  gap: 1vmin;
-  position: relative;
-  z-index: 2;
-}
-
-.zone-pill {
-  grid-area: zone;
-  justify-self: start;
-  padding: 1.1vmin 3.5vmin;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.28);
-  font-size: 2.6vmin;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
+  gap: 1.6vmin;
+  min-height: 10vmin;
 }
 
 .top-back {
-  grid-area: back;
-  justify-self: start;
-  padding: 1.2vmin 2.4vmin;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.35);
-  font-size: 2.4vmin;
-  font-weight: 700;
-}
-
-.conn-dot {
-  grid-area: conn;
-  justify-self: end;
-  width: 2vmin;
-  height: 2vmin;
-  border-radius: 50%;
-  background: #6b7280;
-  box-shadow: 0 0 0 0.4vmin rgba(0, 0, 0, 0.2);
-}
-
-.conn-dot.online {
-  background: #52c41a;
-}
-
-.conn-dot.offline {
-  background: var(--danger);
-}
-
-.banner {
-  grid-area: banner;
-  padding: 1.4vmin 2vmin;
-  border-radius: 2vmin;
-  background: rgba(0, 0, 0, 0.35);
-  text-align: center;
-  font-size: 2.6vmin;
-  font-weight: 600;
-}
-
-.banner.warn {
-  color: #ffd666;
-}
-
-/* Stack both banners into the same row when visible */
-#windowBanner {
-  grid-area: banner;
-}
-
-#summerPill {
-  grid-area: banner;
-}
-
-/* —— Ring stage —— */
-.ring-stage {
-  grid-area: stage;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 0;
-  overflow: visible;
-}
-
-.thermo-ring {
-  /* Prefer filling stage height so the dial sits large with cards below */
-  --gauge-accent: #9aa0a6;
-  position: relative;
-  height: 100%;
-  width: auto;
-  max-width: 100%;
-  aspect-ratio: 1 / 1;
-  border-radius: 50%;
-  background: transparent;
-  box-shadow: 0 2vmin 6vmin rgba(0, 0, 0, 0.35);
-  overflow: visible;
-}
-
-.ring-gauge {
-  position: absolute;
-  /* Extend past the dial so callout labels aren't clipped */
-  inset: -12%;
-  width: 124%;
-  height: 124%;
-  z-index: 0;
-  overflow: visible;
-  pointer-events: none;
-}
-
-.ring-gauge .tick {
-  stroke: rgba(255, 255, 255, 0.18);
-  stroke-width: 1.35;
-  stroke-linecap: round;
-  transition: stroke 0.25s ease, stroke-width 0.25s ease;
-}
-
-.ring-gauge .tick.major {
-  stroke: rgba(255, 255, 255, 0.28);
-  stroke-width: 1.6;
-}
-
-.ring-gauge .tick.active {
-  stroke: var(--gauge-accent);
-  stroke-width: 2.35;
-}
-
-.ring-callout {
-  fill: var(--gauge-accent);
-  font-size: 10px;
-  font-weight: 700;
-  font-family: "Segoe UI", system-ui, sans-serif;
-  letter-spacing: -0.02em;
-}
-
-.ring-callout-line {
-  display: none;
-}
-
-.thermo-ring[data-state="heating"] {
-  --gauge-accent: #ff9800;
-  box-shadow:
-    0 0 0 0.45vmin rgba(255, 152, 0, 0.22),
-    0 2vmin 6vmin rgba(0, 0, 0, 0.35);
-}
-
-.thermo-ring[data-state="eco"] {
-  --gauge-accent: #66bb6a;
-}
-
-.thermo-ring[data-state="boost"] {
-  --gauge-accent: #ff5252;
-}
-
-.thermo-ring[data-state="off"] {
-  --gauge-accent: #6b7280;
-}
-
-.thermo-ring[data-state="idle"] {
-  --gauge-accent: #9aa0a6;
-}
-
-.thermo-ring[data-state="off"] .tick.active,
-.thermo-ring[data-state="idle"] .tick.active {
-  filter: none;
-}
-
-.ring-face {
-  position: absolute;
-  inset: 7.5%;
-  z-index: 1;
-  border-radius: 50%;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.06) 0%, transparent 42%),
-    radial-gradient(circle at 50% 40%, var(--face-hi) 0%, var(--face) 70%, #282c31 100%);
-  overflow: hidden;
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
-    0 0 0 1px rgba(0, 0, 0, 0.35);
-}
-
-.ring-face-inner {
-  position: relative;
-  z-index: 1;
-  height: 100%;
-  width: 100%;
-  box-sizing: border-box;
+  flex-shrink: 0;
+  width: 10vmin;
+  height: 10vmin;
   display: grid;
-  grid-template-rows: auto 1fr auto auto;
-  align-content: stretch;
-  padding: 5% 5% 11%;
-  gap: 0.6vmin;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface);
 }
 
-.ring-sheen {
-  pointer-events: none;
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  /* Soft top highlight only — no hard diagonal band across the setpoint */
-  background: radial-gradient(
-    ellipse 80% 55% at 50% 0%,
-    rgba(255, 255, 255, 0.06) 0%,
-    transparent 70%
-  );
-  transform: none;
+.top-back svg {
+  width: 5.2vmin;
+  height: 5.2vmin;
 }
 
-.ring-top {
-  position: relative;
-  z-index: 1;
-  grid-row: 1;
-  width: 100%;
+.top-title {
+  flex: 1;
+  min-width: 0;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.top-name {
+  font-size: 4.6vmin;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top-status {
+  font-size: 3vmin;
+  color: var(--text-muted);
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.app[data-state="heating"] .top-status,
+.app[data-state="boost"] .top-status {
+  color: var(--heat-soft);
+}
+
+.top-side {
+  display: flex;
   align-items: center;
+  gap: 1.2vmin;
   flex-shrink: 0;
 }
 
-/* Icon column + value column, then centre the whole block */
-.stat-row {
-  display: grid;
-  grid-template-columns: 5vmin max-content;
-  column-gap: 1.4vmin;
-  row-gap: 1.2vmin;
-  align-items: center;
-  justify-items: start;
-  margin: 0 auto;
-}
-
-.stat-line {
-  display: contents;
-}
-
-.stat-icon {
-  width: 5vmin;
-  height: 5vmin;
-  grid-column: 1;
-  justify-self: center;
-}
-
-.stat-line > span {
-  grid-column: 2;
-  font-size: 4.8vmin;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-  min-width: 4.5ch;
-}
-
-.outdoor-icon,
-.stat-line.outdoor > span {
-  color: var(--outdoor);
-}
-
-.humidity-icon,
-.stat-line.humidity > span {
-  color: var(--humidity);
-}
-
-.ring-mid {
-  /* Span the full face; buttons pin to left/right edges, setpoint centres independently */
-  grid-row: 1 / -1;
-  grid-column: 1;
-  position: absolute;
-  z-index: 2;
-  left: 0;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  pointer-events: none;
-}
-
-.ring-mid .temp-btn,
-.ring-mid .current-temp {
-  pointer-events: auto;
-}
-
-.temp-btn {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 3;
-  width: clamp(48px, 12.5vmin, 76px);
-  height: clamp(48px, 12.5vmin, 76px);
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.12);
+.chip {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  padding: 0;
-  margin: 0;
-  border: 0;
-  line-height: 0;
-}
-
-#tempDown {
-  left: 5%;
-}
-
-#tempUp {
-  right: 5%;
-}
-
-.temp-btn:active {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.temp-btn-glyph {
-  display: block;
-  font-size: clamp(28px, 7vmin, 44px);
-  font-weight: 400;
-  line-height: 1;
-  transform: translateY(-0.06em);
-}
-
-.current-temp {
-  /* Centre on the integer only — decimal is out-of-flow so it can't shift or hit + */
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 1;
-  display: block;
-  line-height: 1;
-  font-weight: 700;
-  letter-spacing: -0.04em;
-  font-variant-numeric: tabular-nums;
-  width: max-content;
-  overflow: visible;
-  white-space: nowrap;
-  pointer-events: none;
-}
-
-.current-temp.is-empty .temp-int {
-  font-size: clamp(4.2rem, 22vmin, 9.5rem);
-  opacity: 0.35;
-  letter-spacing: 0.02em;
-}
-
-.current-temp.is-off .temp-int {
-  font-size: clamp(2.6rem, 12vmin, 5.2rem);
-  letter-spacing: 0.12em;
-  min-width: unset;
-  font-weight: 700;
-  opacity: 0.92;
-}
-
-.temp-int {
-  display: block;
-  min-width: 2ch;
-  text-align: center;
-  font-size: clamp(4.4rem, 23vmin, 10rem);
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-
-.temp-dec {
-  position: absolute;
-  left: 100%;
-  top: 0.08em;
-  display: block;
-  font-size: clamp(1.35rem, 6.2vmin, 2.8rem);
+  gap: 0.8vmin;
+  padding: 1.2vmin 2.2vmin;
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 3.2vmin;
   font-weight: 600;
-  opacity: 0.92;
-  margin-left: 0.04em;
-  line-height: 1;
-  pointer-events: none;
+  font-variant-numeric: tabular-nums;
 }
 
-.ring-divider {
-  position: relative;
-  z-index: 1;
-  grid-row: 3;
-  height: 1px;
-  margin: 0 4% 0.6vmin;
-  background: rgba(255, 255, 255, 0.22);
-  flex-shrink: 0;
+.chip svg {
+  width: 3.6vmin;
+  height: 3.6vmin;
 }
 
-.ring-bottom {
-  position: relative;
-  z-index: 1;
-  grid-row: 4;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  align-items: flex-start;
-  padding: 0 4% 1%;
-  flex-shrink: 0;
-  min-height: 3.6em;
+.chip.outdoor svg {
+  color: var(--green);
 }
 
-.meta-block {
-  text-align: center;
-  min-width: clamp(56px, 14vmin, 88px);
+.chip.humidity svg {
+  color: var(--blue);
 }
 
-.ring-bottom > .meta-block:first-child {
-  justify-self: center;
-}
-
-.ring-bottom > .mode-btn-face {
-  justify-self: center;
-}
-
-/* Sit on the face itself (not the inner grid) so it can't steal MODE's place */
-.ring-leaf {
-  position: absolute;
-  z-index: 3;
-  left: 50%;
-  bottom: 3.5%;
-  transform: translateX(-50%);
+/* Only says something when something's wrong. */
+.conn-pill {
   display: none;
-  align-items: center;
-  justify-content: center;
-  width: clamp(26px, 6.5vmin, 40px);
-  height: clamp(26px, 6.5vmin, 40px);
-  color: #66bb6a;
-  pointer-events: none;
+  padding: 1.2vmin 2.2vmin;
+  border-radius: 999px;
+  font-size: 3vmin;
+  font-weight: 700;
+  background: rgba(239, 83, 80, 0.2);
+  color: var(--red);
 }
 
-.ring-leaf.is-active {
+.conn-pill.offline {
+  display: inline-block;
+}
+
+/* —— Notices (window open, summer) —— */
+.notices {
+  grid-area: notices;
+  margin-top: 1.4vmin;
   display: flex;
+  justify-content: center;
+  gap: 1.4vmin;
 }
 
-.ring-leaf svg {
+
+.notice {
+  padding: 1vmin 2.6vmin;
+  border-radius: 999px;
+  background: rgba(255, 193, 7, 0.18);
+  color: var(--amber);
+  font-size: 2.9vmin;
+  font-weight: 600;
+}
+
+/* —— Dial —— */
+.stage {
+  grid-area: stage;
+  margin: 1.2vmin 0 1.8vmin;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  justify-items: center;
+  gap: 1vmin;
+}
+
+.dial {
+  position: relative;
+  height: 100%;
+  max-height: 100%;
+  max-width: 100%;
+  aspect-ratio: 1;
+  touch-action: none;
+}
+
+.dial-svg {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
-  display: block;
+  overflow: visible;
 }
 
-.meta-label {
-  font-size: clamp(10px, 2.1vmin, 14px);
+.dial-svg path {
+  fill: none;
+  stroke-linecap: round;
+}
+
+.dial .track {
+  stroke: rgba(255, 255, 255, 0.09);
+  stroke-width: 12;
+}
+
+.dial .fill {
+  stroke: url(#dialGrad);
+  stroke-width: 12;
+  transition: stroke-dasharray 0.25s ease;
+}
+
+/* Wide, invisible: the part you drag. */
+.dial .hit {
+  stroke: transparent;
+  stroke-width: 44;
+  cursor: grab;
+}
+
+.dial .knob {
+  fill: #fff;
+  stroke: rgba(0, 0, 0, 0.25);
+  stroke-width: 1;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.5));
+  pointer-events: none;
+  transition: r 0.12s ease;
+}
+
+.dial.dragging .knob {
+  r: 11;
+}
+
+.dial[data-state="heating"] .knob,
+.dial[data-state="boost"] .knob {
+  filter: drop-shadow(0 0 6px rgba(255, 120, 30, 0.9));
+}
+
+.dial[data-state="off"] .knob {
+  display: none;
+}
+
+/* Indoor temperature: a small dot on the track, not a handle. */
+.dial .now-dot {
+  fill: #fff;
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+.core {
+  position: absolute;
+  inset: 24% 14% 12%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.caption:empty {
+  display: none;
+}
+
+.caption {
+  font-size: 3vmin;
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--text-muted);
-  margin-bottom: 0.5vmin;
 }
 
-.meta-value {
-  font-size: clamp(18px, 4.6vmin, 30px);
-  font-weight: 700;
-  letter-spacing: -0.02em;
+.dial[data-state="heating"] .caption,
+.dial[data-state="boost"] .caption {
+  color: var(--heat-soft);
 }
 
-.mode-btn-face {
-  display: block;
-  width: auto;
-  padding: 0;
+.dial[data-state="eco"] .caption {
+  color: var(--green);
 }
 
-/* Mode: icon + word, coloured by mode (matches the dashboard card) */
-.mode-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.28em;
-  color: var(--ring-orange);
-  font-size: clamp(16px, 3.8vmin, 24px);
-  line-height: 1;
-  min-height: 1.6em;
-}
-
-.mode-icon[data-mode="eco"] { color: var(--outdoor); }
-.mode-icon[data-mode="away"] { color: var(--humidity); }
-.mode-icon[data-mode="boost"] { color: var(--ring-amber); }
-.mode-icon[data-mode="off"] { color: var(--text-muted); }
-
-.mode-icon svg {
-  width: 1.3em;
-  height: 1.3em;
-  flex-shrink: 0;
-  display: block;
-}
-
-.mode-word {
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-
-/* —— Mode drawer —— */
-.mode-drawer {
-  grid-area: eta;
+.current-temp {
   display: flex;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 1.5vmin;
+  align-items: flex-start;
+  line-height: 1;
+  margin: 1vmin 0 0.6vmin;
+  font-variant-numeric: tabular-nums;
+}
+
+.temp-int {
+  font-size: 22vmin;
+  font-weight: 300;
+  letter-spacing: -0.05em;
+}
+
+.temp-dec {
+  font-size: 9vmin;
+  font-weight: 300;
+  margin-top: 2.4vmin;
+  letter-spacing: -0.03em;
+}
+
+.temp-unit {
+  font-size: 7vmin;
+  font-weight: 300;
+  margin-top: 2.4vmin;
+  margin-left: 0.4vmin;
+  color: var(--text-muted);
+}
+
+.current-temp.is-off .temp-int {
+  font-size: 15vmin;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.current-temp.is-off .temp-unit,
+.current-temp.is-empty .temp-unit {
+  display: none;
+}
+
+.current-temp.pending .temp-int,
+.current-temp.pending .temp-dec {
+  color: var(--heat-soft);
+}
+
+.sub {
+  font-size: 3.6vmin;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.eta {
+  font-size: 3.2vmin;
+  font-weight: 600;
+  color: var(--heat-soft);
+  margin-top: 0.6vmin;
+  min-height: 1.2em;
+}
+
+.eta:empty {
+  visibility: hidden;
+}
+
+.leaf {
+  display: none;
+  width: 5vmin;
+  height: 5vmin;
+  color: var(--green);
+  margin-top: 0.4vmin;
+}
+
+.leaf.is-active {
+  display: block;
+}
+
+.leaf.is-active ~ .eta,
+.eta:not(:empty) ~ .leaf {
+  display: none;
+}
+
+.leaf svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* −/+ sit in the gap at the bottom of the arc. Big, round, easy to hit. */
+.step {
+  width: 14vmin;
+  height: 14vmin;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface-hi);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: transform 0.08s ease, background 0.15s ease;
+}
+
+.step svg {
+  width: 6.4vmin;
+  height: 6.4vmin;
+}
+
+.step:active {
+  transform: scale(0.9);
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* Off: keep the space so the dial doesn't jump sideways. */
+.step.hidden {
+  display: grid !important;
+  visibility: hidden;
+}
+
+/* —— Modes: always visible, one tap —— */
+.modes {
+  grid-area: modes;
+  margin-bottom: 1.8vmin;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.8vmin;
+  padding: 0.8vmin;
+  border-radius: 999px;
+  background: var(--surface);
 }
 
 .mode-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.6em;
-  padding: 1.6vmin 3.2vmin;
+  justify-content: center;
+  gap: 1.2vmin;
+  min-height: 10.5vmin;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.28);
-  font-size: 2.6vmin;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: 3.4vmin;
+  font-weight: 600;
+  color: var(--text-muted);
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .mode-btn svg {
-  width: 1.5em;
-  height: 1.5em;
+  width: 4.2vmin;
+  height: 4.2vmin;
   flex-shrink: 0;
 }
 
-.mode-btn[data-icon="heat"] svg { color: var(--ring-orange); }
-.mode-btn[data-icon="eco"] svg { color: var(--outdoor); }
-.mode-btn[data-icon="boost"] svg { color: var(--ring-amber); }
-.mode-btn[data-icon="off"] svg { color: var(--text-muted); }
+.mode-btn:active {
+  background: var(--surface-hi);
+}
 
 .mode-btn.active {
-  background: rgba(255, 255, 255, 0.18);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--text);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
 }
 
-.footer-eta {
-  grid-area: eta;
-  margin: 0;
-  text-align: center;
-  font-size: 2.3vmin;
-  color: var(--text-muted);
-  min-height: 0;
-  /* Shares the "eta" slot with the mode drawer: never swallow its taps. */
-  pointer-events: none;
+.mode-btn[data-icon="heat"].active,
+.mode-btn[data-icon="heat"].active svg {
+  color: var(--heat-soft);
 }
 
-.footer-eta:empty,
-.mode-drawer:not(.hidden) ~ .footer-eta {
-  display: none;
+.mode-btn[data-icon="eco"].active,
+.mode-btn[data-icon="eco"].active svg {
+  color: var(--green);
+}
+
+.mode-btn[data-icon="boost"].active,
+.mode-btn[data-icon="boost"].active svg {
+  color: var(--amber);
 }
 
 /* —— Rooms —— */
-.bottom-panel {
+.rooms {
   grid-area: rooms;
-  min-height: 0;
-  flex-shrink: 0;
+  min-width: 0;
 }
 
 .room-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1.4vmin;
-  padding: 0.2vmin 0 0;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 1.2vmin;
 }
 
-.room-strip.room-strip--few {
-  grid-template-columns: repeat(auto-fit, minmax(18vmin, 1fr));
-  justify-content: center;
+/* More than four rooms: scroll sideways instead of squashing. */
+.room-strip.room-strip--many {
+  grid-auto-columns: 22.5vmin;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.room-strip::-webkit-scrollbar {
+  display: none;
 }
 
 .room-chip {
   min-width: 0;
-  padding: 1.8vmin 1.2vmin;
-  border-radius: 2vmin;
-  background: rgba(0, 0, 0, 0.32);
-  text-align: center;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2vmin;
+  padding: 1.8vmin 1.8vmin;
+  border-radius: 2.8vmin;
+  text-align: left;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: background 0.15s ease;
+}
+
+.room-chip:active {
+  background: var(--surface-hi);
+}
+
+.room-chip.heat {
+  background: rgba(245, 124, 0, 0.13);
+  box-shadow: inset 0 0 0 1px rgba(245, 124, 0, 0.4);
 }
 
 .room-chip.active {
-  background: rgba(255, 255, 255, 0.12);
-  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.4);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.55);
 }
 
-.room-chip .name {
-  font-size: 2.2vmin;
+.room-top {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6vmin;
+}
+
+/* Up to two lines: "Living Room 1" and "Living Room 2" must stay tellable apart. */
+.room-name {
+  font-size: 2.6vmin;
   font-weight: 600;
+  line-height: 1.2;
   color: var(--text-muted);
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  margin-bottom: 0.4vmin;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  word-break: break-word;
 }
 
-.room-chip .temp {
-  font-size: 3.4vmin;
-  font-weight: 700;
-  line-height: 1.1;
+.room-top svg {
+  width: 3vmin;
+  height: 3vmin;
+  color: var(--heat-soft);
+  flex-shrink: 0;
+}
+
+.room-temp {
+  margin-top: auto; /* temperature + status line up across tiles */
+  font-size: 5.4vmin;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
   font-variant-numeric: tabular-nums;
 }
 
-.room-chip .meta {
-  display: none;
+.room-temp.unknown {
+  color: var(--text-muted);
 }
 
-/* —— Overlays / screensaver (kept usable) —— */
+.room-set {
+  font-size: 2.5vmin;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.room-chip.heat .room-set {
+  color: var(--heat-soft);
+}
+
+.room-off {
+  display: inline-block;
+  padding: 0.2vmin 1.4vmin;
+  border-radius: 999px;
+  font-size: 2.3vmin;
+  font-weight: 700;
+  background: rgba(239, 83, 80, 0.18);
+  color: var(--red);
+}
+
+/* —— Overlays / screensaver —— */
 .overlay {
   position: fixed;
   inset: 0;
@@ -675,7 +624,7 @@ button {
 
 .error-card {
   width: min(92vw, 520px);
-  background: #2c3138;
+  background: #23272d;
   border-radius: 3vmin;
   padding: 4vmin;
   box-shadow: 0 2vmin 5vmin rgba(0, 0, 0, 0.4);
@@ -683,14 +632,15 @@ button {
 
 .error-card h1 {
   margin: 0 0 1.5vmin;
-  font-size: 4vmin;
+  font-size: 4.4vmin;
+  font-weight: 600;
 }
 
 .error-card p,
 .error-card label {
   margin: 0 0 2vmin;
   color: var(--text-muted);
-  font-size: 2.6vmin;
+  font-size: 3vmin;
   line-height: 1.4;
 }
 
@@ -702,19 +652,19 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.15);
   background: rgba(0, 0, 0, 0.25);
   color: #fff;
-  font-size: 2.8vmin;
+  font-size: 3vmin;
 }
 
 .error-card button {
   display: block;
   width: 100%;
   margin-top: 1.5vmin;
-  padding: 2vmin;
-  border-radius: 1.5vmin;
-  background: #ff9800;
+  padding: 2.4vmin;
+  border-radius: 999px;
+  background: var(--heat-soft);
   color: #1a1a1a;
   font-weight: 700;
-  font-size: 2.8vmin;
+  font-size: 3.2vmin;
 }
 
 .error-card .secondary-link {
@@ -734,44 +684,53 @@ button {
 
 .device-pick-list button {
   text-align: left;
-  padding: 2vmin;
-  border-radius: 1.5vmin;
-  background: rgba(255, 255, 255, 0.08);
+  padding: 2.4vmin;
+  border-radius: 2vmin;
+  background: var(--surface-hi);
+  font-size: 3vmin;
+  color: var(--text);
+}
+
+.device-pick-list .id {
+  display: block;
   font-size: 2.6vmin;
+  color: var(--text-muted);
 }
 
 .pin-display {
   font-size: 8vmin;
   letter-spacing: 0.35em;
   text-align: center;
-  margin: 12px 0 18px;
+  margin: 1.5vmin 0 3vmin;
   font-weight: 600;
 }
 
 .pin-pad {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  gap: 1.8vmin;
 }
 
 .pin-pad button {
-  min-height: 56px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.12);
-  color: white;
-  font-size: 22px;
-  font-weight: 600;
+  min-height: 11vmin;
+  margin: 0;
+  border-radius: 2.4vmin;
+  background: var(--surface-hi);
+  color: var(--text);
+  font-size: 4.6vmin;
+  font-weight: 500;
+  padding: 0;
 }
 
 .pin-pad button[data-digit="ok"] {
-  background: #42a5f5;
-  color: #0a1620;
+  background: var(--teal);
+  color: #062226;
 }
 
 .pin-error {
-  color: var(--danger);
+  color: var(--red);
   text-align: center;
-  margin: 12px 0 0;
+  margin: 2vmin 0 0;
 }
 
 .screensaver {
@@ -780,64 +739,28 @@ button {
   display: grid;
   place-items: center;
   align-content: center;
-  gap: 10px;
-  background: #101418;
+  gap: 1.5vmin;
+  background: #0b0d10;
   color: white;
   z-index: 20;
 }
 
 .screensaver-time {
-  font-size: 16vmin;
-  font-weight: 300;
+  font-size: 22vmin;
+  font-weight: 200;
   letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
 }
 
 .screensaver-date {
-  font-size: 4vmin;
-  color: rgba(255, 255, 255, 0.72);
+  font-size: 4.4vmin;
+  color: rgba(255, 255, 255, 0.65);
 }
 
 .screensaver-hint {
-  margin-top: 3vmin;
+  margin-top: 4vmin;
   font-size: 2.8vmin;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(255, 255, 255, 0.35);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-@media (max-height: 520px) {
-  .temp-int {
-    font-size: clamp(3.8rem, 21vmin, 8.5rem);
-  }
-  .current-temp.is-empty .temp-int {
-    font-size: clamp(3.6rem, 20vmin, 8rem);
-  }
-  .temp-dec {
-    font-size: clamp(1.5rem, 7vmin, 3.2rem);
-  }
-  .temp-btn {
-    width: clamp(44px, 11.5vmin, 68px);
-    height: clamp(44px, 11.5vmin, 68px);
-  }
-  .temp-btn-glyph {
-    font-size: clamp(26px, 6.5vmin, 40px);
-  }
-  #tempDown {
-    left: 4%;
-  }
-  #tempUp {
-    right: 4%;
-  }
-  .ring-face {
-    inset: 7.5%;
-  }
-  .ring-face-inner {
-    padding: 4% 4% 10%;
-  }
-  .ring-divider {
-    margin: 0 3% 0.5vmin;
-  }
-  .ring-bottom {
-    min-height: 3.2em;
-  }
+  letter-spacing: 0.12em;
 }

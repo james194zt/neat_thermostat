@@ -1390,7 +1390,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "deviceLabel": panel.label,
             "primary": {
                 "entity": primary,
-                "name": panel.label or "Heating",
+                # The whole house, like the dashboard card (the panel's label is
+                # where it hangs, e.g. "Hallway" — also a room name).
+                "name": "Home",
                 "step": 0.5,
             },
             "rooms": rooms,
