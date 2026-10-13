@@ -387,10 +387,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self.config.schedule_enabled and self._main_preset == PRESET_NONE:
             now = self._now()
             hold = self._active_hold(self._manual_hold, now)
-            if hold is not None:
-                self._house_comfort = True
-                return hold, False
-            if self._manual_hold is not None:
+            if hold is None and self._manual_hold is not None:
                 self._manual_hold = None
                 self._persist_control()
             temp, active = scheduled_temperature(
@@ -399,6 +396,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 eco_fallback=self.config.eco_temp,
                 now=now,
             )
+            if hold is not None and active:
+                self._house_comfort = True
+                return hold, False
             if active:
                 self._house_comfort = True
                 key = active_block_key(self.config.schedule, now)
@@ -420,7 +420,13 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 now=now,
             )
             self._preheat = status
-            if status and status.get("preheating"):
+            preheating = bool(status and status.get("preheating"))
+            if hold is not None and not (preheating and float(status["temperature"]) > hold):
+                # A manual setting between blocks lasts until the next block,
+                # but turning down overnight mustn't cancel the morning warm-up.
+                self._house_comfort = True
+                return hold, False
+            if preheating:
                 self._house_comfort = True
                 return float(status["temperature"]), True
             # Schedule eco fallback
