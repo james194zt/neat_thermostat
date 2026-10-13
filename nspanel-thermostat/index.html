@@ -46,7 +46,9 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 13H5v-2h14z"/></svg>
         </button>
         <div class="dial" id="thermoRing" data-state="idle">
-          <svg class="dial-svg" viewBox="0 0 200 200" aria-hidden="true">
+          <!-- y 8..174: the empty space above the arc and its open bottom are cropped,
+               so the ring sits up and can be bigger (the handle may draw outside). -->
+          <svg class="dial-svg" viewBox="0 8 200 166" aria-hidden="true">
             <defs>
               <linearGradient id="dialGrad" x1="0" y1="1" x2="1" y2="0">
                 <stop id="dialG0" offset="0" stop-color="#FFD180" />

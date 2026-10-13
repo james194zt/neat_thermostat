@@ -350,7 +350,10 @@ function getHvacAction(state) {
 }
 
 /* —— Dial: a 270° arc like the Neat dashboard card (same path, same colours) —— */
-const DIAL = { cx: 100, cy: 100, r: 84, startDeg: 135, sweepDeg: 270, defaultMin: 5, defaultMax: 30 };
+// viewBox is x 0..200, y viewTop..viewTop+viewH (empty space above and below the arc cropped).
+const DIAL = {
+  cx: 100, cy: 100, r: 84, startDeg: 135, sweepDeg: 270, defaultMin: 5, defaultMax: 30, viewTop: 8, viewH: 166,
+};
 // [start, end] of the arc gradient per state.
 const DIAL_COLOURS = {
   heating: ["#FFB74D", "#F4511E"],
@@ -405,7 +408,7 @@ function updateRingGauge(state, current, target) {
 function tempFromPointer(ev) {
   const rect = ui.thermoRing.getBoundingClientRect();
   const x = ((ev.clientX - rect.left) / rect.width) * 200 - DIAL.cx;
-  const y = ((ev.clientY - rect.top) / rect.height) * 200 - DIAL.cy;
+  const y = ((ev.clientY - rect.top) / rect.height) * DIAL.viewH + DIAL.viewTop - DIAL.cy;
   let deg = (Math.atan2(y, x) * 180) / Math.PI; // 0 = 3 o'clock, clockwise
   let along = (deg - DIAL.startDeg + 360) % 360;
   if (along > DIAL.sweepDeg) {
