@@ -372,20 +372,20 @@ button {
 }
 
 .temp-int {
-  font-size: 17.5vmin;
+  font-size: 19.5vmin;
   font-weight: 400;
   letter-spacing: -0.05em;
 }
 
 .temp-dec {
-  font-size: 8vmin;
+  font-size: 9vmin;
   font-weight: 400;
   margin-top: 1.2vmin;
   letter-spacing: -0.03em;
 }
 
 .temp-unit {
-  font-size: 6vmin;
+  font-size: 6.6vmin;
   font-weight: 400;
   margin-top: 1.2vmin;
   margin-left: 0.4vmin;
