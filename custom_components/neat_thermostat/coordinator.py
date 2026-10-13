@@ -53,6 +53,7 @@ from .intelligence import (
 from .control import boiler_cycle_guard, house_calls_for_heat, next_schedule_change, room_calls_for_heat
 from . import kiosk, zigbee_reporting
 from .sensor_health import (
+    NO_HEARTBEAT_STALE_MINUTES,
     OFFSET_FRESH_MINUTES,
     SOURCE_BACKUP,
     SOURCE_MAIN,
@@ -354,18 +355,31 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (TypeError, ValueError):
             return None
 
+    def _sensor_value(self, entity_id: str, stale_minutes: float, *, strict: bool = False) -> float | None:
+        if not entity_id:
+            return None
+        seen = zigbee_reporting.zha_last_seen(self.hass, entity_id)
+        if seen is None and not strict:
+            # No device heartbeat to go on: HA may only hear about changes.
+            stale_minutes = max(stale_minutes, NO_HEARTBEAT_STALE_MINUTES)
+        return reading(
+            self.hass.states.get(entity_id),
+            now_utc=dt_util.utcnow(),
+            stale_minutes=stale_minutes,
+            device_seen=seen,
+        )
+
     def _sensor_values(self, stale_minutes: float | None = None) -> tuple[float | None, float | None]:
-        """(main, backup) house readings; None for a sensor that's dead or silent."""
-        now = dt_util.utcnow()
+        """(main, backup) house readings; None for a sensor that's dead or silent.
+
+        An explicit ``stale_minutes`` (offset learning) is applied strictly.
+        """
+        strict = stale_minutes is not None
         stale = stale_minutes or self.config.sensor_stale_minutes
         main_id = self.config.temperature_sensor
         backup_id = self.config.backup_temperature_sensor
-        main = reading(self.hass.states.get(main_id), now_utc=now, stale_minutes=stale) if main_id else None
-        backup = (
-            reading(self.hass.states.get(backup_id), now_utc=now, stale_minutes=stale)
-            if backup_id and backup_id != main_id
-            else None
-        )
+        main = self._sensor_value(main_id, stale, strict=strict)
+        backup = self._sensor_value(backup_id, stale, strict=strict) if backup_id != main_id else None
         return main, backup
 
     def _house_reading(self) -> tuple[float | None, str]:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -45,7 +46,7 @@ def zha_ieee(hass: HomeAssistant, entity_id: str) -> str | None:
     return None
 
 
-def _temperature_cluster(hass: HomeAssistant, ieee: str) -> Any:
+def _zha_device(hass: HomeAssistant, ieee: str) -> Any:
     try:
         from homeassistant.components.zha.helpers import get_zha_gateway
         from zigpy.types import EUI64
@@ -58,6 +59,29 @@ def _temperature_cluster(hass: HomeAssistant, ieee: str) -> Any:
     zha_device = gateway.get_device(EUI64.convert(ieee))
     if zha_device is None:
         raise ReportingError("ZHA doesn't know this device")
+    return zha_device
+
+
+def zha_last_seen(hass: HomeAssistant, entity_id: str) -> datetime | None:
+    """When ZHA last heard anything from the sensor's device (UTC), else None.
+
+    ZHA only passes a reading to HA when it changes, so HA's last_reported
+    can't tell a steady sensor from a dead one; ZHA's own last_seen can.
+    """
+    ieee = zha_ieee(hass, entity_id)
+    if ieee is None:
+        return None
+    try:
+        seen = _zha_device(hass, ieee).last_seen
+    except Exception:  # noqa: BLE001 — ZHA not ready / changed: fall back to HA's timestamps
+        return None
+    if seen is None:
+        return None
+    return datetime.fromtimestamp(float(seen), tz=timezone.utc)
+
+
+def _temperature_cluster(hass: HomeAssistant, ieee: str) -> Any:
+    zha_device = _zha_device(hass, ieee)
     for endpoint_id, endpoint in zha_device.device.endpoints.items():
         if endpoint_id == 0:  # ZDO
             continue

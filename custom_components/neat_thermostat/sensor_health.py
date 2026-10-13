@@ -23,6 +23,9 @@ SOURCE_NONE = "none"
 OFFSET_SAMPLE_MINUTES = 10
 OFFSET_WEIGHT = 0.05
 OFFSET_FRESH_MINUTES = 16
+# Sensors without a device "last seen" (anything but ZHA) may only update HA
+# when their value changes, so silence means less: wait at least this long.
+NO_HEARTBEAT_STALE_MINUTES = 180
 # With no sensor at all: during comfort, this many minutes of heat per hour;
 # outside comfort (frost safety), this many minutes every FROST_EVERY_HOURS.
 FALLBACK_COMFORT_MINUTES = 20
@@ -59,16 +62,26 @@ class SensorHealth:
         return health
 
 
-def reading(state: Any, *, now_utc: datetime, stale_minutes: float) -> float | None:
-    """A sensor's value if it is alive and recent, else None."""
+def reading(
+    state: Any,
+    *,
+    now_utc: datetime,
+    stale_minutes: float,
+    device_seen: datetime | None = None,
+) -> float | None:
+    """A sensor's value if it is alive and recent, else None.
+
+    ``device_seen`` is the device's own last-heard time (ZHA's last_seen),
+    which beats HA's last_reported: ZHA doesn't pass on unchanged readings.
+    """
     if state is None or state.state in ("unknown", "unavailable", ""):
         return None
     try:
         value = float(state.state)
     except (TypeError, ValueError):
         return None
-    reported = getattr(state, "last_reported", None) or getattr(state, "last_updated", None)
-    if reported is not None and now_utc - reported > timedelta(minutes=stale_minutes):
+    heard = device_seen or getattr(state, "last_reported", None) or getattr(state, "last_updated", None)
+    if heard is not None and now_utc - heard > timedelta(minutes=stale_minutes):
         return None
     return value
 

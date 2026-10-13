@@ -82,20 +82,29 @@ def test_health_persists():
 # --- the real coordinator ---------------------------------------------------------
 
 START = datetime.fromisoformat(f"{MONDAY}T16:10:00+01:00")
+# ZHA's per-device "last seen" (what a Zigbee heartbeat updates), by entity.
+SEEN: dict = {}
 
 
-async def _at(hass, coord, freezer, minute, *, house=None, backup=None):
-    freezer.move_to(START + timedelta(minutes=minute))
+async def _at(hass, coord, freezer, minute, *, house=None, backup=None, heartbeat=()):
+    now = START + timedelta(minutes=minute)
+    freezer.move_to(now)
     if house is not None:
         hass.states.async_set("sensor.house", str(house))
+        SEEN["sensor.house"] = now
     if backup is not None:
         hass.states.async_set("sensor.backup", str(backup))
+        SEEN["sensor.backup"] = now
+    for entity_id in heartbeat:  # a report with an unchanged value: HA hears nothing
+        SEEN[entity_id] = now
     return await _tick(hass, coord)
 
 
 @pytest.fixture
-async def backed_up(hass, setup, freezer):
+async def backed_up(hass, setup, freezer, monkeypatch):
     coord, calls = setup
+    SEEN.clear()
+    monkeypatch.setattr(zigbee_reporting, "zha_last_seen", lambda hass, e: SEEN.get(e))
     # Only the house calls: the lounge is warm.
     hass.states.async_set("climate.trv_lounge", "heat", {"temperature": 16, "current_temperature": 22})
     freezer.move_to(START)
@@ -152,6 +161,27 @@ async def test_a_blip_changes_nothing(hass, backed_up, freezer):
     data = await _at(hass, coord, freezer, 2, house=18.1, backup=19.6)
     assert data["house_sensor"]["source"] == SOURCE_MAIN
     assert not any("sensor" in key for key in hass.data.get("persistent_notification", {}))
+
+
+async def test_steady_zigbee_sensor_is_not_dead(hass, backed_up, freezer):
+    """ZHA only tells HA about changes: a steady 18.0 for hours is fine if the device checks in."""
+    coord = backed_up[0]
+    await _at(hass, coord, freezer, 0, house=18.0, backup=19.5)
+    for m in range(15, 240, 15):
+        data = await _at(hass, coord, freezer, m, heartbeat=("sensor.house", "sensor.backup"))
+    assert data["house_sensor"]["source"] == SOURCE_MAIN
+    assert not any("sensor" in key for key in hass.data.get("persistent_notification", {}))
+
+
+async def test_sensor_without_heartbeat_gets_three_hours(hass, backed_up, freezer):
+    coord = backed_up[0]
+    await _at(hass, coord, freezer, 0, house=18.0, backup=19.5)
+    SEEN.clear()  # neither is a ZHA device now: only HA's last_reported to go on
+    for m in (61, 65, 120):
+        assert (await _at(hass, coord, freezer, m))["house_sensor"]["source"] == SOURCE_MAIN
+    await _at(hass, coord, freezer, 181)
+    data = await _at(hass, coord, freezer, 185)
+    assert data["house_sensor"]["source"] == SOURCE_NONE
 
 
 async def test_learning_pauses_on_the_backup(hass, backed_up, freezer):
