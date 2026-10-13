@@ -347,7 +347,7 @@ button {
 }
 
 .caption {
-  font-size: 2.7vmin;
+  font-size: 3.1vmin;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -372,20 +372,20 @@ button {
 }
 
 .temp-int {
-  font-size: 15.5vmin;
+  font-size: 17.5vmin;
   font-weight: 400;
   letter-spacing: -0.05em;
 }
 
 .temp-dec {
-  font-size: 7vmin;
+  font-size: 8vmin;
   font-weight: 400;
   margin-top: 1.2vmin;
   letter-spacing: -0.03em;
 }
 
 .temp-unit {
-  font-size: 5.2vmin;
+  font-size: 6vmin;
   font-weight: 400;
   margin-top: 1.2vmin;
   margin-left: 0.4vmin;
@@ -411,13 +411,13 @@ button {
 
 .sub {
   margin-top: 2.2vmin; /* a little breathing room under the target */
-  font-size: 3.3vmin;
+  font-size: 3.8vmin;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .eta {
-  font-size: 3vmin;
+  font-size: 3.4vmin;
   font-weight: 600;
   color: var(--heat-soft);
   margin-top: 0.6vmin;
