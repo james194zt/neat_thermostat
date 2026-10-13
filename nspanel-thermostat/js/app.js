@@ -126,21 +126,26 @@ function updateCentreControls(state, target = getEffectiveTarget(state)) {
   setCurrentTempDisplay(target);
 }
 
-function modeGlyph(state) {
+// One icon set for modes, matching the Neat dashboard card (flame / power / leaf).
+const MODE_ICONS = {
+  heat: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2c.5 3.2-1.6 5-3.2 6.9C7.4 10.6 6 12.4 6 15a6 6 0 0 0 12 0c0-2.6-1.3-4.6-2.6-6.1-.3 1.6-1.1 2.7-2.3 3.2.6-3.7-.3-7.6-1.1-10.1z"/></svg>`,
+  off: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M12 3v8M6.4 6.6a8 8 0 1 0 11.2 0"/></svg>`,
+  eco: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18.5 3.5c-3.5.2-6.8 1.8-9 4.4C7 10.6 5.9 13.8 6.1 17.1c3.1-.1 6-1.4 8.1-3.7 2.3-2.5 3.6-5.8 4.3-9.9z"/><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4.5 20.5c2.5-4 5.6-7.4 9.5-10"/></svg>`,
+  boost: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M13.5 2 5 13.5h6L10 22l9-12h-6.2z"/></svg>`,
+  away: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 10.5 12 4l8 6.5V20h-5.5v-5h-5v5H4z"/></svg>`,
+};
+const MODE_NAMES = { heat: "Heat", off: "Off", eco: "Eco", boost: "Boost", away: "Away" };
+
+function modeKey(state) {
   const preset = state?.attributes?.preset_mode;
-  const mode = state?.state;
-  if (preset === "eco" || preset === "away") {
-    return `<svg viewBox="0 0 24 24" aria-hidden="true"><text x="3" y="17" fill="currentColor" font-size="11" font-weight="700" font-family="Segoe UI,sans-serif">zZz</text></svg>`;
-  }
-  if (preset === "boost") {
-    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M13 2 4 14h7l-1 8 10-14h-7l0-6z"/></svg>`;
-  }
-  // Cache-bust: Android WebView keeps sticky PNG caches
-  const iconV = "20260722b";
-  if (mode === "off") {
-    return `<img class="mode-icon-img" src="assets/mode/off.png?v=${iconV}" alt="Off" draggable="false" />`;
-  }
-  return `<img class="mode-icon-img" src="assets/mode/heat.png?v=${iconV}" alt="Heat" draggable="false" />`;
+  if (state?.state === "off") return "off";
+  if (preset === "eco" || preset === "boost" || preset === "away") return preset;
+  return "heat";
+}
+
+function modeGlyph(state) {
+  const key = modeKey(state);
+  return `${MODE_ICONS[key]}<span class="mode-word">${MODE_NAMES[key]}</span>`;
 }
 
 function formatSensor(value, suffix = "") {
@@ -505,7 +510,7 @@ function applyTheme(state) {
 
   if (ui.modeIcon) {
     ui.modeIcon.innerHTML = modeGlyph(state);
-    ui.modeIcon.dataset.mode = preset === "eco" || preset === "boost" ? preset : mode || "heat";
+    ui.modeIcon.dataset.mode = modeKey(state);
   }
   ui.ringLeaf?.classList.toggle(
     "is-active",
@@ -1070,6 +1075,9 @@ ui.modeFace?.addEventListener("click", () => {
 });
 
 for (const button of ui.modeButtons) {
+  const key = button.dataset.preset || button.dataset.mode;
+  if (MODE_ICONS[key]) button.insertAdjacentHTML("afterbegin", MODE_ICONS[key]);
+  button.dataset.icon = key;
   button.addEventListener("click", async () => {
     await ensureUnlocked(async () => {
       const entity = activeEntity;

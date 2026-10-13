@@ -525,39 +525,33 @@ button {
   padding: 0;
 }
 
+/* Mode: icon + word, coloured by mode (matches the dashboard card) */
 .mode-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.28em;
   color: var(--ring-orange);
   font-size: clamp(16px, 3.8vmin, 24px);
-  min-height: 1.2em;
-  line-height: 0;
+  line-height: 1;
+  min-height: 1.6em;
 }
 
-.mode-icon[data-mode="eco"],
-.mode-icon[data-mode="away"] {
-  color: var(--outdoor);
-}
-
-.mode-icon[data-mode="off"] {
-  color: var(--text-muted);
-}
+.mode-icon[data-mode="eco"] { color: var(--outdoor); }
+.mode-icon[data-mode="away"] { color: var(--humidity); }
+.mode-icon[data-mode="boost"] { color: var(--ring-amber); }
+.mode-icon[data-mode="off"] { color: var(--text-muted); }
 
 .mode-icon svg {
-  width: clamp(22px, 4.8vmin, 32px);
-  height: clamp(22px, 4.8vmin, 32px);
-  display: inline-block;
-  vertical-align: middle;
+  width: 1.3em;
+  height: 1.3em;
+  flex-shrink: 0;
+  display: block;
 }
 
-.mode-icon .mode-icon-img {
-  width: clamp(26px, 6.2vmin, 40px);
-  height: clamp(26px, 6.2vmin, 40px);
-  object-fit: contain;
-  display: inline-block;
-  vertical-align: middle;
-  pointer-events: none;
-  background: transparent;
-  /* Drop any residual black plate on the dark dial face */
-  mix-blend-mode: lighten;
+.mode-word {
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 /* —— Mode drawer —— */
@@ -570,6 +564,9 @@ button {
 }
 
 .mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6em;
   padding: 1.6vmin 3.2vmin;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.28);
@@ -578,6 +575,17 @@ button {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+.mode-btn svg {
+  width: 1.5em;
+  height: 1.5em;
+  flex-shrink: 0;
+}
+
+.mode-btn[data-icon="heat"] svg { color: var(--ring-orange); }
+.mode-btn[data-icon="eco"] svg { color: var(--outdoor); }
+.mode-btn[data-icon="boost"] svg { color: var(--ring-amber); }
+.mode-btn[data-icon="off"] svg { color: var(--text-muted); }
 
 .mode-btn.active {
   background: rgba(255, 255, 255, 0.18);

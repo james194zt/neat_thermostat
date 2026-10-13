@@ -204,4 +204,8 @@ async def test_new_wall_app_version_clears_cache_once(hass, setup, monkeypatch):
 def test_bundled_wall_version_reads_the_shipped_app():
     from custom_components.neat_thermostat.panel import WWW_DIR
 
-    assert kiosk.bundled_wall_version(WWW_DIR).endswith("-dev")
+    import json
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / "nspanel-thermostat" / "version.json"
+    assert kiosk.bundled_wall_version(WWW_DIR) == json.loads(source.read_text())["version"]
