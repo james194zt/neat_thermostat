@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.36
+ * @version 0.6.37
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.36";
+const PANEL_VERSION = "0.6.37";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -648,7 +648,18 @@ table.data tbody tr.room-row.selected {
 }
 .hero-room:hover { background: color-mix(in srgb, var(--primary-text-color) 7%, transparent); }
 .hero-room:focus-visible { outline: 2px solid var(--nt-nest-tab); outline-offset: 2px; }
-.hero-room.selected { border-color: color-mix(in srgb, var(--primary-text-color) 30%, transparent); }
+.hero-room.selected {
+  border-color: var(--nt-accent-hi);
+  box-shadow: inset 0 0 0 1px var(--nt-accent-hi);
+}
+.hero-back {
+  display: inline-flex; align-items: center; gap: 2px; margin: 0 0 4px -6px; padding: 4px 10px 4px 4px;
+  border: 0; border-radius: 999px; background: transparent; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 600; color: var(--nt-accent-hi);
+}
+.hero-back svg { width: 18px; height: 18px; }
+.hero-back:hover { background: color-mix(in srgb, var(--nt-accent) 14%, transparent); }
+.hero-back:focus-visible { outline: 2px solid var(--nt-accent-hi); outline-offset: 2px; }
 .hero-room.heat {
   background: color-mix(in srgb, var(--nt-heat) 10%, transparent);
   border-color: color-mix(in srgb, var(--nt-heat) 35%, transparent);
@@ -1301,8 +1312,14 @@ class NeatThermostatPanel extends HTMLElement {
   _mainTarget() {
     const live = this._live().main || {};
     const cfg = this._cfg();
-    const reported = this._entityState(this._neatClimateEntities().home)?.attributes?.temperature ?? live.target ?? cfg.target_temp ?? null;
-    if (this._pendingTarget != null) {
+    const home = this._neatClimateEntities().home;
+    const reported = this._entityState(home)?.attributes?.temperature ?? live.target ?? cfg.target_temp ?? null;
+    return this._withPending(home, reported);
+  }
+
+  /** A − / + change shows at once; HA's value wins once it catches up (or after 15 s). */
+  _withPending(entityId, reported) {
+    if (this._pendingTarget != null && this._pendingEntity === entityId) {
       const settled = reported != null && Number(reported) === this._pendingTarget && !this._sendTimer;
       if (settled || Date.now() - this._pendingAt > 15000) this._pendingTarget = null;
       else return this._pendingTarget;
@@ -1310,20 +1327,48 @@ class NeatThermostatPanel extends HTMLElement {
     return reported;
   }
 
+  /** Neat's climate entity for a room (found by its room_id attribute, never by a guessed id). */
+  _roomEntity(room) {
+    if (!room) return "";
+    return this._neatClimateEntities().rooms.find((id) => this._entityState(id)?.attributes?.room_id === room.id) || "";
+  }
+
+  /** The room the Overview dial is controlling, or null for the whole house. */
+  _focusRoom() {
+    if (!this._focusZone || this._focusZone === "home") return null;
+    return (this._cfg().rooms || []).find((r) => r.id === this._focusZone && r.enabled !== false) || null;
+  }
+
+  /** The room's setpoint as Neat applies it (schedule/Eco/Boost included). */
+  _roomTarget(room) {
+    return this._withPending(this._roomEntity(room), this._roomDisplayTemp(room));
+  }
+
   /** − / + on the dial: update at once, send to HA when the taps stop. */
   _stepTarget(direction) {
-    const home = this._neatClimateEntities().home;
-    if (!home) {
-      this._showToast("Neat's house thermostat isn't available", "err");
+    const room = this._focusRoom();
+    const entity = room ? this._roomEntity(room) : this._neatClimateEntities().home;
+    if (!entity) {
+      this._showToast(room ? `Neat's ${room.name} thermostat isn't available` : "Neat's house thermostat isn't available", "err");
       return;
     }
-    const attrs = this._entityState(home)?.attributes || {};
+    const attrs = this._entityState(entity)?.attributes || {};
     const step = Number(attrs.target_temp_step) || 0.5;
     const lo = Number(attrs.min_temp ?? 7);
     const hi = Number(attrs.max_temp ?? 30);
-    const base = Number(this._mainTarget() ?? 20);
+    if (this._pendingEntity !== entity) {
+      // Taps on another dial still waiting to go out: send them now, not to this one.
+      if (this._sendTimer && this._pendingTarget != null && this._pendingEntity) {
+        void this._hass.callService("climate", "set_temperature", { entity_id: this._pendingEntity, temperature: this._pendingTarget });
+      }
+      clearTimeout(this._sendTimer);
+      this._sendTimer = null;
+      this._pendingTarget = null;
+    }
+    const base = Number((room ? this._roomTarget(room) : this._mainTarget()) ?? 20);
     const next = Math.min(hi, Math.max(lo, Math.round((base + step * direction) / step) * step));
     this._pendingTarget = next;
+    this._pendingEntity = entity;
     this._pendingAt = Date.now();
     this._render();
     clearTimeout(this._sendTimer);
@@ -1332,7 +1377,7 @@ class NeatThermostatPanel extends HTMLElement {
       const value = this._pendingTarget;
       if (value == null) return;
       try {
-        await this._hass.callService("climate", "set_temperature", { entity_id: home, temperature: value });
+        await this._hass.callService("climate", "set_temperature", { entity_id: entity, temperature: value });
         this._pendingAt = Date.now();
       } catch (e) {
         this._pendingTarget = null;
@@ -1350,14 +1395,13 @@ class NeatThermostatPanel extends HTMLElement {
     return Number.isFinite(n) ? n : null;
   }
 
+  /** The room's setpoint as Neat applies it. live.rooms[].target is only the last manual
+   *  setpoint (it ignores the schedule, Eco and Boost), so the entity comes first. */
   _roomDisplayTemp(room) {
-    const live = (this._live().rooms || {})[room.id] || {};
-    if (live.target != null) return live.target;
-    const entity = `climate.neat_${room.id}`;
-    const st = this._entityState(entity);
-    const t = st?.attributes?.current_temperature ?? st?.attributes?.temperature;
+    const t = this._entityState(this._roomEntity(room))?.attributes?.temperature;
     if (t != null) return t;
-    return room.target_temp ?? null;
+    const live = (this._live().rooms || {})[room.id] || {};
+    return live.target ?? room.target_temp ?? null;
   }
 
   _roomHeating(room) {
@@ -1403,28 +1447,53 @@ class NeatThermostatPanel extends HTMLElement {
     return pills.join("");
   }
 
+  /** Status pills while a room is on the dial. */
+  _roomPills(room) {
+    const live = this._live();
+    const attrs = this._entityState(this._roomEntity(room))?.attributes || {};
+    const trv = this._entityState(room.trv_entity);
+    const pills = [];
+    const pill = (cls, text, icon = "") =>
+      pills.push(`<span class="hero-pill ${cls}">${icon}${this._escape(text)}</span>`);
+    if (this._roomHeating(room)) pill("heat", "Calling for heat", flameSvg());
+    if (!room.trv_entity) pill("warn", "No TRV");
+    else if (!trv || trv.state === "unavailable" || trv.state === "unknown") pill("warn", "TRV offline");
+    else pill("info", `TRV ${trv.attributes?.hvac_action === "heating" ? "open" : trv.state === "off" ? "off" : "idle"}`);
+    if (attrs.window_open) pill("warn", "Window open");
+    if (live.summer_mode) pill("warn", "Summer mode");
+    if (attrs.preset_mode && attrs.preset_mode !== "none") pill("info", attrs.preset_mode[0].toUpperCase() + attrs.preset_mode.slice(1));
+    else if (attrs.hold_until) pill("info", `Until ${new Date(attrs.hold_until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+    if (room.calls_for_heat === false) pill("", "Doesn't call the boiler");
+    return pills.join("");
+  }
+
   _renderHero() {
     const live = this._live();
     const rooms = (this._cfg().rooms || []).filter((r) => r.enabled !== false);
-    const targetNum = this._mainTarget();
-    const currentNum = this._mainCurrent();
+    const focus = this._focusRoom();
+    const entityId = focus ? this._roomEntity(focus) : this._neatClimateEntities().home;
+    const state = this._entityState(entityId);
+    const targetNum = focus ? this._roomTarget(focus) : this._mainTarget();
+    const currentNum = focus ? this._roomCurrent(focus) : this._mainCurrent();
     const target = formatTemp(targetNum) ?? "—";
     const current = currentNum != null ? formatTemp(Math.round(currentNum * 10) / 10) : null;
-    const heating = Boolean(live.boiler_on);
-    const homeState = this._entityState(this._neatClimateEntities().home);
-    const off = homeState ? homeState.state === "off" : (live.main || {}).hvac_mode === "off";
-    const preset = homeState?.attributes?.preset_mode ?? (live.main || {}).preset ?? "none";
-    const preheat = live.preheat || {};
+    const heating = focus ? this._roomHeating(focus) : Boolean(live.boiler_on);
+    const off = state ? state.state === "off" : focus ? false : (live.main || {}).hvac_mode === "off";
+    const preset = state?.attributes?.preset_mode ?? (focus ? "none" : (live.main || {}).preset ?? "none");
+    const presets = focus ? ["eco", "boost"] : ["eco", "boost", "away"];
+    const preheat = focus ? {} : live.preheat || {};
     let caption = off ? "Off" : heating ? "Heating to" : "Set to";
     if (preheat.preheating) caption = "Preheating to";
     let headline = "Holding temperature";
-    if (off) headline = "Heating is off";
-    else if (heating) headline = "Warming the house";
+    const trv = focus ? this._entityState(focus.trv_entity) : null;
+    if (focus && focus.trv_entity && (!trv || trv.state === "unavailable" || trv.state === "unknown")) {
+      headline = "TRV offline — changes apply when it's back";
+    } else if (off) headline = focus ? "Radiator off" : "Heating is off";
+    else if (heating) headline = focus ? "Warming the room" : "Warming the house";
     else if (currentNum != null && targetNum != null && currentNum >= Number(targetNum)) headline = "Up to temperature";
 
-    const home = this._entityState(this._neatClimateEntities().home);
-    const lo = Number(home?.attributes?.min_temp ?? 7);
-    const hi = Number(home?.attributes?.max_temp ?? 30);
+    const lo = Number(state?.attributes?.min_temp ?? 7);
+    const hi = Number(state?.attributes?.max_temp ?? 30);
     const pos = (t) => (t == null || !Number.isFinite(Number(t)) ? null : (Number(t) - lo) / (hi - lo));
     // Warm, Nest-like: amber in Heat, deep orange while heating, grey when off (same as the card).
     const color = off
@@ -1432,19 +1501,21 @@ class NeatThermostatPanel extends HTMLElement {
       : heating
         ? ["#FFB74D", "#F4511E"]
         : ["#FFD180", "#FF9800"];
-    const eta = heating ? this._formatEta(live.time_to_temp_minutes) : null;
+    const eta = heating && !focus ? this._formatEta(live.time_to_temp_minutes) : null;
 
     const heroClass = `hero${heating ? " heating" : ""}${off ? " off" : ""}`;
     const roomTiles = rooms
       .map((room) => {
         const now = this._roomCurrent(room);
-        const set = formatTemp(this._roomDisplayTemp(room));
+        const set = formatTemp(this._roomTarget(room));
         const heat = this._roomHeating(room);
         const selected = this._focusZone === room.id;
         const trv = this._entityState(room.trv_entity);
         const offline = Boolean(room.trv_entity) && (!trv || trv.state === "unavailable" || trv.state === "unknown");
+        const roomOff = this._entityState(this._roomEntity(room))?.state === "off";
+        const tip = selected ? "Click to go back to the house" : offline ? `${room.name} — TRV offline · click to control` : `Click to control ${room.name}`;
         return `
-          <button type="button" class="hero-room${heat ? " heat" : ""}${selected ? " selected" : ""}${offline ? " offline" : ""}" data-zone="${this._escape(room.id)}" ${offline ? `title="${this._escape(room.name)} — TRV offline"` : ""}>
+          <button type="button" class="hero-room${heat ? " heat" : ""}${selected ? " selected" : ""}${offline ? " offline" : ""}" data-zone="${this._escape(room.id)}" aria-pressed="${selected}" title="${this._escape(tip)}">
             <span class="hero-room-top">
               <span class="hero-room-name">${this._escape(room.name)}</span>
               ${!offline && heat ? `<span class="hero-room-flame" title="Calling for heat">${flameSvg()}</span>` : ""}
@@ -1452,7 +1523,9 @@ class NeatThermostatPanel extends HTMLElement {
             <span class="hero-room-temp${now == null ? " unknown" : ""}">${now == null ? "—" : `${this._escape(formatTemp(Math.round(now * 10) / 10))}°`}</span>
             ${offline
               ? `<span class="hero-room-target"><span class="hero-room-off">Offline</span></span>`
-              : `<span class="hero-room-target">${heat ? "Heating to" : "Set"} ${this._escape(set ?? "—")}°</span>`}
+              : roomOff
+                ? `<span class="hero-room-target">Off</span>`
+                : `<span class="hero-room-target">${heat ? "Heating to" : "Set"} ${this._escape(set ?? "—")}°</span>`}
           </button>`;
       })
       .join("");
@@ -1484,7 +1557,7 @@ class NeatThermostatPanel extends HTMLElement {
               <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M12 3v8M6.4 6.6a8 8 0 1 0 11.2 0"/></svg>Off</button>
           </div>
           <div class="hm-seg" role="group" aria-label="Preset">
-            ${["eco", "boost", "away"]
+            ${presets
               .map((p) => `<button type="button" class="hm-mode ${p}${preset === p ? " active" : ""}" data-hero-preset="${p}">${p[0].toUpperCase() + p.slice(1)}</button>`)
               .join("")}
           </div>
@@ -1493,14 +1566,18 @@ class NeatThermostatPanel extends HTMLElement {
         <div class="hero-side">
           <div class="hero-head">
             <div>
-              <h2 class="hero-title">Home</h2>
+              ${focus
+                ? `<button type="button" class="hero-back" data-zone="home">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6z"/></svg>Home</button>`
+                : ""}
+              <h2 class="hero-title">${this._escape(focus ? focus.name : "Home")}</h2>
               <p class="hero-headline">${this._escape(headline)}</p>
             </div>
-            <div class="hero-pills">${this._heroPills()}</div>
+            <div class="hero-pills">${focus ? this._roomPills(focus) : this._heroPills()}</div>
           </div>
           ${roomTiles
             ? `<div class="hero-rooms${rooms.length > 1 ? " reorderable" : ""}">${roomTiles}</div>
-              ${rooms.length > 1 ? `<p class="hero-rooms-hint">Drag rooms to reorder${"ontouchstart" in window ? " — press and hold first" : ""}</p>` : ""}`
+              <p class="hero-rooms-hint">${focus ? `Controlling ${this._escape(focus.name)} — tap it again or Home to go back` : "Tap a room to control its radiator"}${rooms.length > 1 ? ` · drag to reorder${"ontouchstart" in window ? " (press and hold first)" : ""}` : ""}</p>`
             : `<p class="hero-empty">No rooms yet — add TRVs on the Rooms tab.</p>`}
         </div>
       </section>`;
@@ -3360,17 +3437,19 @@ class NeatThermostatPanel extends HTMLElement {
       }
     });
 
+    // The hero controls whatever is on the dial: the house, or the selected room.
     const heroCall = async (service, data, label) => {
-      const home = this._neatClimateEntities().home;
-      if (!home) {
-        this._showToast("Neat's house thermostat isn't available", "err");
+      const room = this._focusRoom();
+      const entity = room ? this._roomEntity(room) : this._neatClimateEntities().home;
+      if (!entity) {
+        this._showToast(room ? `Neat's ${room.name} thermostat isn't available` : "Neat's house thermostat isn't available", "err");
         return;
       }
       try {
-        await this._hass.callService("climate", service, { entity_id: home, ...data });
+        await this._hass.callService("climate", service, { entity_id: entity, ...data });
         // The entity updates straight away; redraw once HA has pushed it.
         setTimeout(() => this._render(), 250);
-        this._showToast(label);
+        this._showToast(room ? `${room.name} · ${label}` : label);
       } catch (e) {
         this._showToast(`Couldn't change it: ${e?.message || e}`, "err");
       }
@@ -3382,7 +3461,8 @@ class NeatThermostatPanel extends HTMLElement {
     });
     this.shadowRoot.querySelectorAll("[data-hero-preset]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const current = this._entityState(this._neatClimateEntities().home)?.attributes?.preset_mode;
+        const room = this._focusRoom();
+        const current = this._entityState(room ? this._roomEntity(room) : this._neatClimateEntities().home)?.attributes?.preset_mode;
         const next = current === btn.dataset.heroPreset ? "none" : btn.dataset.heroPreset;
         heroCall("set_preset_mode", { preset_mode: next }, next === "none" ? "Preset cleared" : `${next[0].toUpperCase() + next.slice(1)} on`);
       });
@@ -3393,7 +3473,9 @@ class NeatThermostatPanel extends HTMLElement {
     this.shadowRoot.querySelectorAll("[data-zone]").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (this._suppressZoneClick) return; // the click that ends a drag
-        this._focusZone = btn.dataset.zone;
+        // A room puts it on the dial; clicking it again (or Home) goes back to the house.
+        const zone = btn.dataset.zone;
+        this._focusZone = zone === this._focusZone ? "home" : zone;
         this._render();
       });
     });
