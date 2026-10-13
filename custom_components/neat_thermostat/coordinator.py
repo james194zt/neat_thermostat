@@ -1195,6 +1195,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         eco_or_away = (
             self._main_hvac_mode == "off"
+            # Summer mode stops all heating too (the mode just stays Heat).
+            or self.config.summer_mode
             or self._away_eco_active
             or self._main_preset in (
                 PRESET_ECO,

@@ -171,6 +171,14 @@ async def test_turning_down_keeps_the_leaf_baseline(hass, setup, freezer):
     assert len(coord.intel.state.adjustments) == 2
 
 
+async def test_summer_mode_earns_the_leaf_like_off(hass, setup, freezer):
+    coord, _ = setup
+    freezer.move_to(f"{MONDAY} 17:00:00+01:00")  # in a 20 °C block: no Leaf normally
+    assert (await _tick(hass, coord))["leaf"]["active"] is False
+    await coord.async_save_config({"summer_mode": True})
+    assert (await _tick(hass, coord))["leaf"]["active"] is True
+
+
 async def test_rooms_only_runs_are_not_recorded(hass, setup, freezer):
     coord, _ = setup
     start = datetime.fromisoformat(f"{MONDAY}T16:10:00+01:00")
