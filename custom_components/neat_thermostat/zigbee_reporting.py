@@ -52,6 +52,11 @@ def zha_ieee(hass: HomeAssistant, entity_id: str) -> str | None:
 
 
 def _zha_device(hass: HomeAssistant, ieee: str) -> Any:
+    # Importing ZHA's modules ourselves before HA has loaded ZHA makes HA log
+    # "blocking call ... by integration 'zha'" (its import reads package
+    # metadata in the event loop). Wait until HA has loaded it.
+    if "zha" not in hass.config.components:
+        raise ReportingError("waiting for ZHA to start", not_ready=True)
     try:
         from homeassistant.components.zha.helpers import get_zha_gateway
         from zigpy.types import EUI64

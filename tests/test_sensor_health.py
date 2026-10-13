@@ -269,6 +269,20 @@ async def test_zha_still_starting_retries_soon_and_quietly(hass, backed_up, free
     assert coord._sensor_info()["reporting"]["sensor.house"]["ok"] is True  # noqa: SLF001
 
 
+async def test_zha_not_imported_before_ha_loads_it(hass, monkeypatch):
+    """Neat must not import ZHA itself during start-up (HA flags it as blocking)."""
+    import sys
+
+    monkeypatch.setattr(zigbee_reporting, "zha_ieee", lambda hass, e: "aa:bb")
+    sys.modules.pop("homeassistant.components.zha.helpers", None)
+    assert "zha" not in hass.config.components
+    assert zigbee_reporting.zha_last_seen(hass, "sensor.house") is None
+    with pytest.raises(zigbee_reporting.ReportingError) as err:
+        await zigbee_reporting.async_configure(hass, "sensor.house", fast=True)
+    assert err.value.not_ready
+    assert "homeassistant.components.zha.helpers" not in sys.modules
+
+
 def test_zigpy_result_parsing():
     ok = SimpleNamespace(status=0)
     bad = SimpleNamespace(status=134)
