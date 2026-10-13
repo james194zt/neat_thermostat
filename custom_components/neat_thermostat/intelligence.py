@@ -495,6 +495,8 @@ class IntelligenceState:
     warmup: WarmupModel = field(default_factory=WarmupModel)
     heat_check: HeatCheck = field(default_factory=HeatCheck)
     coast_watch: CoastWatch = field(default_factory=CoastWatch)
+    # The boiler run in progress, for warm-up learning: {"start", "start_temp", "house_called"}.
+    heat_cycle: dict[str, Any] = field(default_factory=dict)
     recent_cycles: list[dict[str, Any]] = field(default_factory=list)
     adjustments: list[dict[str, Any]] = field(default_factory=list)
     learning_started_at: str | None = None
@@ -510,6 +512,7 @@ class IntelligenceState:
             "warmup": self.warmup.to_dict(),
             "heat_check": self.heat_check.to_dict(),
             "coast_watch": self.coast_watch.to_dict(),
+            "heat_cycle": self.heat_cycle,
             "recent_cycles": self.recent_cycles[-40:],
             "adjustments": self.adjustments[-200:],
             "learning_started_at": self.learning_started_at,
@@ -528,6 +531,7 @@ class IntelligenceState:
             warmup=WarmupModel.from_dict(data.get("warmup")),
             heat_check=HeatCheck.from_dict(data.get("heat_check")),
             coast_watch=CoastWatch.from_dict(data.get("coast_watch")),
+            heat_cycle=dict(data.get("heat_cycle") or {}),
             recent_cycles=list(data.get("recent_cycles") or []),
             adjustments=list(data.get("adjustments") or []),
             learning_started_at=data.get("learning_started_at"),

@@ -57,6 +57,8 @@ from .schedule import scheduled_temperature
 
 _LOGGER = logging.getLogger(__name__)
 UPDATE_INTERVAL = timedelta(seconds=30)
+# A "run" longer than this (e.g. HA was down while it ended) teaches nothing.
+MAX_LEARN_RUN_HOURS = 6
 
 
 class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -118,6 +120,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_initialize_intelligence(self) -> None:
         await self.intel.async_load()
         self._restore_control()
+        self._restore_heat_cycle()
 
     def _restore_control(self) -> None:
         """Bring back mode/preset/setpoints so a restart doesn't flip Off to Heat."""
@@ -133,6 +136,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if isinstance(hold, dict) and isinstance(hold.get("temperature"), (int, float)):
             self._manual_hold = hold
         self._released_until = dt_util.parse_datetime(str(saved.get("released_until") or ""))
+        # Mid-run after a restart: keep heating to the cut-off, not the cut-in.
+        self._house_calling = bool(saved.get("house_calling"))
         for room_id, room in (saved.get("rooms") or {}).items():
             st = self._room_states.get(room_id)
             if st is None or not isinstance(room, dict):
@@ -145,10 +150,12 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 st["target"] = float(room["target"])
             if isinstance(room.get("hold"), dict):
                 st["hold"] = room["hold"]
+            st["needs_heat"] = bool(room.get("needs_heat"))
 
     def _persist_control(self) -> None:
         self.intel.state.control = {
             "released_until": self._released_until.isoformat() if self._released_until else None,
+            "house_calling": self._house_calling,
             "main": {
                 "hvac_mode": self._main_hvac_mode,
                 "preset": self._main_preset,
@@ -161,6 +168,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "preset": st.get("preset", PRESET_NONE),
                     "target": st.get("target"),
                     "hold": st.get("hold"),
+                    "needs_heat": bool(st.get("needs_heat")),
                 }
                 for room_id, st in self._room_states.items()
             },
@@ -695,7 +703,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return command, wait
 
     def _track_heat_cycle(self, want_heat: bool) -> None:
-        now = datetime.now()
+        now = self._now()
         current = self._state_float(self.config.temperature_sensor)
         outdoor = self._state_float(self.config.outdoor_temp_sensor)
         if want_heat and not self._last_boiler_on:
@@ -708,13 +716,14 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # A boiler that isn't heating would teach Neat a bogus warm-up rate,
             # and a run only the rooms wanted may not reach the house sensor.
             faulty = self.intel.state.heat_check.fault_since is not None
+            duration = (now - self._heat_cycle_start).total_seconds() / 60.0
             if (
                 current is not None
                 and self._heat_cycle_start_temp is not None
                 and not faulty
                 and self._heat_cycle_house_called
+                and 0 < duration <= MAX_LEARN_RUN_HOURS * 60
             ):
-                duration = (now - self._heat_cycle_start).total_seconds() / 60.0
                 self.intel.state.warmup = update_warmup_from_cycle(
                     self.intel.state.warmup,
                     start_temp=self._heat_cycle_start_temp,
@@ -737,6 +746,36 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._heat_cycle_start = None
             self._heat_cycle_start_temp = None
         self._last_boiler_on = want_heat
+        # Persist the run in progress: a restart mid-run must not lose its start.
+        cycle = (
+            {
+                "start": self._heat_cycle_start.isoformat(),
+                "start_temp": self._heat_cycle_start_temp,
+                "house_called": self._heat_cycle_house_called,
+            }
+            if self._heat_cycle_start is not None
+            else {}
+        )
+        if cycle != self.intel.state.heat_cycle:
+            self.intel.state.heat_cycle = cycle
+            self._dirty_intel = True
+
+    def _restore_heat_cycle(self) -> None:
+        """Pick up a run that was in progress when HA stopped (if recent)."""
+        cycle = self.intel.state.heat_cycle or {}
+        try:
+            start = datetime.fromisoformat(str(cycle["start"]))
+        except (KeyError, TypeError, ValueError):
+            self.intel.state.heat_cycle = {}
+            return
+        if self._now() - start > timedelta(hours=MAX_LEARN_RUN_HOURS):
+            self.intel.state.heat_cycle = {}
+            return
+        self._heat_cycle_start = start
+        temp = cycle.get("start_temp")
+        self._heat_cycle_start_temp = float(temp) if isinstance(temp, (int, float)) else None
+        self._heat_cycle_house_called = bool(cycle.get("house_called"))
+        self._last_boiler_on = True
 
     def _track_coast(self, heating: bool, *, disturbed: bool = False) -> None:
         """Measure how far the house keeps warming after each run (True Radiant)."""
@@ -862,6 +901,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._async_finish_seasonal()
             self.effective_main_target()
 
+        calling_before = (
+            self._house_calling,
+            tuple(bool(st.get("needs_heat")) for st in self._room_states.values()),
+        )
         for room in self.config.rooms:
             needs = self.room_needs_heat(room)
             self._room_states.setdefault(room.id, {})["needs_heat"] = needs
@@ -869,6 +912,11 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._safety_active = self.safety_needs_heat()
         self._house_calling = self.main_needs_heat()
+        if calling_before != (
+            self._house_calling,
+            tuple(bool(st.get("needs_heat")) for st in self._room_states.values()),
+        ):
+            self._persist_control()  # a restart mid-run must carry on to the cut-off
         rooms_calling = any(
             self._room_states.get(r.id, {}).get("needs_heat")
             for r in self.config.rooms
