@@ -108,6 +108,9 @@ async def ws_get_state(
         vol.Optional("alert_notify"): [cv.string],
         vol.Optional("kiosk_defaults"): dict,
         vol.Optional("kiosk_auto_sync"): cv.boolean,
+        vol.Optional("backup_temperature_sensor"): cv.string,
+        vol.Optional("sensor_stale_minutes"): vol.All(vol.Coerce(int), vol.Range(min=15, max=720)),
+        vol.Optional("fast_sensor_reporting"): cv.boolean,
     }
 )
 @websocket_api.async_response
@@ -151,6 +154,9 @@ async def ws_update_settings(
             "alert_notify",
             "kiosk_defaults",
             "kiosk_auto_sync",
+            "backup_temperature_sensor",
+            "sensor_stale_minutes",
+            "fast_sensor_reporting",
         )
         if k in msg
     }

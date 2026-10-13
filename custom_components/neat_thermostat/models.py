@@ -26,6 +26,7 @@ from .const import (
     DEFAULT_SAFETY_MIN_TEMP,
     DEFAULT_SAFETY_TEMP_ENABLED,
     DEFAULT_SEASONAL_SAVINGS,
+    DEFAULT_SENSOR_STALE_MINUTES,
     DEFAULT_WALL_PANEL_MODEL,
     DEFAULT_TARGET_TEMP,
     DEFAULT_TRUE_RADIANT,
@@ -180,6 +181,12 @@ class NeatConfig:
     # Fully Kiosk settings every panel shares (a missing key = not managed).
     kiosk_defaults: dict[str, Any] = field(default_factory=dict)
     kiosk_auto_sync: bool = True
+    # Used when the house sensor goes silent (dead battery, out of range).
+    backup_temperature_sensor: str = ""
+    # A sensor that hasn't reported for this long is treated as dead.
+    sensor_stale_minutes: int = DEFAULT_SENSOR_STALE_MINUTES
+    # Ask Zigbee (ZHA) house sensors to report every 0.1 °C / 5 min.
+    fast_sensor_reporting: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -219,6 +226,9 @@ class NeatConfig:
             "alert_notify": self.alert_notify,
             "kiosk_defaults": self.kiosk_defaults,
             "kiosk_auto_sync": self.kiosk_auto_sync,
+            "backup_temperature_sensor": self.backup_temperature_sensor,
+            "sensor_stale_minutes": self.sensor_stale_minutes,
+            "fast_sensor_reporting": self.fast_sensor_reporting,
         }
 
     @classmethod
@@ -286,4 +296,9 @@ class NeatConfig:
             ],
             kiosk_defaults=clean_settings(data.get("kiosk_defaults")),
             kiosk_auto_sync=bool(data.get("kiosk_auto_sync", True)),
+            backup_temperature_sensor=str(data.get("backup_temperature_sensor") or ""),
+            sensor_stale_minutes=min(
+                720, max(15, int(data.get("sensor_stale_minutes", DEFAULT_SENSOR_STALE_MINUTES)))
+            ),
+            fast_sensor_reporting=bool(data.get("fast_sensor_reporting", False)),
         )

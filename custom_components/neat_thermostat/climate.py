@@ -91,9 +91,8 @@ class NeatHomeClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
 
     @property
     def current_temperature(self) -> float | None:
-        return self.coordinator._state_float(  # noqa: SLF001
-            self.coordinator.config.temperature_sensor
-        )
+        # The house sensor, or the backup if it has gone silent.
+        return self.coordinator._house_temp()  # noqa: SLF001
 
     @property
     def target_temperature(self) -> float | None:
@@ -152,6 +151,8 @@ class NeatHomeClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
             ),
             "warmup_c_per_hour": self.coordinator.intel.state.warmup.c_per_hour,
             "radiator_coast_c": self.coordinator.intel.state.warmup.coast_c,
+            # main / backup / none: which house sensor Neat is heating from.
+            "temperature_source": self.coordinator.intel.state.sensor_health.source,
             # Relay released for a hand test (Neat takes it back at this time).
             "relay_released_until": self.coordinator.data.get("control_released_until"),
             # Boiler time isn't warming the house (see the Neat notification).

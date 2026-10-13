@@ -21,6 +21,7 @@ from .const import (
 )
 from .models import ScheduleBlock
 from .schedule import _minutes, _parse_hhmm, day_key
+from .sensor_health import SensorHealth
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -497,6 +498,10 @@ class IntelligenceState:
     coast_watch: CoastWatch = field(default_factory=CoastWatch)
     # The boiler run in progress, for warm-up learning: {"start", "start_temp", "house_called"}.
     heat_cycle: dict[str, Any] = field(default_factory=dict)
+    # Which house sensor is in use, and the learned backup offset.
+    sensor_health: SensorHealth = field(default_factory=SensorHealth)
+    # Sensors Neat set to fast reporting (so turning it off can put them back).
+    fast_reporting: list[str] = field(default_factory=list)
     recent_cycles: list[dict[str, Any]] = field(default_factory=list)
     adjustments: list[dict[str, Any]] = field(default_factory=list)
     learning_started_at: str | None = None
@@ -513,6 +518,8 @@ class IntelligenceState:
             "heat_check": self.heat_check.to_dict(),
             "coast_watch": self.coast_watch.to_dict(),
             "heat_cycle": self.heat_cycle,
+            "sensor_health": self.sensor_health.to_dict(),
+            "fast_reporting": self.fast_reporting,
             "recent_cycles": self.recent_cycles[-40:],
             "adjustments": self.adjustments[-200:],
             "learning_started_at": self.learning_started_at,
@@ -532,6 +539,8 @@ class IntelligenceState:
             heat_check=HeatCheck.from_dict(data.get("heat_check")),
             coast_watch=CoastWatch.from_dict(data.get("coast_watch")),
             heat_cycle=dict(data.get("heat_cycle") or {}),
+            sensor_health=SensorHealth.from_dict(data.get("sensor_health")),
+            fast_reporting=[str(e) for e in (data.get("fast_reporting") or [])],
             recent_cycles=list(data.get("recent_cycles") or []),
             adjustments=list(data.get("adjustments") or []),
             learning_started_at=data.get("learning_started_at"),

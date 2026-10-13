@@ -51,12 +51,29 @@ from .intelligence import (
     update_warmup_from_cycle,
 )
 from .control import boiler_cycle_guard, house_calls_for_heat, next_schedule_change, room_calls_for_heat
-from . import kiosk
+from . import kiosk, zigbee_reporting
+from .sensor_health import (
+    OFFSET_FRESH_MINUTES,
+    SOURCE_BACKUP,
+    SOURCE_MAIN,
+    SOURCE_NONE,
+    choose,
+    fallback_heat,
+    frost_risk,
+    learn_offset,
+    reading,
+)
 from .models import NeatConfig, RoomConfig, WallPanelConfig
 from .schedule import scheduled_temperature
 
 _LOGGER = logging.getLogger(__name__)
 UPDATE_INTERVAL = timedelta(seconds=30)
+# A sensor change must last this long before Neat switches source and alerts.
+SENSOR_SWITCH_CONFIRM = timedelta(minutes=3)
+# Re-send fast reporting this often (a ZHA "Reconfigure" resets it), and retry
+# a sleeping sensor this soon.
+REPORTING_REFRESH = timedelta(hours=24)
+REPORTING_RETRY = timedelta(minutes=30)
 # A "run" longer than this (e.g. HA was down while it ended) teaches nothing.
 MAX_LEARN_RUN_HOURS = 6
 
@@ -107,6 +124,12 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._manual_hold: dict[str, Any] | None = None
         # Relay released for a hand test until this time (UTC); Neat leaves it alone.
         self._released_until: datetime | None = None
+        # A different sensor source seen but not yet confirmed (debounce blips,
+        # e.g. "unavailable" for seconds while HA starts): (source, since UTC).
+        self._sensor_pending: tuple[str, datetime] | None = None
+        # Fast-reporting results per sensor, for Settings (rebuilt after a restart).
+        self._reporting_status: dict[str, dict[str, Any]] = {}
+        self._reporting_next_try: dict[str, datetime] = {}
         # False while the house schedule is in setback (rooms drop to Eco).
         self._house_comfort = True
         self._dirty_intel = False
@@ -290,6 +313,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "safety_active": self._safety_active,
             "time_to_temp_minutes": self._time_to_temp,
             "heating_fault": self._heating_fault_info(),
+            "house_sensor": self._sensor_info(),
             "control_released_until": (
                 self._released_until.isoformat() if self._released_until else None
             ),
@@ -329,6 +353,175 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return float(state.state)
         except (TypeError, ValueError):
             return None
+
+    def _sensor_values(self, stale_minutes: float | None = None) -> tuple[float | None, float | None]:
+        """(main, backup) house readings; None for a sensor that's dead or silent."""
+        now = dt_util.utcnow()
+        stale = stale_minutes or self.config.sensor_stale_minutes
+        main_id = self.config.temperature_sensor
+        backup_id = self.config.backup_temperature_sensor
+        main = reading(self.hass.states.get(main_id), now_utc=now, stale_minutes=stale) if main_id else None
+        backup = (
+            reading(self.hass.states.get(backup_id), now_utc=now, stale_minutes=stale)
+            if backup_id and backup_id != main_id
+            else None
+        )
+        return main, backup
+
+    def _house_reading(self) -> tuple[float | None, str]:
+        """(house temperature, source): main sensor, else backup + learned offset, else none."""
+        main, backup = self._sensor_values()
+        return choose(main, backup, self.intel.state.sensor_health)
+
+    def _house_temp(self) -> float | None:
+        return self._house_reading()[0]
+
+    def _sensor_settled_none(self) -> bool:
+        """No working sensor, confirmed (not a blip): time for timed heating."""
+        return (
+            bool(self.config.temperature_sensor)
+            and self.intel.state.sensor_health.source == SOURCE_NONE
+        )
+
+    def _sensor_name(self, entity_id: str) -> str:
+        state = self.hass.states.get(entity_id) if entity_id else None
+        return str(state.attributes.get("friendly_name") or entity_id) if state else entity_id
+
+    async def _async_check_house_sensor(self) -> None:
+        """Learn the backup offset; switch source (and alert) once a change has lasted."""
+        health = self.intel.state.sensor_health
+        if learn_offset(health, *self._sensor_values(OFFSET_FRESH_MINUTES), self._now()):
+            self._dirty_intel = True
+        main, backup = self._sensor_values()
+        _, source = choose(main, backup, health)
+        if not self.config.temperature_sensor or source == health.source:
+            self._sensor_pending = None
+            return
+        now = dt_util.utcnow()
+        if self._sensor_pending is None or self._sensor_pending[0] != source:
+            self._sensor_pending = (source, now)
+        # Coming back to the main sensor needs no wait; losing it does.
+        if source != SOURCE_MAIN and now - self._sensor_pending[1] < SENSOR_SWITCH_CONFIRM:
+            return
+        previous = health.source
+        health.source = source
+        health.since = self._now().isoformat()
+        self._sensor_pending = None
+        await self.intel.async_save()
+        await self._async_alert_sensor(previous, source)
+
+    async def _async_alert_sensor(self, previous: str, source: str) -> None:
+        main = self._sensor_name(self.config.temperature_sensor)
+        backup = self._sensor_name(self.config.backup_temperature_sensor)
+        minutes = self.config.sensor_stale_minutes
+        notification_id = f"{DOMAIN}_sensor_{self.entry.entry_id}"
+        if source == SOURCE_MAIN:
+            title = "Neat: house sensor is back"
+            message = f"{main} is reporting again; Neat is using it."
+            persistent_notification.async_dismiss(self.hass, notification_id)
+        elif source == SOURCE_BACKUP:
+            offset = self.intel.state.sensor_health.offset_c or 0.0
+            title = "Neat: house sensor isn't reporting"
+            message = (
+                f"{main} hasn't reported for over {minutes} min (flat battery or out of range?). "
+                f"Neat is using {backup} instead"
+                + (f", adjusted by {offset:+.1f}°C to match" if abs(offset) >= 0.05 else "")
+                + "."
+            )
+        else:
+            title = "Neat: no house temperature sensor is working"
+            silent = main + (f" and {backup}" if self.config.backup_temperature_sensor else "")
+            message = (
+                f"{silent} haven't reported for over {minutes} min, so Neat can't tell how warm "
+                "the house is. It is heating on a timer until a sensor is back: 20 min in every "
+                "hour during schedule times, plus short frost-protection runs. "
+                "Check the sensor's battery."
+            )
+        _LOGGER.warning("Neat: %s — %s", title, message)
+        if source != SOURCE_MAIN:
+            persistent_notification.async_create(
+                self.hass, message, title=title, notification_id=notification_id
+            )
+        self.hass.bus.async_fire(
+            f"{DOMAIN}_sensor_source", {"source": source, "previous": previous}
+        )
+        await self._async_notify_phones(title, message)
+
+    async def _async_sync_sensor_reporting(self) -> None:
+        """Keep house sensors on the reporting the user chose (declarative, re-applied).
+
+        Runs in the background: a sleeping sensor can take 30 s to answer and
+        the control loop mustn't wait for it.
+        """
+        task = getattr(self, "_reporting_task", None)
+        if task is not None and not task.done():
+            return
+        targets: dict[str, bool] = {}
+        if self.config.fast_sensor_reporting:
+            for entity_id in (self.config.temperature_sensor, self.config.backup_temperature_sensor):
+                if entity_id:
+                    targets[entity_id] = True
+        for entity_id in self.intel.state.fast_reporting:
+            targets.setdefault(entity_id, False)  # put it back to ZHA's default
+        now = dt_util.utcnow()
+        due = {
+            entity_id: fast
+            for entity_id, fast in targets.items()
+            if (self._reporting_status.get(entity_id) or {}).get("fast") != fast
+            or now >= self._reporting_next_try.get(entity_id, now)
+        }
+        for entity_id in list(self._reporting_status):
+            if entity_id not in targets:
+                self._reporting_status.pop(entity_id)
+        if due:
+            self._reporting_task = self.hass.async_create_background_task(
+                self._async_apply_reporting(due), f"{DOMAIN}_sensor_reporting"
+            )
+
+    async def _async_apply_reporting(self, targets: dict[str, bool]) -> None:
+        applied = self.intel.state.fast_reporting
+        for entity_id, fast in targets.items():
+            now = dt_util.utcnow()
+            if zigbee_reporting.zha_ieee(self.hass, entity_id) is None:
+                self._reporting_status[entity_id] = {"supported": False, "fast": fast}
+                self._reporting_next_try[entity_id] = now + REPORTING_REFRESH
+                if entity_id in applied and not fast:
+                    applied.remove(entity_id)
+                    self._dirty_intel = True
+                continue
+            try:
+                await zigbee_reporting.async_configure(self.hass, entity_id, fast=fast)
+            except zigbee_reporting.ReportingError as err:
+                _LOGGER.warning("Neat: couldn't set %s reporting: %s", entity_id, err)
+                self._reporting_status[entity_id] = {
+                    "supported": True, "fast": fast, "ok": False, "error": str(err), "at": now.isoformat(),
+                }
+                self._reporting_next_try[entity_id] = now + REPORTING_RETRY
+                continue
+            self._reporting_status[entity_id] = {
+                "supported": True, "fast": fast, "ok": True, "at": now.isoformat(),
+            }
+            self._reporting_next_try[entity_id] = now + REPORTING_REFRESH
+            if fast and entity_id not in applied:
+                applied.append(entity_id)
+                self._dirty_intel = True
+            elif not fast and entity_id in applied:
+                applied.remove(entity_id)
+                self._dirty_intel = True
+        if self._dirty_intel:
+            self.intel.async_delay_save()
+            self._dirty_intel = False
+
+    def _sensor_info(self) -> dict[str, Any]:
+        health = self.intel.state.sensor_health
+        return {
+            "source": health.source,
+            "since": health.since,
+            "offset_c": health.offset_c,
+            "main": self.config.temperature_sensor,
+            "backup": self.config.backup_temperature_sensor,
+            "reporting": self._reporting_status,
+        }
 
     def _is_on(self, entity_id: str) -> bool:
         state = self.hass.states.get(entity_id)
@@ -416,7 +609,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.config.schedule,
                 schedule_enabled=True,
                 true_radiant=self.config.true_radiant,
-                current_temp=self._state_float(self.config.temperature_sensor),
+                current_temp=self._house_temp(),
                 warmup=self.intel.state.warmup,
                 outdoor_temp=outdoor,
                 away_eco_active=self._away_eco_active,
@@ -580,9 +773,17 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def safety_needs_heat(self) -> bool:
         if not self.config.safety_temp_enabled:
             return False
-        current = self._state_float(self.config.temperature_sensor)
+        current = self._house_temp()
         if current is None:
-            return False
+            # No working sensor: short timed runs so pipes can't freeze.
+            return self._sensor_settled_none() and fallback_heat(
+                self._now(),
+                comfort=False,
+                frost=frost_risk(
+                    self._state_float(self.config.outdoor_temp_sensor),
+                    summer_mode=self.config.summer_mode,
+                ),
+            )
         return current <= float(self.config.safety_min_temp)
 
     def main_needs_heat(self) -> bool:
@@ -591,8 +792,14 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return False
         if self._any_window_open(self.config.window_sensors):
             return False
-        current = self._state_float(self.config.temperature_sensor)
+        current = self._house_temp()
         target, _ = self.effective_main_target()
+        if current is None:
+            if not self._sensor_settled_none():
+                # A blip (e.g. HA starting): carry on as before until it's confirmed.
+                return self._house_calling
+            # No working sensor: heat on a timer while the house should be comfortable.
+            return fallback_heat(self._now(), comfort=self._house_comfort, frost=False)
         return house_calls_for_heat(
             current,
             target,
@@ -704,7 +911,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _track_heat_cycle(self, want_heat: bool) -> None:
         now = self._now()
-        current = self._state_float(self.config.temperature_sensor)
+        current = self._house_temp()
         outdoor = self._state_float(self.config.outdoor_temp_sensor)
         if want_heat and not self._last_boiler_on:
             self._heat_cycle_start = now
@@ -786,7 +993,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.intel.state.warmup,
             boiler_on=heating,
             house_calling=self._house_calling or self._safety_active,
-            current_temp=self._state_float(self.config.temperature_sensor),
+            current_temp=self._house_temp(),
             disturbed=disturbed or self._any_window_open(self.config.window_sensors),
             # A boiler that isn't heating has no coast to learn.
             learn=self.intel.state.heat_check.fault_since is None,
@@ -806,7 +1013,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Flag (and notify) when boiler time isn't warming the house."""
         check = self.intel.state.heat_check
         before = {k: v for k, v in check.to_dict().items() if k != "last_tick"}
-        current = self._state_float(self.config.temperature_sensor)
+        current = self._house_temp()
         event = update_heat_check(
             check,
             heating=house_heating,
@@ -896,6 +1103,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         self._refresh_away()
+        await self._async_check_house_sensor()
+        await self._async_sync_sensor_reporting()
         self.effective_main_target()
         if self._seasonal_info.get("finished"):
             await self._async_finish_seasonal()
@@ -941,7 +1150,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Neat's heating either, and a half-finished run teaches nothing.
         released = self._relay_released()
         heating = want_heat and heater_available and not released
-        if released:
+        # Only learn the house from the main sensor (a backup is offset, a
+        # timed run has no reading at all).
+        learnable = not released and self._house_reading()[1] == SOURCE_MAIN
+        if not learnable:
             self._heat_cycle_start = None
 
         self._track_heat_cycle(heating)
@@ -950,7 +1162,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._async_check_warming(
             heating and (self._house_calling or self._safety_active)
         )
-        self._track_coast(heating, disturbed=released)
+        self._track_coast(heating, disturbed=not learnable)
 
         if not released:
             await self._async_set_heater(want_heat)
@@ -999,7 +1211,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ):
             self._dirty_intel = True
 
-        current = self._state_float(self.config.temperature_sensor)
+        current = self._house_temp()
         preheating = bool((self._preheat or {}).get("preheating"))
         self._time_to_temp = estimate_time_to_temp_minutes(
             current_temp=current,
@@ -1178,7 +1390,11 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
     def _tracked_entities(self) -> tuple[str, ...]:
-        entities = [self.config.heater, self.config.temperature_sensor]
+        entities = [
+            self.config.heater,
+            self.config.temperature_sensor,
+            self.config.backup_temperature_sensor,
+        ]
         entities.extend(self.config.window_sensors)
         entities.extend(self._presence_entities())
         if self.config.outdoor_temp_sensor:

@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.20
+ * @version 0.6.21
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.20";
+const PANEL_VERSION = "0.6.21";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -485,6 +485,7 @@ table.data th {
 .banner.err { background: color-mix(in srgb, var(--nt-red) 14%, transparent); color: var(--nt-red); }
 .banner.ok { background: color-mix(in srgb, var(--nt-accent) 14%, transparent); color: var(--nt-accent); }
 .banner.warn { background: color-mix(in srgb, var(--nt-amber) 16%, transparent); color: var(--nt-amber); }
+.warn-text { color: var(--nt-amber); }
 .muted { color: var(--secondary-text-color); font-size: 12px; }
 code {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.92em;
@@ -1547,6 +1548,7 @@ class NeatThermostatPanel extends HTMLElement {
     return `
       ${heaterWarning}
       ${releasedWarning}
+      ${this._sensorStatusBanner()}
       ${faultWarning}
       ${this._renderHero()}
       <div style="height:14px"></div>
@@ -2890,6 +2892,7 @@ class NeatThermostatPanel extends HTMLElement {
 
     single("heater", { domains: ["switch", "input_boolean", "climate"] });
     single("temperature_sensor", { domains: ["sensor"], filter: temperatureSensorFilter });
+    single("backup_temperature_sensor", { domains: ["sensor"], filter: temperatureSensorFilter });
     single("outdoor_temp_sensor", { domains: ["sensor"], filter: temperatureSensorFilter });
     list("presence_entities", { domains: ["person", "device_tracker"], placeholder: "Add a person or tracker" });
     list("window_sensors", { domains: ["binary_sensor"], placeholder: "Add a window or door sensor" });
@@ -2907,6 +2910,7 @@ class NeatThermostatPanel extends HTMLElement {
     return {
       heater: cfg.heater || "",
       temperature_sensor: cfg.temperature_sensor || "",
+      backup_temperature_sensor: cfg.backup_temperature_sensor || "",
       outdoor_temp_sensor: cfg.outdoor_temp_sensor || "",
       window_sensors: [...(cfg.window_sensors || [])],
       presence_entities: presence,
@@ -2987,12 +2991,12 @@ class NeatThermostatPanel extends HTMLElement {
     const num = (id, value, unit, attrs = "") =>
       `<div class="num-input"><input id="${id}" type="number" value="${this._escape(value)}" ${attrs} />${unit ? `<span>${unit}</span>` : ""}</div>`;
     // −/+ whole-number stepper that can't leave [min, max].
-    const stepper = (id, value, unit, min, max) => {
+    const stepper = (id, value, unit, min, max, step = 1) => {
       const v = Math.min(max, Math.max(min, Math.round(Number(value) || min)));
       return `<div class="num-input stepper" data-stepper="${id}" data-min="${min}" data-max="${max}">
-        <button type="button" data-step="-1" aria-label="Less" ${v <= min ? "disabled" : ""}>−</button>
+        <button type="button" data-step="-${step}" aria-label="Less" ${v <= min ? "disabled" : ""}>−</button>
         <input id="${id}" type="number" inputmode="numeric" min="${min}" max="${max}" step="1" value="${v}" />
-        <button type="button" data-step="1" aria-label="More" ${v >= max ? "disabled" : ""}>+</button>
+        <button type="button" data-step="${step}" aria-label="More" ${v >= max ? "disabled" : ""}>+</button>
         ${unit ? `<span>${unit}</span>` : ""}
       </div>`;
     };
@@ -3017,8 +3021,12 @@ class NeatThermostatPanel extends HTMLElement {
         <div class="set-fields">
           ${field("Boiler relay", "heater", "Changing it turns the old relay off first.")}
           ${field("House temperature", "temperature_sensor", "The temperature Neat heats the house to.")}
+          ${field("Backup house temperature", "backup_temperature_sensor", "Optional — used if the house sensor stops reporting (e.g. a flat battery). Neat learns how far apart the two usually read and adjusts for it.")}
           ${field("Outdoor temperature", "outdoor_temp_sensor", "Optional — lets preheat learn how cold weather slows warming up.")}
         </div>
+        ${this._sensorStatusBanner()}
+        ${row("Sensor counts as dead after", "No report for this long means a flat battery or lost signal. Zigbee sensors check in at least every 15 min (5 min with faster updates).", stepper("sensorStale", cfg.sensor_stale_minutes ?? 60, "min", 15, 720, 15))}
+        ${row("Faster sensor updates", `Asks Zigbee (ZHA) house sensors to report every 0.1°C or 5 min instead of 0.5°C or 15 min, so Neat sees the house sooner and overshoots less. Uses a little more battery.${this._reportingStatusHtml()}`, toggle("fastReporting", cfg.fast_sensor_reporting))}
       </div>
       ${this._renderRoomsCard()}
       <div class="ov-grid">
@@ -3094,6 +3102,35 @@ class NeatThermostatPanel extends HTMLElement {
       `${this._escape(learned)} ${this._escape(coasted)} Times preheating and when to stop. Reset if they were learned while the heating was faulty.`,
       `<button type="button" class="secondary" id="resetWarmup" ${samples || coastSamples ? "" : "disabled"}>Reset</button>`
     );
+  }
+
+  /** Warning when Neat isn't heating from the main house sensor. */
+  _sensorStatusBanner() {
+    const s = this._live().house_sensor || {};
+    const name = (id) => this._escape(this._hass?.states?.[id]?.attributes?.friendly_name || id || "");
+    const since = s.since ? ` since ${this._escape(this._ehClock(s.since))}` : "";
+    if (s.source === "backup") {
+      const off = Number(s.offset_c || 0);
+      return `<div class="banner warn">${name(s.main)} ${s.since ? `hasn't reported${since}` : "isn't reporting"} — Neat is using ${name(s.backup)}${Math.abs(off) >= 0.05 ? ` (adjusted ${off > 0 ? "+" : ""}${off.toFixed(1)}°C)` : ""}. Check its battery.</div>`;
+    }
+    if (s.source === "none") {
+      return `<div class="banner err">${s.since ? `No house sensor has reported${since}` : "No house sensor is reporting"} — Neat is heating on a timer (20 min each hour during schedule times, plus frost-protection runs). Check the sensor's battery.</div>`;
+    }
+    return "";
+  }
+
+  /** Per-sensor result of "Faster sensor updates". */
+  _reportingStatusHtml() {
+    const rep = this._live().house_sensor?.reporting || {};
+    const lines = Object.entries(rep).map(([id, r]) => {
+      const name = this._escape(this._hass?.states?.[id]?.attributes?.friendly_name || id);
+      let text;
+      if (!r.supported) text = "not a Zigbee (ZHA) sensor — unchanged";
+      else if (r.ok) text = r.fast ? "reporting every 0.1°C / 5 min" : "back to ZHA's normal reporting";
+      else text = `not set yet: ${this._escape(r.error || "unknown error")}`;
+      return `<br><span class="${r.supported && !r.ok ? "warn-text" : ""}">${name}: ${text}</span>`;
+    });
+    return lines.join("");
   }
 
   /** Release the boiler relay for a hand test; Neat takes it back by itself. */
@@ -3281,8 +3318,8 @@ class NeatThermostatPanel extends HTMLElement {
       const set = (v) => {
         const n = Math.min(max, Math.max(min, Math.round(Number(v) || min)));
         input.value = String(n);
-        box.querySelector('[data-step="-1"]').disabled = n <= min;
-        box.querySelector('[data-step="1"]').disabled = n >= max;
+        box.querySelector('[data-step^="-"]').disabled = n <= min;
+        box.querySelector('[data-step]:not([data-step^="-"])').disabled = n >= max;
       };
       box.querySelectorAll("[data-step]").forEach((btn) =>
         btn.addEventListener("click", () => set(Number(input.value) + Number(btn.dataset.step)))
@@ -3455,6 +3492,9 @@ class NeatThermostatPanel extends HTMLElement {
             heater: devices.heater,
             temperature_sensor: devices.temperature_sensor,
             outdoor_temp_sensor: devices.outdoor_temp_sensor || "",
+            backup_temperature_sensor: devices.backup_temperature_sensor || "",
+            sensor_stale_minutes: Math.min(720, Math.max(15, Math.round(Number(this.shadowRoot.getElementById("sensorStale").value) || 60))),
+            fast_sensor_reporting: this.shadowRoot.getElementById("fastReporting").checked,
             window_sensors: devices.window_sensors || [],
             presence_entities: devices.presence_entities || [],
             // Presence picker now holds everyone; clear the old single-person field.
