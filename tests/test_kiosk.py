@@ -135,7 +135,7 @@ async def test_proximity_settings_are_write_only_and_sent_when_forced(hass):
     hass.states.async_set(f"sensor.{P}_current_page", GOOD_PAGE)
     calls = _mocks(hass)
     panel = _panel(device_id)
-    defaults = {"motion_detection": True, "proximity_motion": True, "proximity_threshold": 150}
+    defaults = {"motion_detection": True, "proximity_motion": True, "proximity_threshold": 150, "js_interface": True}
     status = kiosk.panel_status(hass, panel, defaults)
     assert status["in_sync"]  # can't read them back, so they never count as drift
     assert status["settings"]["proximity_motion"]["ok"] is None
@@ -147,6 +147,7 @@ async def test_proximity_settings_are_write_only_and_sent_when_forced(hass):
     sent = {c.data["key"]: c.data["value"] for c in calls["set_config"]}
     assert sent["motionDetectionProximity"] is True
     assert sent["motionThresholdProximity"] == 100
+    assert sent["websiteIntegration"] is True  # JS interface: the wall app hears Fully's motion
     assert "startURL" in sent
 
 

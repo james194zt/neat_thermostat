@@ -31,12 +31,16 @@ KIOSK_SETTINGS: dict[str, tuple[str, tuple[float, float] | None]] = {
     "motion_detection": ("switch", None),
     "proximity_motion": ("config", None),
     "proximity_threshold": ("config", (0, 100)),
+    "js_interface": ("config", None),
 }
 # Settings with no HA entity: written with fully_kiosk.set_config, never read back, so
 # they're only sent on an explicit sync/save or when the panel comes back online.
 FULLY_CONFIG_KEYS = {
     "proximity_motion": "motionDetectionProximity",  # "Enable Proximity Motion Detection"
     "proximity_threshold": "motionThresholdProximity",  # 0–100 %
+    # "Enable JavaScript Interface": the wall app binds Fully's onMotion/screenOn
+    # through it; without it a wave never clears the clock (seen 13 Oct).
+    "js_interface": "websiteIntegration",
 }
 # Other entities we need from the same device.
 _CURRENT_PAGE = ("sensor", "current_page")

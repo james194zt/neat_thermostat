@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.32
+ * @version 0.6.33
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.32";
+const PANEL_VERSION = "0.6.33";
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -911,8 +911,9 @@ const KIOSK_FIELDS = [
   { key: "screensaver_brightness", label: "Screensaver brightness", desc: "", kind: "pct" },
   { key: "screen_off_timer", label: "Screen off after", desc: "0 = never.", kind: "sec" },
   { key: "kiosk_lock", label: "Kiosk lock", desc: "Stops anyone leaving the app on the panel.", kind: "bool" },
-  { key: "motion_detection", label: "Wake on motion", desc: "Fully's motion detection (camera, or the proximity sensor below).", kind: "bool" },
-  { key: "proximity_motion", label: "Wave to wake", desc: "Uses the panel's proximity sensor for motion — for panels without a camera, like the NSPanel Pro. Needs Wake on motion on. Sent on save or sync; HA can't read it back.", kind: "bool", writeOnly: true },
+  { key: "motion_detection", label: "Camera motion detection", desc: "Uses the panel's camera. Leave this off on panels without a camera, like the NSPanel Pro — Fully fails and restarts every few seconds.", kind: "bool" },
+  { key: "proximity_motion", label: "Wave to wake", desc: "Uses the panel's proximity sensor — for panels without a camera, like the NSPanel Pro. Needs the JavaScript interface on. Sent on save or sync; HA can't read it back.", kind: "bool", writeOnly: true },
+  { key: "js_interface", label: "JavaScript interface", desc: "Lets the Neat wall app hear Fully's motion and screen-on events, so a wave clears the clock. Sent on save or sync; HA can't read it back.", kind: "bool", writeOnly: true },
   { key: "proximity_threshold", label: "Wave sensitivity", desc: "Fully's proximity threshold. Its default is 50%.", kind: "pct100", writeOnly: true },
 ];
 
