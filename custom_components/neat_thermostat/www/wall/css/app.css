@@ -1,3 +1,37 @@
+/* Roboto (SIL OFL 1.1, assets/fonts/LICENSE.txt) is bundled: the panel must look the same
+   on the NSPanel, in Neat's preview on a PC, and in tests — not depend on installed fonts. */
+@font-face {
+  font-family: "Neat Roboto";
+  font-style: normal;
+  font-weight: 300;
+  font-display: block;
+  src: url("../assets/fonts/roboto-latin-300.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Neat Roboto";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("../assets/fonts/roboto-latin-400.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Neat Roboto";
+  font-style: normal;
+  font-weight: 500 600;
+  font-display: block;
+  src: url("../assets/fonts/roboto-latin-500.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Neat Roboto";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url("../assets/fonts/roboto-latin-700.woff2") format("woff2");
+}
+
 /* Neat wall panel — touch-first, matches the Neat dashboard card.
    Sized in vmin so it fills a square 480×480 panel and scales elsewhere. */
 :root {
@@ -17,7 +51,7 @@
   --red: #ef5350;
   --tint: var(--teal);
   --tint-wash: rgba(25, 212, 222, 0.1);
-  font-family: Roboto, "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family: "Neat Roboto", Roboto, "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 
 * {
@@ -313,7 +347,7 @@ button {
 }
 
 .caption {
-  font-size: 2.3vmin;
+  font-size: 2.7vmin;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -338,21 +372,21 @@ button {
 }
 
 .temp-int {
-  font-size: 13vmin;
-  font-weight: 300;
+  font-size: 15.5vmin;
+  font-weight: 400;
   letter-spacing: -0.05em;
 }
 
 .temp-dec {
-  font-size: 6vmin;
-  font-weight: 300;
+  font-size: 7vmin;
+  font-weight: 400;
   margin-top: 1.2vmin;
   letter-spacing: -0.03em;
 }
 
 .temp-unit {
-  font-size: 4.6vmin;
-  font-weight: 300;
+  font-size: 5.2vmin;
+  font-weight: 400;
   margin-top: 1.2vmin;
   margin-left: 0.4vmin;
   color: var(--text-muted);
@@ -377,13 +411,13 @@ button {
 
 .sub {
   margin-top: 2.2vmin; /* a little breathing room under the target */
-  font-size: 2.9vmin;
+  font-size: 3.3vmin;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .eta {
-  font-size: 2.6vmin;
+  font-size: 3vmin;
   font-weight: 600;
   color: var(--heat-soft);
   margin-top: 0.6vmin;
