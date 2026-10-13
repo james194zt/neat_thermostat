@@ -376,6 +376,7 @@ button {
 }
 
 .sub {
+  margin-top: 2.2vmin; /* a little breathing room under the target */
   font-size: 2.9vmin;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
