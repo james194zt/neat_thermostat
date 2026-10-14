@@ -1,51 +1,74 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.48
+ * @version 0.6.49
  */
-const NAV = [
-  { id: "overview", label: "Overview" },
-  { id: "energy", label: "Energy" },
-  { id: "schedule", label: "Schedule" },
-  { id: "wall_panels", label: "Wall Panels" },
-  { id: "settings", label: "Settings" },
-];
+const PANEL_VERSION = "0.6.49";
+
+/* —— Labels ——
+   Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
+   "settings.windows.pause_after"), loaded before anything renders. It follows HA's language:
+   English is loaded first, then the file for HA's language on top (e.g. de.json), so a
+   missing file — or a label a translation hasn't got yet — shows in English. Adding a
+   language is just adding a file. {name} placeholders are filled from the values given;
+   callers escape anything that comes from the user or HA. tests/test_panel_i18n.py checks
+   keys and leftovers. */
+async function loadLabels(lang) {
+  try {
+    const res = await fetch(new URL(`i18n/${lang}.json?v=${PANEL_VERSION}`, import.meta.url));
+    if (res.ok) return await res.json();
+    if (lang === "en") console.error(`Neat: couldn't load labels (HTTP ${res.status})`);
+  } catch (err) {
+    if (lang === "en") console.error("Neat: couldn't load labels", err);
+  }
+  return null;
+}
+
+/** HA's language: it sets <html lang>; else the language picked in HA, else the browser's. */
+function haLanguage() {
+  let picked = "";
+  try {
+    picked = JSON.parse(localStorage.getItem("selectedLanguage") || "null") || "";
+  } catch {
+    // Not set, or not JSON.
+  }
+  return String(document.documentElement.lang || picked || navigator.language || "en").toLowerCase();
+}
+
+const LANG = haLanguage();
+const STRINGS = await (async () => {
+  const labels = { ...((await loadLabels("en")) || {}) };
+  // "de-de" → de-de.json, else de.json. English (any en-…) is already the base.
+  for (const lang of [...new Set([LANG, LANG.split("-")[0]])]) {
+    if (lang === "en" || lang.startsWith("en-")) break;
+    const local = await loadLabels(lang);
+    if (local) return { ...labels, ...local };
+  }
+  return labels;
+})();
+
+/** A label, with {placeholders} filled in. A missing key shows as the key itself. */
+function t(key, vars) {
+  let text = STRINGS[key];
+  if (text == null) {
+    console.warn(`Neat: no label for "${key}"`);
+    return key;
+  }
+  if (vars) text = text.replace(/\{(\w+)\}/g, (m, name) => (name in vars ? String(vars[name]) : m));
+  return text;
+}
+
+/** Singular/plural label: "<key>.one" or "<key>.other", with {count}. */
+function tn(key, count, vars = {}) {
+  return t(`${key}.${Number(count) === 1 ? "one" : "other"}`, { count, ...vars });
+}
+
+const NAV = ["overview", "energy", "schedule", "wall_panels", "settings"].map((id) => ({ id, label: t(`nav.${id}`) }));
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-const DAY_LABELS = {
-  mon: "Monday",
-  tue: "Tuesday",
-  wed: "Wednesday",
-  thu: "Thursday",
-  fri: "Friday",
-  sat: "Saturday",
-  sun: "Sunday",
-};
-const DAY_SHORT = {
-  mon: "Mon",
-  tue: "Tue",
-  wed: "Wed",
-  thu: "Thu",
-  fri: "Fri",
-  sat: "Sat",
-  sun: "Sun",
-};
-const MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-
-const PANEL_VERSION = "0.6.48";
+const DAY_LABELS = Object.fromEntries(DAYS.map((d) => [d, t(`day.${d}`)]));
+const DAY_SHORT = Object.fromEntries(DAYS.map((d) => [d, t(`day_short.${d}`)]));
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].map((m) => t(`month.${m}`));
 // New-room defaults (match RoomConfig / DEFAULT_TARGET_TEMP / DEFAULT_ECO_TEMP).
 const ROOM_TEMP_DEFAULTS = { follow_house: true, house_offset: 0, hold_ends: "house_change", target_temp: 20, eco_temp: 16 };
 const HEAT_ORANGE = "#F57C00";
@@ -57,13 +80,13 @@ const WALL_APP_URL = "/neat_thermostat/static/wall/index.html";
 // size. The wall app itself lays out from its real screen, so this never changes the panel.
 // The first entry is the default (matches DEFAULT_WALL_PANEL_MODEL); old hardware ids fall back to it.
 const WALL_MODELS = [
-  { id: "square", label: "Square", ratio: "1:1", width: 480, height: 480, hint: "most in-wall panels" },
-  { id: "tall", label: "Tall", ratio: "9:16", width: 405, height: 720, hint: "tall in-wall panels, upright tablets" },
-  { id: "landscape", label: "Landscape", ratio: "16:10", width: 960, height: 600, hint: "tablets on their side" },
-  { id: "wide", label: "Wide", ratio: "2:1", width: 720, height: 360, hint: "panoramic panels" },
+  { id: "square", ratio: "1:1", width: 480, height: 480 },
+  { id: "tall", ratio: "9:16", width: 405, height: 720 },
+  { id: "landscape", ratio: "16:10", width: 960, height: 600 },
+  { id: "wide", ratio: "2:1", width: 720, height: 360 },
   // A square panel with extras: the Neat Panel Helper app (hides Sonoff's floating button, health).
-  { id: "nspanel_pro", label: "Sonoff NSPanel Pro", ratio: "1:1", width: 480, height: 480, hint: "480×480, with the Neat Panel Helper", shape: "square" },
-];
+  { id: "nspanel_pro", ratio: "1:1", width: 480, height: 480, shape: "square" },
+].map((m) => ({ ...m, label: t(`wall.shape.${m.id}`), hint: t(`wall.shape.${m.id}.hint`) }));
 
 function wallModel(id) {
   return WALL_MODELS.find((m) => m.id === id) || WALL_MODELS[0];
@@ -954,25 +977,25 @@ function formatTemp(value) {
 
 // Fully Kiosk settings Neat manages (keys match the backend's kiosk.KIOSK_SETTINGS).
 const KIOSK_FIELDS = [
-  { key: "screen_brightness", label: "Screen brightness", desc: "While the panel is in use.", kind: "pct" },
-  { key: "screensaver_timer", label: "Fully screensaver after", desc: "Fully's own screensaver. 0 = never — the Neat app already dims to its clock.", kind: "sec" },
-  { key: "screensaver_brightness", label: "Screensaver brightness", desc: "", kind: "pct" },
-  { key: "screen_off_timer", label: "Screen off after", desc: "Time since the last touch before the screen turns off (the clock shows first, after the panel's \"Clock after\"). Walking past then wakes it straight to the thermostat. 0 = never.", kind: "sec" },
-  { key: "kiosk_lock", label: "Kiosk lock", desc: "Stops anyone leaving the app on the panel.", kind: "bool" },
-  { key: "motion_detection", label: "Camera motion detection", desc: "Uses the panel's camera. Leave this off on panels without a camera, like the NSPanel Pro — Fully fails and restarts every few seconds.", kind: "bool" },
-  { key: "proximity_motion", label: "Wave to wake", desc: "Uses the panel's proximity sensor — for panels without a camera, like the NSPanel Pro. Needs the JavaScript interface on. Sent on save or sync; HA can't read it back.", kind: "bool", writeOnly: true },
-  { key: "js_interface", label: "JavaScript interface", desc: "Lets the Neat wall app hear Fully's motion and screen-on events, so a wave clears the clock. Sent on save or sync; HA can't read it back.", kind: "bool", writeOnly: true },
-  { key: "proximity_threshold", label: "Wave sensitivity", desc: "Fully's proximity threshold. Its default is 50%.", kind: "pct100", writeOnly: true },
-  { key: "stay_awake", label: "Stay awake with the screen off", desc: "Keeps the panel and its Wi-Fi running while the screen is off, so it wakes straight to live data instead of reconnecting first. The screen still turns off. Sent on save or sync; HA can't read it back.", kind: "bool", writeOnly: true },
-];
+  { key: "screen_brightness", kind: "pct" },
+  { key: "screensaver_timer", kind: "sec" },
+  { key: "screensaver_brightness", kind: "pct" },
+  { key: "screen_off_timer", kind: "sec" },
+  { key: "kiosk_lock", kind: "bool" },
+  { key: "motion_detection", kind: "bool" },
+  { key: "proximity_motion", kind: "bool", writeOnly: true },
+  { key: "js_interface", kind: "bool", writeOnly: true },
+  { key: "proximity_threshold", kind: "pct100", writeOnly: true },
+  { key: "stay_awake", kind: "bool", writeOnly: true },
+].map((f) => ({ ...f, label: t(`kiosk.field.${f.key}`), desc: t(`kiosk.field.${f.key}.desc`) }));
 
 /** Fully stores brightness 0–255; people think in %. */
 function kioskDisplay(field, raw) {
   if (raw == null) return "";
-  if (field.kind === "bool") return raw ? "On" : "Off";
+  if (field.kind === "bool") return raw ? t("common.on") : t("common.off");
   if (field.kind === "pct") return `${Math.round(Number(raw) / 2.55)}%`;
   if (field.kind === "pct100") return `${Math.round(Number(raw))}%`;
-  return Number(raw) === 0 ? "Never" : `${raw} s`;
+  return Number(raw) === 0 ? t("common.never") : t("common.seconds_short", { value: raw });
 }
 
 /** Lower-case id from a name: "Hallway Panel" → "hallway-panel". */
@@ -1062,7 +1085,7 @@ async function ensureHaEntityPickerLoaded() {
     return;
   }
   if (typeof window.loadCardHelpers !== "function") {
-    throw new Error("Home Assistant entity picker is not available");
+    throw new Error(t("error.entity_picker"));
   }
   if (!_haEntityPickerLoadPromise) {
     _haEntityPickerLoadPromise = (async () => {
@@ -1191,6 +1214,15 @@ class NeatThermostatPanel extends HTMLElement {
   }
 
   connectedCallback() {
+    // The class is defined only after the labels have loaded, so HA may already have set
+    // hass/narrow on the plain element; those own properties would hide our setters.
+    for (const prop of ["hass", "narrow", "route", "panel"]) {
+      if (Object.prototype.hasOwnProperty.call(this, prop)) {
+        const value = this[prop];
+        delete this[prop];
+        this[prop] = value;
+      }
+    }
     this._render();
     this._loadState();
     this._liveTimer = window.setInterval(() => this._softRefreshLive(), 5000);
@@ -1254,7 +1286,7 @@ class NeatThermostatPanel extends HTMLElement {
   _ws(type, payload = {}) {
     return new Promise((resolve, reject) => {
       if (!this._hass) {
-        reject(new Error("HA not ready"));
+        reject(new Error(t("error.ha_not_ready")));
         return;
       }
       this._hass.connection
@@ -1289,10 +1321,10 @@ class NeatThermostatPanel extends HTMLElement {
   _formatEta(minutes) {
     if (minutes == null || !Number.isFinite(Number(minutes))) return null;
     const m = Math.round(Number(minutes));
-    if (m < 60) return `~${m} min`;
+    if (m < 60) return t("time.approx_min", { m });
     const h = Math.floor(m / 60);
     const rem = m % 60;
-    return rem ? `~${h}h ${rem}m` : `~${h}h`;
+    return rem ? t("time.approx_hm", { h, m: rem }) : t("time.approx_h", { h });
   }
 
   _cfg() {
@@ -1385,7 +1417,7 @@ class NeatThermostatPanel extends HTMLElement {
     const room = this._focusRoom();
     const entity = room ? this._roomEntity(room) : this._neatClimateEntities().home;
     if (!entity) {
-      this._showToast(room ? `Neat's ${room.name} thermostat isn't available` : "Neat's house thermostat isn't available", "err");
+      this._showToast(room ? t("dial.room_unavailable", { name: room.name }) : t("dial.house_unavailable"), "err");
       return;
     }
     const attrs = this._entityState(entity)?.attributes || {};
@@ -1417,7 +1449,7 @@ class NeatThermostatPanel extends HTMLElement {
         this._pendingAt = Date.now();
       } catch (e) {
         this._pendingTarget = null;
-        this._showToast(`Couldn't change the temperature: ${e?.message || e}`, "err");
+        this._showToast(t("dial.change_failed", { error: e?.message || e }), "err");
         this._render();
       }
     }, 700);
@@ -1434,8 +1466,8 @@ class NeatThermostatPanel extends HTMLElement {
   /** The room's setpoint as Neat applies it. live.rooms[].target is only the last manual
    *  setpoint (it ignores the schedule, Eco and Boost), so the entity comes first. */
   _roomDisplayTemp(room) {
-    const t = this._entityState(this._roomEntity(room))?.attributes?.temperature;
-    if (t != null) return t;
+    const temp = this._entityState(this._roomEntity(room))?.attributes?.temperature;
+    if (temp != null) return temp;
     const live = (this._live().rooms || {})[room.id] || {};
     return live.target ?? room.target_temp ?? null;
   }
@@ -1456,8 +1488,8 @@ class NeatThermostatPanel extends HTMLElement {
       .map((id) => Number(this._entityState(id)?.state))
       .filter((n) => Number.isFinite(n));
     if (readings.length) return readings.reduce((a, b) => a + b, 0) / readings.length;
-    const t = Number(this._entityState(room.trv_entity)?.attributes?.current_temperature);
-    return Number.isFinite(t) ? t : null;
+    const trvTemp = Number(this._entityState(room.trv_entity)?.attributes?.current_temperature);
+    return Number.isFinite(trvTemp) ? trvTemp : null;
   }
 
   /** Status pills for the hero: heating state first, then whatever Neat is doing. */
@@ -1469,16 +1501,16 @@ class NeatThermostatPanel extends HTMLElement {
     const pills = [];
     const pill = (cls, text, icon = "") =>
       pills.push(`<span class="hero-pill ${cls}">${icon}${this._escape(text)}</span>`);
-    if (live.safety_active) pill("heat", "Safety temp · protecting", flameSvg());
-    else if (live.boiler_on) pill("heat", "Boiler on", flameSvg());
-    if (preheat.preheating) pill("heat", `Preheating for ${preheat.block_start ?? ""}`.trim());
-    if (live.leaf?.active) pill("leaf", "Leaf", leafSvg());
-    if (live.away) pill("warn", "Away · Eco");
-    if (live.window_open) pill("warn", "Window open");
-    if (live.summer_mode) pill("warn", "Summer mode");
-    if (preset && preset !== "none" && !live.away) pill("info", preset[0].toUpperCase() + preset.slice(1));
+    if (live.safety_active) pill("heat", t("hero.pill.safety"), flameSvg());
+    else if (live.boiler_on) pill("heat", t("hero.pill.boiler_on"), flameSvg());
+    if (preheat.preheating) pill("heat", t("hero.pill.preheating", { time: preheat.block_start ?? "" }).trim());
+    if (live.leaf?.active) pill("leaf", t("hero.pill.leaf"), leafSvg());
+    if (live.away) pill("warn", t("hero.pill.away"));
+    if (live.window_open) pill("warn", t("hero.pill.window_open"));
+    if (live.summer_mode) pill("warn", t("hero.pill.summer"));
+    if (preset && preset !== "none" && !live.away) pill("info", t(`preset.${preset}`));
     if (intel.true_radiant && intel.warmup_c_per_hour != null) {
-      pill("info", `True Radiant · ${intel.warmup_c_per_hour}°C/h`);
+      pill("info", t("hero.pill.true_radiant", { rate: intel.warmup_c_per_hour }));
     }
     return pills.join("");
   }
@@ -1491,16 +1523,16 @@ class NeatThermostatPanel extends HTMLElement {
     const pills = [];
     const pill = (cls, text, icon = "") =>
       pills.push(`<span class="hero-pill ${cls}">${icon}${this._escape(text)}</span>`);
-    if (this._roomHeating(room)) pill("heat", "Calling for heat", flameSvg());
-    if (!room.trv_entity) pill("warn", "No TRV");
-    else if (!trv || trv.state === "unavailable" || trv.state === "unknown") pill("warn", "TRV offline");
-    else pill("info", `TRV ${trv.attributes?.hvac_action === "heating" ? "open" : trv.state === "off" ? "off" : "idle"}`);
-    if (attrs.window_open) pill("warn", "Window open");
-    if (live.summer_mode) pill("warn", "Summer mode");
-    if (attrs.preset_mode && attrs.preset_mode !== "none") pill("info", attrs.preset_mode[0].toUpperCase() + attrs.preset_mode.slice(1));
-    else if (attrs.hold_until) pill("info", `Until ${new Date(attrs.hold_until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
-    else if (attrs.held) pill("info", attrs.hold_ends === "manual" ? "Held" : "Until the house changes");
-    if (room.calls_for_heat === false) pill("", "Doesn't call the boiler");
+    if (this._roomHeating(room)) pill("heat", t("room.pill.calling"), flameSvg());
+    if (!room.trv_entity) pill("warn", t("room.pill.no_trv"));
+    else if (!trv || trv.state === "unavailable" || trv.state === "unknown") pill("warn", t("room.pill.trv_offline"));
+    else pill("info", t(`room.pill.trv_${trv.attributes?.hvac_action === "heating" ? "open" : trv.state === "off" ? "off" : "idle"}`));
+    if (attrs.window_open) pill("warn", t("hero.pill.window_open"));
+    if (live.summer_mode) pill("warn", t("hero.pill.summer"));
+    if (attrs.preset_mode && attrs.preset_mode !== "none") pill("info", t(`preset.${attrs.preset_mode}`));
+    else if (attrs.hold_until) pill("info", t("room.pill.until", { time: new Date(attrs.hold_until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }));
+    else if (attrs.held) pill("info", attrs.hold_ends === "manual" ? t("room.pill.held") : t("room.pill.until_house"));
+    if (room.calls_for_heat === false) pill("", t("room.pill.no_boiler"));
     return pills.join("");
   }
 
@@ -1519,19 +1551,19 @@ class NeatThermostatPanel extends HTMLElement {
     const preset = state?.attributes?.preset_mode ?? (focus ? "none" : (live.main || {}).preset ?? "none");
     const presets = focus ? ["eco", "boost"] : ["eco", "boost", "away"];
     const preheat = focus ? {} : live.preheat || {};
-    let caption = off ? "Off" : heating ? "Heating to" : "Set to";
-    if (preheat.preheating) caption = "Preheating to";
-    let headline = "Holding temperature";
+    let caption = off ? t("hero.caption.off") : heating ? t("hero.caption.heating_to") : t("hero.caption.set_to");
+    if (preheat.preheating) caption = t("hero.caption.preheating_to");
+    let headline = t("hero.headline.holding");
     const trv = focus ? this._entityState(focus.trv_entity) : null;
     if (focus && focus.trv_entity && (!trv || trv.state === "unavailable" || trv.state === "unknown")) {
-      headline = "TRV offline — changes apply when it's back";
-    } else if (off) headline = focus ? "Radiator off" : "Heating is off";
-    else if (heating) headline = focus ? "Warming the room" : "Warming the house";
-    else if (currentNum != null && targetNum != null && currentNum >= Number(targetNum)) headline = "Up to temperature";
+      headline = t("hero.headline.trv_offline");
+    } else if (off) headline = focus ? t("hero.headline.radiator_off") : t("hero.headline.heating_off");
+    else if (heating) headline = focus ? t("hero.headline.warming_room") : t("hero.headline.warming_house");
+    else if (currentNum != null && targetNum != null && currentNum >= Number(targetNum)) headline = t("hero.headline.up_to_temp");
 
     const lo = Number(state?.attributes?.min_temp ?? 7);
     const hi = Number(state?.attributes?.max_temp ?? 30);
-    const pos = (t) => (t == null || !Number.isFinite(Number(t)) ? null : (Number(t) - lo) / (hi - lo));
+    const pos = (v) => (v == null || !Number.isFinite(Number(v)) ? null : (Number(v) - lo) / (hi - lo));
     // Warm, Nest-like: amber in Heat, deep orange while heating, grey when off (same as the card).
     const color = off
       ? ["#5f656b", "#8a9096"]
@@ -1550,20 +1582,20 @@ class NeatThermostatPanel extends HTMLElement {
         const trv = this._entityState(room.trv_entity);
         const offline = Boolean(room.trv_entity) && (!trv || trv.state === "unavailable" || trv.state === "unknown");
         const roomOff = this._entityState(this._roomEntity(room))?.state === "off";
-        const tip = selected ? "Click to go back to the house" : offline ? `${room.name} — TRV offline · click to control` : `Click to control ${room.name}`;
+        const tip = selected ? t("hero.tile.tip_back") : offline ? t("hero.tile.tip_offline", { name: room.name }) : t("hero.tile.tip_control", { name: room.name });
         return `
           <button type="button" class="hero-room${heat ? " heat" : ""}${selected ? " selected" : ""}${offline ? " offline" : ""}" data-zone="${this._escape(room.id)}" aria-pressed="${selected}" title="${this._escape(tip)}">
             <span class="hero-room-top">
               <span class="hero-room-name">${this._escape(room.name)}</span>
-              ${!offline && heat ? `<span class="hero-room-flame" title="Calling for heat">${flameSvg()}</span>` : ""}
+              ${!offline && heat ? `<span class="hero-room-flame" title="${this._escape(t("room.pill.calling"))}">${flameSvg()}</span>` : ""}
             </span>
             <span class="hero-room-temp${now == null ? " unknown" : ""}">${now == null ? "—" : `${this._escape(formatTemp(Math.round(now * 10) / 10))}°`}</span>
             <span class="hero-room-foot">
               ${offline
-                ? `<span class="hero-room-target"><span class="hero-room-off">Offline</span></span>`
+                ? `<span class="hero-room-target"><span class="hero-room-off">${t("hero.tile.offline")}</span></span>`
                 : roomOff
-                  ? `<span class="hero-room-target">Off</span>`
-                  : `<span class="hero-room-target">${heat ? "Heating to" : "Set"} ${this._escape(set ?? "—")}°</span>`}
+                  ? `<span class="hero-room-target">${t("common.off")}</span>`
+                  : `<span class="hero-room-target">${t(heat ? "hero.tile.heating_to" : "hero.tile.set", { temp: this._escape(set ?? "—") })}</span>`}
               ${offline ? "" : this._trvBatteryHtml(room.trv_entity)}
             </span>
           </button>`;
@@ -1578,27 +1610,27 @@ class NeatThermostatPanel extends HTMLElement {
           <span class="hero-dial-core">
             <span class="hero-dial-caption">${this._escape(caption)}</span>
             <span class="hero-dial-temp">${this._escape(target)}${target !== "—" ? "<sup>°C</sup>" : ""}</span>
-            ${current != null ? `<span class="hero-dial-sub">Indoor ${this._escape(current)}°</span>` : ""}
-            ${eta ? `<span class="hero-dial-eta">${this._escape(eta)} to go</span>` : ""}
+            ${current != null ? `<span class="hero-dial-sub">${t("hero.indoor", { temp: this._escape(current) })}</span>` : ""}
+            ${eta ? `<span class="hero-dial-eta">${t("hero.eta", { eta: this._escape(eta) })}</span>` : ""}
           </span>
           <span class="dial-steps">
-            <button type="button" class="dial-step" data-step="-1" aria-label="Lower the temperature" ${targetNum != null && targetNum <= lo ? "disabled" : ""}>
+            <button type="button" class="dial-step" data-step="-1" aria-label="${this._escape(t("hero.lower"))}" ${targetNum != null && targetNum <= lo ? "disabled" : ""}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 13H5v-2h14z"/></svg>
             </button>
-            <button type="button" class="dial-step" data-step="1" aria-label="Raise the temperature" ${targetNum != null && targetNum >= hi ? "disabled" : ""}>
+            <button type="button" class="dial-step" data-step="1" aria-label="${this._escape(t("hero.raise"))}" ${targetNum != null && targetNum >= hi ? "disabled" : ""}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
             </button>
           </span>
         </div>
         <div class="hm-modes">
-          <div class="hm-seg" role="group" aria-label="Heating mode">
-            <button type="button" class="hm-mode heat${!off ? " active" : ""}" data-hero-hvac="heat">${flameSvg()}Heat</button>
+          <div class="hm-seg" role="group" aria-label="${this._escape(t("hero.mode_group"))}">
+            <button type="button" class="hm-mode heat${!off ? " active" : ""}" data-hero-hvac="heat">${flameSvg()}${t("mode.heat")}</button>
             <button type="button" class="hm-mode${off ? " active" : ""}" data-hero-hvac="off">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M12 3v8M6.4 6.6a8 8 0 1 0 11.2 0"/></svg>Off</button>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M12 3v8M6.4 6.6a8 8 0 1 0 11.2 0"/></svg>${t("mode.off")}</button>
           </div>
-          <div class="hm-seg" role="group" aria-label="Preset">
+          <div class="hm-seg" role="group" aria-label="${this._escape(t("hero.preset_group"))}">
             ${presets
-              .map((p) => `<button type="button" class="hm-mode ${p}${preset === p ? " active" : ""}" data-hero-preset="${p}">${p[0].toUpperCase() + p.slice(1)}</button>`)
+              .map((p) => `<button type="button" class="hm-mode ${p}${preset === p ? " active" : ""}" data-hero-preset="${p}">${t(`preset.${p}`)}</button>`)
               .join("")}
           </div>
         </div>
@@ -1608,17 +1640,17 @@ class NeatThermostatPanel extends HTMLElement {
             <div>
               ${focus
                 ? `<button type="button" class="hero-back" data-zone="home">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6z"/></svg>Home</button>`
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6z"/></svg>${t("hero.home")}</button>`
                 : ""}
-              <h2 class="hero-title">${this._escape(focus ? focus.name : "Home")}</h2>
+              <h2 class="hero-title">${this._escape(focus ? focus.name : t("hero.home"))}</h2>
               <p class="hero-headline">${this._escape(headline)}</p>
             </div>
             <div class="hero-pills">${focus ? this._roomPills(focus) : this._heroPills()}</div>
           </div>
           ${roomTiles
             ? `<div class="hero-rooms${rooms.length > 1 ? " reorderable" : ""}">${roomTiles}</div>
-              <p class="hero-rooms-hint">${focus ? `Controlling ${this._escape(focus.name)} — tap it again or Home to go back` : "Tap a room to control its radiator"}${rooms.length > 1 ? ` · drag to reorder${"ontouchstart" in window ? " (press and hold first)" : ""}` : ""}</p>`
-            : `<p class="hero-empty">No rooms yet — add TRVs on the Rooms tab.</p>`}
+              <p class="hero-rooms-hint">${focus ? t("hero.hint.controlling", { name: this._escape(focus.name) }) : t("hero.hint.tap_room")}${rooms.length > 1 ? t("ontouchstart" in window ? "hero.hint.reorder_touch" : "hero.hint.reorder") : ""}</p>`
+            : `<p class="hero-empty">${t("hero.no_rooms")}</p>`}
         </div>
       </section>`;
   }
@@ -1636,17 +1668,17 @@ class NeatThermostatPanel extends HTMLElement {
     const heater = this._cfg().heater || "";
     const heaterWarning =
       live.heater_available === false
-        ? `<div class="banner err">Boiler relay <code>${this._escape(heater || "not set")}</code> is unavailable — Neat cannot switch the boiler. Check the device, or pick another relay in Settings.</div>`
+        ? `<div class="banner err">${t("overview.banner.relay_unavailable", { relay: `<code>${this._escape(heater || t("overview.not_set"))}</code>` })}</div>`
         : "";
     const releasedWarning = live.control_released_until
-      ? `<div class="banner warn">Boiler relay released for testing — Neat isn't switching it until ${this._escape(this._ehClock(live.control_released_until))} (or Take control in Settings).</div>`
+      ? `<div class="banner warn">${t("overview.banner.released", { time: this._escape(this._ehClock(live.control_released_until)) })}</div>`
       : "";
     const fault = live.heating_fault;
     const faultWarning = fault
-      ? `<div class="banner err">The house isn't warming up — the boiler has been called for ${this._escape(fault.on_minutes)} min and the house has only warmed ${this._escape(Number(fault.rise_c).toFixed(1))}°C. Check the boiler is firing (power, pressure, fault code, call-for-heat wiring). This clears once the house warms again.</div>`
+      ? `<div class="banner err">${t("overview.banner.not_warming", { minutes: this._escape(fault.on_minutes), rise: this._escape(Number(fault.rise_c).toFixed(1)) })}</div>`
       : "";
     const preset = (live.main || {}).preset;
-    const presetLabel = !preset || preset === "none" ? "Normal" : preset[0].toUpperCase() + preset.slice(1);
+    const presetLabel = t(`preset.${!preset || preset === "none" ? "none" : preset}`);
 
     const stat = (tone, icon, label, value) => `
       <div class="stat ${tone}">
@@ -1654,7 +1686,7 @@ class NeatThermostatPanel extends HTMLElement {
         <div><div class="label">${label}</div><div class="value">${this._escape(value)}</div></div>
       </div>`;
 
-    const onOff = (on) => `<span class="badge${on ? " on" : ""}">${on ? "On" : "Off"}</span>`;
+    const onOff = (on) => `<span class="badge${on ? " on" : ""}">${on ? t("common.on") : t("common.off")}</span>`;
     const feature = (name, desc, valueHtml) => `
       <div class="feature">
         <div><div class="feature-name">${name}</div><div class="feature-desc">${desc}</div></div>
@@ -1673,47 +1705,47 @@ class NeatThermostatPanel extends HTMLElement {
       ${this._renderHero()}
       <div style="height:14px"></div>
       <div class="stats-row">
-        ${stat(live.boiler_on ? "heat" : "", flameSvg(), "Boiler", live.boiler_on ? "On" : "Off")}
-        ${stat(preset && preset !== "none" ? "good" : "", ICONS.tune, "Preset", presetLabel)}
-        ${stat(live.window_open ? "warn" : "", ICONS.window, "Windows", live.window_open ? "Open" : "Closed")}
-        ${stat(live.summer_mode ? "warn" : "", ICONS.sun, "Summer mode", live.summer_mode ? "On" : "Off")}
-        ${stat(live.away ? "warn" : "", ICONS.home, "Presence", live.away ? "Away" : "Home")}
+        ${stat(live.boiler_on ? "heat" : "", flameSvg(), t("overview.stat.boiler"), live.boiler_on ? t("common.on") : t("common.off"))}
+        ${stat(preset && preset !== "none" ? "good" : "", ICONS.tune, t("overview.stat.preset"), presetLabel)}
+        ${stat(live.window_open ? "warn" : "", ICONS.window, t("overview.stat.windows"), live.window_open ? t("overview.stat.open") : t("overview.stat.closed"))}
+        ${stat(live.summer_mode ? "warn" : "", ICONS.sun, t("overview.stat.summer"), live.summer_mode ? t("common.on") : t("common.off"))}
+        ${stat(live.away ? "warn" : "", ICONS.home, t("overview.stat.presence"), live.away ? t("overview.stat.away") : t("overview.stat.home"))}
       </div>
       <div class="ov-grid">
         <div class="card">
           <div class="card-head">
             <span class="card-icon leaf">${leafSvg()}</span>
             <div class="card-head-text">
-              <p class="card-title">Leaf</p>
-              <p class="card-sub">${leaf.active ? "You're running efficiently right now." : "Turn the heat down, use Eco/Away, or switch off to earn Leaf time."}</p>
+              <p class="card-title">${t("leaf.title")}</p>
+              <p class="card-sub">${leaf.active ? t("leaf.sub_active") : t("leaf.sub_inactive")}</p>
             </div>
-            ${leaf.active ? `<span class="badge on">Earning</span>` : ""}
+            ${leaf.active ? `<span class="badge on">${t("leaf.earning")}</span>` : ""}
           </div>
           <div class="metric-row">
-            <div class="metric"><div class="metric-value">${this._escape(hours(leaf.hours_week, leaf.minutes_week))}<small>h</small></div><div class="metric-label">This week</div></div>
-            <div class="metric"><div class="metric-value">${this._escape(hours(leaf.hours_total, leaf.minutes_total))}<small>h</small></div><div class="metric-label">All time</div></div>
-            <div class="metric"><div class="metric-value">${this._escape(streak)}<small>day${streak === 1 ? "" : "s"}</small></div><div class="metric-label">Streak</div></div>
+            <div class="metric"><div class="metric-value">${this._escape(hours(leaf.hours_week, leaf.minutes_week))}<small>${t("unit.hours_short")}</small></div><div class="metric-label">${t("leaf.this_week")}</div></div>
+            <div class="metric"><div class="metric-value">${this._escape(hours(leaf.hours_total, leaf.minutes_total))}<small>${t("unit.hours_short")}</small></div><div class="metric-label">${t("leaf.all_time")}</div></div>
+            <div class="metric"><div class="metric-value">${this._escape(streak)}<small>${tn("unit.days", streak)}</small></div><div class="metric-label">${t("leaf.streak")}</div></div>
           </div>
           ${this._renderLeafWeek(leaf.week_days)}
-          <p class="card-foot">Leaf time only adds up — turning the heat up hides the leaf but never takes earned time away.</p>
+          <p class="card-foot">${t("leaf.foot")}</p>
         </div>
         <div class="card">
           <div class="card-head">
             <span class="card-icon intel">${ICONS.sparkle}</span>
             <div class="card-head-text">
-              <p class="card-title">Neat Intelligence</p>
-              <p class="card-sub">How Neat learns and plans for the house.</p>
+              <p class="card-title">${t("intel.title")}</p>
+              <p class="card-sub">${t("intel.sub")}</p>
             </div>
           </div>
           <div class="feature-list">
-            ${feature("True Radiant", "Starts heating early so the house is warm when a schedule block begins, and stops early by the radiator coast", onOff(intel.true_radiant))}
-            ${feature("Auto-Schedule", "Learns schedule changes from your manual adjustments", onOff(intel.auto_schedule))}
-            ${feature("Leaf coaching", "Shows the leaf when you're saving energy", onOff(intel.leaf_enabled !== false))}
-            ${feature("Away delay", "Switches to Eco once nobody's been home this long", `${this._escape(intel.away_delay_minutes ?? 20)} min`)}
-            ${feature("Warm-up rate", "How fast the house heats, used to time preheating",
-              `${rate != null ? `${this._escape(rate)} °C/h` : "—"}<small>${samples ? `${samples} sample${samples === 1 ? "" : "s"}` : "Default · still learning"}</small>`)}
-            ${feature("Radiator coast", "How far the house keeps warming after the boiler stops, so it stops early",
-              `${coast != null ? `${this._escape(Number(coast).toFixed(2))} °C` : "—"}<small>${coastSamples ? `${coastSamples} run${coastSamples === 1 ? "" : "s"}` : "Default · still learning"}</small>`)}
+            ${feature(t("intel.true_radiant"), t("intel.true_radiant.desc"), onOff(intel.true_radiant))}
+            ${feature(t("intel.auto_schedule"), t("intel.auto_schedule.desc"), onOff(intel.auto_schedule))}
+            ${feature(t("intel.leaf"), t("intel.leaf.desc"), onOff(intel.leaf_enabled !== false))}
+            ${feature(t("intel.away_delay"), t("intel.away_delay.desc"), t("unit.minutes", { value: this._escape(intel.away_delay_minutes ?? 20) }))}
+            ${feature(t("intel.warmup"), t("intel.warmup.desc"),
+              `${rate != null ? t("unit.c_per_hour", { value: this._escape(rate) }) : "—"}<small>${samples ? tn("intel.samples", samples) : t("intel.still_learning")}</small>`)}
+            ${feature(t("intel.coast"), t("intel.coast.desc"),
+              `${coast != null ? t("unit.celsius", { value: this._escape(Number(coast).toFixed(2)) }) : "—"}<small>${coastSamples ? tn("intel.runs", coastSamples) : t("intel.still_learning")}</small>`)}
           </div>
         </div>
       </div>
@@ -1733,17 +1765,17 @@ class NeatThermostatPanel extends HTMLElement {
         const date = new Date(`${d.date}T12:00:00`);
         const name = date.toLocaleDateString([], { weekday: "short" });
         const today = i === days.length - 1;
-        const tip = `${name} ${date.getDate()} · ${mins ? `${this._ehDuration(mins)} Leaf time` : "no Leaf time"}${d.earned ? " · Leaf day" : ""}`;
+        const tip = `${name} ${date.getDate()} · ${mins ? t("leaf.day.time", { duration: this._ehDuration(mins) }) : t("leaf.day.none")}${d.earned ? t("leaf.day.earned") : ""}`;
         return `
           <div class="leaf-day${d.earned ? " earned" : ""}${today ? " today" : ""}" title="${this._escape(tip)}">
             <div class="leaf-day-track"><div class="leaf-day-bar" style="height:${mins ? Math.max(4, (mins / max) * 100) : 0}%"></div></div>
-            <span class="leaf-day-label">${today ? "Today" : this._escape(name.slice(0, 3))}</span>
+            <span class="leaf-day-label">${today ? t("leaf.today") : this._escape(name.slice(0, 3))}</span>
           </div>`;
       })
       .join("");
     return `
       <div class="leaf-week">
-        <div class="leaf-week-title"><span>Last 7 days</span><span>${earnedCount} of 7 Leaf days</span></div>
+        <div class="leaf-week-title"><span>${t("leaf.last_7_days")}</span><span>${t("leaf.days_of_7", { count: earnedCount })}</span></div>
         <div class="leaf-week-bars">${bars}</div>
       </div>`;
   }
@@ -1754,7 +1786,7 @@ class NeatThermostatPanel extends HTMLElement {
       if (!entityId) return `<span class="muted">—</span>`;
       const st = this._entityState(entityId);
       const name = this._entityName(entityId);
-      const state = st ? st.state : "missing";
+      const state = st ? st.state : t("entities.missing");
       const bad = !st || state === "unavailable" || state === "unknown";
       return `
         <div class="entity-chip" title="${this._escape(entityId)}">
@@ -1773,22 +1805,22 @@ class NeatThermostatPanel extends HTMLElement {
         <summary>
           <span class="card-icon">${ICONS.link}</span>
           <div class="card-head-text">
-            <p class="card-title">Entities</p>
-            <p class="card-sub">${total} linked in Home Assistant</p>
+            <p class="card-title">${t("entities.title")}</p>
+            <p class="card-sub">${t("entities.sub", { count: total })}</p>
           </div>
           <svg class="chev" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg>
         </summary>
         <div class="entity-rows">
-          ${row("House", neat.home ? [neat.home] : [])}
-          ${row("Rooms", neat.rooms)}
-          ${row("Boiler relay", heater ? [heater] : [])}
+          ${row(t("entities.house"), neat.home ? [neat.home] : [])}
+          ${row(t("entities.rooms"), neat.rooms)}
+          ${row(t("entities.relay"), heater ? [heater] : [])}
         </div>
       </details>`;
   }
 
   _ehDayParts(isoDate) {
     const d = new Date(`${isoDate}T12:00:00`);
-    const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()];
+    const weekday = DAY_SHORT[["sun", "mon", "tue", "wed", "thu", "fri", "sat"][d.getDay()]];
     return {
       label: `${weekday} ${d.getDate()}`,
       monthKey: `${d.getFullYear()}-${d.getMonth()}`,
@@ -1798,9 +1830,9 @@ class NeatThermostatPanel extends HTMLElement {
 
   _ehPct(ts, dayIso) {
     if (!ts) return 100;
-    const t = new Date(ts);
+    const when = new Date(ts);
     const start = new Date(`${dayIso}T00:00:00`);
-    const mins = (t - start) / 60000;
+    const mins = (when - start) / 60000;
     return Math.max(0, Math.min(100, (mins / (24 * 60)) * 100));
   }
 
@@ -1816,9 +1848,9 @@ class NeatThermostatPanel extends HTMLElement {
   _ehDuration(mins) {
     const m = Math.round(mins);
     if (m <= 0) return "—";
-    if (m < 60) return `${m}m`;
+    if (m < 60) return t("time.m", { m });
     const h = Math.floor(m / 60);
-    return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+    return m % 60 ? t("time.hm", { h, m: m % 60 }) : t("time.h", { h });
   }
 
   _renderEnergyDay(day) {
@@ -1827,8 +1859,8 @@ class NeatThermostatPanel extends HTMLElement {
       .map((iv) => {
         const left = this._ehPct(iv.start_ts, day.date);
         const right = this._ehPct(iv.end_ts || new Date().toISOString(), day.date);
-        const span = `${this._ehClock(iv.start_ts)}–${iv.end_ts ? this._ehClock(iv.end_ts) : "now"}`;
-        return `<div class="eh-seg" style="left:${left}%;width:${Math.max(0, right - left)}%" title="Heating ${span}"></div>`;
+        const span = `${this._ehClock(iv.start_ts)}–${iv.end_ts ? this._ehClock(iv.end_ts) : t("energy.now")}`;
+        return `<div class="eh-seg" style="left:${left}%;width:${Math.max(0, right - left)}%" title="${this._escape(t("energy.heating_span", { span }))}"></div>`;
       })
       .join("");
     // Setpoint bubbles; clamped so ones near midnight stay inside the timeline.
@@ -1837,18 +1869,18 @@ class NeatThermostatPanel extends HTMLElement {
       .map((sp) => {
         const left = this._ehPct(sp.ts, day.date);
         const temp = formatTemp(sp.temperature) ?? "—";
-        return `<div class="eh-sp" data-pct="${left}" style="left:clamp(13px, ${left}%, calc(100% - 13px))" title="Set to ${this._escape(temp)}° at ${this._ehClock(sp.ts)}">${this._escape(temp)}</div>`;
+        return `<div class="eh-sp" data-pct="${left}" style="left:clamp(13px, ${left}%, calc(100% - 13px))" title="${this._escape(t("energy.set_at", { temp, time: this._ehClock(sp.ts) }))}">${this._escape(temp)}</div>`;
       })
       .join("");
     const mins = this._ehHeatMinutes(day);
     return `
       <div class="eh-day eh-grid-row">
-        <div class="eh-day-label">${this._escape(parts.label)}${day.leaf ? `<span title="Leaf earned">${leafSvg()}</span>` : ""}</div>
+        <div class="eh-day-label">${this._escape(parts.label)}${day.leaf ? `<span title="${this._escape(t("energy.leaf_earned"))}">${leafSvg()}</span>` : ""}</div>
         <div class="eh-timeline">
           ${points}
           <div class="eh-track">${segs}</div>
         </div>
-        <div class="eh-day-total${mins > 0 ? "" : " none"}" title="Boiler running time">${this._ehDuration(mins)}</div>
+        <div class="eh-day-total${mins > 0 ? "" : " none"}" title="${this._escape(t("energy.running_time"))}">${this._ehDuration(mins)}</div>
       </div>`;
   }
 
@@ -1896,18 +1928,18 @@ class NeatThermostatPanel extends HTMLElement {
       const days = Number(s.days_remaining ?? 0);
       const lowered = Number(s.blocks_lowered ?? 0);
       const kept = Number(s.blocks_kept ?? 0);
-      const parts = [`${days} day${days === 1 ? "" : "s"} to go`];
-      parts.push(lowered ? `${lowered} schedule block${lowered === 1 ? "" : "s"} up to ${Math.abs(Number(s.offset_c ?? 0)).toFixed(1)}°C cooler` : "starting");
-      if (kept) parts.push(`${kept} eased off because you turned ${kept === 1 ? "it" : "them"} up`);
+      const parts = [tn("seasonal.days_to_go", days)];
+      parts.push(lowered ? tn("seasonal.blocks_cooler", lowered, { offset: Math.abs(Number(s.offset_c ?? 0)).toFixed(1) }) : t("seasonal.starting"));
+      if (kept) parts.push(tn("seasonal.kept", kept));
       return parts.join(" · ");
     };
     const banner = seasonal.active
       ? `<div class="eh-banner">
           <div class="eh-copy">
-            <strong>Winter Seasonal Savings</strong>
+            <strong>${t("seasonal.title")}</strong>
             <span class="muted">${this._escape(seasonalSummary(seasonal))}</span>
           </div>
-          <button type="button" class="secondary" id="stopSeasonal" title="Stop and put the schedule temperatures back">Stop</button>
+          <button type="button" class="secondary" id="stopSeasonal" title="${this._escape(t("seasonal.stop.tip"))}">${t("seasonal.stop")}</button>
         </div>`
       : "";
     let lastMonth = null;
@@ -1925,23 +1957,23 @@ class NeatThermostatPanel extends HTMLElement {
     const totalMins = hist.reduce((sum, day) => sum + this._ehHeatMinutes(day), 0);
     const leafDays = hist.filter((d) => d.leaf).length;
     const axis = [
-      ["12AM", 0, ""], ["6AM", 25, "half"], ["12PM", 50, ""], ["6PM", 75, "half"], ["12AM", 100, ""],
-    ].map(([t, at, cls]) => `<span class="${cls}" style="left:${at}%">${t}</span>`).join("");
+      ["energy.axis.midnight", 0, ""], ["energy.axis.6am", 25, "half"], ["energy.axis.noon", 50, ""], ["energy.axis.6pm", 75, "half"], ["energy.axis.midnight", 100, ""],
+    ].map(([key, at, cls]) => `<span class="${cls}" style="left:${at}%">${t(key)}</span>`).join("");
     return `
-      ${this._pageHeader("Energy History", "When the boiler ran, setpoint changes, and Leaf days.")}
+      ${this._pageHeader(t("energy.title"), t("energy.lead"))}
       ${banner}
       <div class="card">
         ${rows
           ? `<div class="eh-head">
               <div>
-                <div class="eh-total-label">Boiler running time · last ${hist.length} days</div>
-                <div class="eh-total-value">${this._ehDuration(totalMins)}${leafDays ? ` <span class="muted" style="font-size:13px">· ${leafDays} Leaf day${leafDays === 1 ? "" : "s"}</span>` : ""}</div>
+                <div class="eh-total-label">${t("energy.total_label", { days: hist.length })}</div>
+                <div class="eh-total-value">${this._ehDuration(totalMins)}${leafDays ? ` <span class="muted" style="font-size:13px">· ${tn("energy.leaf_days", leafDays)}</span>` : ""}</div>
               </div>
-              <div class="eh-legend"><span><i></i>Heating</span><span><b></b>Setpoint</span><span>${leafSvg()}Leaf day</span></div>
+              <div class="eh-legend"><span><i></i>${t("energy.legend.heating")}</span><span><b></b>${t("energy.legend.setpoint")}</span><span>${leafSvg()}${t("energy.legend.leaf_day")}</span></div>
             </div>
             <div class="eh-axis-row eh-grid-row"><span></span><div class="eh-axis">${axis}</div><span></span></div>
             ${rows}`
-          : `<p class="muted" style="margin:0">No history yet — heat cycles will appear here.</p>`}
+          : `<p class="muted" style="margin:0">${t("energy.empty")}</p>`}
       </div>
     `;
   }
@@ -1953,8 +1985,8 @@ class NeatThermostatPanel extends HTMLElement {
   }
 
   _timeAxisLabels() {
-    const labels = ["1a", "3a", "5a", "7a", "9a", "11a", "Noon", "1p", "3p", "5p", "7p", "9p", "11p"];
-    return labels.map((l) => `<span>${l}</span>`).join("");
+    const hours = ["1a", "3a", "5a", "7a", "9a", "11a", "noon", "1p", "3p", "5p", "7p", "9p", "11p"];
+    return hours.map((h) => `<span>${t(`schedule.axis.${h}`)}</span>`).join("");
   }
 
   _renderSchedule() {
@@ -1986,15 +2018,15 @@ class NeatThermostatPanel extends HTMLElement {
       ${this._renderHero()}
       <div class="nest-schedule-sheet">
         <div class="nest-schedule-toolbar">
-          <span class="pill">Schedule</span>
+          <span class="pill">${t("schedule.title")}</span>
           <label class="field" style="flex:0;min-width:120px;margin:0">
-            Enabled
+            ${t("schedule.enabled")}
             <select id="schedEnabled">
-              <option value="true" ${enabled ? "selected" : ""}>On</option>
-              <option value="false" ${!enabled ? "selected" : ""}>Off</option>
+              <option value="true" ${enabled ? "selected" : ""}>${t("common.on")}</option>
+              <option value="false" ${!enabled ? "selected" : ""}>${t("common.off")}</option>
             </select>
           </label>
-          <div class="nest-status-dots" title="Heat / idle">
+          <div class="nest-status-dots" title="${this._escape(t("schedule.dots_tip"))}">
             <i class="heat"></i><i class="idle"></i>
           </div>
         </div>
@@ -2005,24 +2037,24 @@ class NeatThermostatPanel extends HTMLElement {
         </div>
         <div class="nest-schedule-actions">
           <div class="group">
-            <button type="button" class="linkish" id="schedCopy">Copy</button>
-            <button type="button" class="linkish" id="schedPaste">Paste</button>
+            <button type="button" class="linkish" id="schedCopy">${t("schedule.copy")}</button>
+            <button type="button" class="linkish" id="schedPaste">${t("schedule.paste")}</button>
           </div>
           <div class="group">
-            <button type="button" class="linkish" id="schedRemove">Remove</button>
-            <button type="button" class="linkish" id="schedAdd">Add</button>
+            <button type="button" class="linkish" id="schedRemove">${t("schedule.remove")}</button>
+            <button type="button" class="linkish" id="schedAdd">${t("schedule.add")}</button>
           </div>
         </div>
         <div class="nest-add-row">
-          <label class="field">Day
+          <label class="field">${t("schedule.day")}
             <select id="addDay">${DAYS.map((d) => `<option value="${d}" ${this._selectedDay === d ? "selected" : ""}>${DAY_SHORT[d]}</option>`).join("")}</select>
           </label>
-          <label class="field">Start<input id="addStart" type="time" value="06:30" /></label>
-          <label class="field">End<input id="addEnd" type="time" value="08:30" /></label>
-          <label class="field">Temp °C<input id="addTemp" type="number" step="0.5" value="${this._escape(this._mainTarget() ?? 20)}" /></label>
-          <button type="button" class="primary" id="saveSchedule">Save schedule</button>
+          <label class="field">${t("schedule.start")}<input id="addStart" type="time" value="06:30" /></label>
+          <label class="field">${t("schedule.end")}<input id="addEnd" type="time" value="08:30" /></label>
+          <label class="field">${t("schedule.temp")}<input id="addTemp" type="number" step="0.5" value="${this._escape(this._mainTarget() ?? 20)}" /></label>
+          <button type="button" class="primary" id="saveSchedule">${t("schedule.save")}</button>
         </div>
-        <p class="muted" style="margin:0 12px 8px">Outside comfort blocks, Eco (${this._escape(eco)}°) applies and rooms drop to their own Eco temp. Dial changes hold until the next block change. Orange dots are block start setpoints.</p>
+        <p class="muted" style="margin:0 12px 8px">${t("schedule.help", { eco: this._escape(eco) })}</p>
       </div>
     `;
   }
@@ -2042,25 +2074,27 @@ class NeatThermostatPanel extends HTMLElement {
         const trvBad = !trv || trv.state === "unavailable" || trv.state === "unknown";
         const sensors = [r.temperature_sensor, ...(r.extra_temperature_sensors || [])].filter(Boolean).length;
         return `
-          <div class="room-card${editing === r.id ? " selected" : ""}${live.needs_heat ? " heat" : ""}" data-room-id="${this._escape(r.id)}" role="button" tabindex="0" title="Click to edit · drag to reorder">
+          <div class="room-card${editing === r.id ? " selected" : ""}${live.needs_heat ? " heat" : ""}" data-room-id="${this._escape(r.id)}" role="button" tabindex="0" title="${this._escape(t("rooms.card.tip"))}">
             <div class="room-card-top">
               <span class="room-card-name">${this._escape(r.name)}</span>
-              ${live.needs_heat ? `<span class="set-state heat-badge">${flameSvg()}Heating</span>` : ""}
+              ${live.needs_heat ? `<span class="set-state heat-badge">${flameSvg()}${t("rooms.card.heating")}</span>` : ""}
             </div>
             <div class="room-card-temps">
               <span class="room-card-now${now == null ? " unknown" : ""}">${now == null ? "—" : `${this._escape(formatTemp(Math.round(now * 10) / 10))}°`}</span>
-              <span class="room-card-target">Set ${this._escape(target ?? "—")}°</span>
+              <span class="room-card-target">${t("hero.tile.set", { temp: this._escape(target ?? "—") })}</span>
             </div>
             <div class="room-card-meta">
-              <span class="set-state ${trvBad ? "bad" : "good"}" title="${this._escape(r.trv_entity)}">TRV ${trvBad ? (trv ? trv.state : "missing") : "online"}</span>
-              <span class="room-card-sensors">${sensors ? `${sensors} sensor${sensors === 1 ? "" : "s"}` : "TRV temperature"}</span>
+              <span class="set-state ${trvBad ? "bad" : "good"}" title="${this._escape(r.trv_entity)}">${trvBad ? t("rooms.card.trv_state", { state: this._escape(trv ? trv.state : t("entities.missing")) }) : t("rooms.card.trv_online")}</span>
+              <span class="room-card-sensors">${sensors ? tn("rooms.card.sensors", sensors) : t("rooms.card.trv_temperature")}</span>
               <span class="room-card-sensors">${r.follow_house !== false
-                ? `Follows house${Number(r.house_offset) ? ` ${Number(r.house_offset) > 0 ? "+" : "−"}${formatTemp(Math.abs(Number(r.house_offset)))}°` : ""}`
-                : "Own temps"}</span>
+                ? (Number(r.house_offset)
+                  ? t("rooms.card.follows_offset", { offset: `${Number(r.house_offset) > 0 ? "+" : "−"}${formatTemp(Math.abs(Number(r.house_offset)))}` })
+                  : t("rooms.card.follows"))
+                : t("rooms.card.own_temps")}</span>
             </div>
             <div class="room-card-calls">
-              <span>Calls boiler</span>
-              <label class="switch" title="Let this room turn the boiler on"><input type="checkbox" data-toggle-calls="${this._escape(r.id)}" ${calls ? "checked" : ""} /><span></span></label>
+              <span>${t("rooms.card.calls_boiler")}</span>
+              <label class="switch" title="${this._escape(t("rooms.card.calls_boiler.tip"))}"><input type="checkbox" data-toggle-calls="${this._escape(r.id)}" ${calls ? "checked" : ""} /><span></span></label>
             </div>
           </div>`;
       })
@@ -2070,14 +2104,14 @@ class NeatThermostatPanel extends HTMLElement {
         <div class="card-head">
           <span class="card-icon">${ICONS.home}</span>
           <div class="card-head-text">
-            <p class="card-title">Rooms</p>
-            <p class="card-sub">Each room has its own Neat climate, driven by its TRV.${rooms.length ? " Click a room to edit it, drag to reorder." : ""}</p>
+            <p class="card-title">${t("rooms.title")}</p>
+            <p class="card-sub">${t("rooms.sub")}${rooms.length ? t("rooms.sub_edit") : ""}</p>
           </div>
-          <button class="secondary compact" id="addRoom" type="button">${ICONS.plus}Add room</button>
+          <button class="secondary compact" id="addRoom" type="button">${ICONS.plus}${t("rooms.add")}</button>
         </div>
         ${rooms.length
           ? `<div class="room-grid${rooms.length > 1 ? " reorderable" : ""}">${cards}</div>`
-          : `<p class="muted" style="margin:0">No rooms yet — add your first one.</p>`}
+          : `<p class="muted" style="margin:0">${t("rooms.empty")}</p>`}
       </div>
     `;
   }
@@ -2088,85 +2122,83 @@ class NeatThermostatPanel extends HTMLElement {
     const d = { ...ROOM_TEMP_DEFAULTS, ...this._roomDraft };
     return this._dialog({
       icon: editing ? ICONS.tune : ICONS.home,
-      title: editing ? `Edit ${this._escape(room?.name || "room")}` : "Add a room",
-      sub: editing ? "Change the TRV, sensors or boiler behaviour." : "Pick the room's TRV — sensors are optional.",
+      title: editing ? t("room_dlg.title_edit", { name: this._escape(room?.name || t("room_dlg.room")) }) : t("room_dlg.title_add"),
+      sub: editing ? t("room_dlg.sub_edit") : t("room_dlg.sub_add"),
       body: `
         <div class="dlg-section">
           <div class="set-field">
-            <div class="set-field-label">Name</div>
-            <input id="roomName" placeholder="e.g. Kitchen" value="${this._escape(this._roomDraft.name || "")}" />
+            <div class="set-field-label">${t("room_dlg.name")}</div>
+            <input id="roomName" placeholder="${this._escape(t("room_dlg.name.placeholder"))}" value="${this._escape(this._roomDraft.name || "")}" />
           </div>
           <div class="set-field">
-            <div class="set-field-label">TRV</div>
+            <div class="set-field-label">${t("room_dlg.trv")}</div>
             <div class="entity-picker-host" data-room-picker="trv"></div>
-            <div class="set-row-desc">The radiator valve Neat controls.</div>
+            <div class="set-row-desc">${t("room_dlg.trv.desc")}</div>
           </div>
         </div>
         <div class="dlg-section">
-          <div class="dlg-section-title">Temperature</div>
+          <div class="dlg-section-title">${t("room_dlg.section.temperature")}</div>
           <div class="set-field">
-            <div class="set-field-label">Room sensor</div>
+            <div class="set-field-label">${t("room_dlg.sensor")}</div>
             <div class="entity-picker-host" data-room-picker="sensor"></div>
-            <div class="set-row-desc">Optional — otherwise the TRV's own reading is used.</div>
+            <div class="set-row-desc">${t("room_dlg.sensor.desc")}</div>
           </div>
           <div class="set-field">
-            <div class="set-field-label">Extra sensors</div>
-            <div class="set-row-desc" style="margin:0 0 8px">Optional — averaged with the room sensor.</div>
+            <div class="set-field-label">${t("room_dlg.extras")}</div>
+            <div class="set-row-desc" style="margin:0 0 8px">${t("room_dlg.extras.desc")}</div>
             <div class="set-list" data-room-extras-list>${this._renderRoomExtras()}</div>
             <div class="entity-picker-host set-add" data-room-picker="extras"></div>
           </div>
         </div>
         <div class="dlg-section">
-          <div class="dlg-section-title">Room temperature</div>
+          <div class="dlg-section-title">${t("room_dlg.section.room_temperature")}</div>
           <div class="set-row">
             <div class="set-row-text">
-              <div class="set-row-name">Follow the house</div>
-              <div class="set-row-desc">The room uses the house temperature (plus the offset below), so the house dial, schedule and presets move it too. Turn off to give the room its own temperatures.</div>
+              <div class="set-row-name">${t("room_dlg.follow")}</div>
+              <div class="set-row-desc">${t("room_dlg.follow.desc")}</div>
             </div>
             <div class="set-row-control"><label class="switch"><input type="checkbox" id="roomFollowHouse" ${d.follow_house ? "checked" : ""} /><span></span></label></div>
           </div>
           <div class="set-field" data-follow="on" ${d.follow_house ? "" : "hidden"}>
-            <div class="set-field-label">Offset from the house</div>
+            <div class="set-field-label">${t("room_dlg.offset")}</div>
             <div class="num-input"><input id="roomOffset" type="number" step="0.5" min="-5" max="5" value="${this._escape(d.house_offset)}" /><span>°C</span></div>
-            <div class="set-row-desc">e.g. −1 keeps a bedroom a degree cooler than the house. 0 = same as the house.</div>
+            <div class="set-row-desc">${t("room_dlg.offset.desc")}</div>
           </div>
           <div class="set-field-pair" data-follow="off" ${d.follow_house ? "hidden" : ""}>
             <div class="set-field">
-              <div class="set-field-label">Comfort</div>
+              <div class="set-field-label">${t("room_dlg.comfort")}</div>
               <div class="num-input"><input id="roomComfort" type="number" step="0.5" min="5" max="30" value="${this._escape(d.target_temp)}" /><span>°C</span></div>
             </div>
             <div class="set-field">
-              <div class="set-field-label">Eco</div>
+              <div class="set-field-label">${t("room_dlg.eco")}</div>
               <div class="num-input"><input id="roomEco" type="number" step="0.5" min="5" max="30" value="${this._escape(d.eco_temp)}" /><span>°C</span></div>
             </div>
-            <div class="set-row-desc">Comfort during the house's schedule blocks, Eco between them. Neat still decides when this room needs the boiler.</div>
+            <div class="set-row-desc">${t("room_dlg.own_temps.desc")}</div>
           </div>
           <div class="set-field">
-            <div class="set-field-label">A change made on this room lasts until</div>
+            <div class="set-field-label">${t("room_dlg.hold_ends")}</div>
             <select id="roomHoldEnds">
-              ${[
-                ["house_change", "The next house change"],
-                ["block_change", "The next schedule block"],
-                ["manual", "The room is changed again"],
-              ].map(([v, label]) => `<option value="${v}" ${d.hold_ends === v ? "selected" : ""}>${label}</option>`).join("")}
+              ${["house_change", "block_change", "manual"]
+                .map((v) => `<option value="${v}" ${d.hold_ends === v ? "selected" : ""}>${t(`room_dlg.hold_ends.${v}`)}</option>`)
+                .join("")}
             </select>
-            <div class="set-row-desc">"House change" means the next schedule block or anyone changing the house temperature, mode or preset — whichever comes first.</div>
+            <div class="set-row-desc">${t("room_dlg.hold_ends.desc")}</div>
           </div>
         </div>
         <div class="dlg-section">
           <div class="set-row">
             <div class="set-row-text">
-              <div class="set-row-name">Call for heat</div>
-              <div class="set-row-desc">Lets this room turn the boiler on when it's cold. Leave on for most TRVs — otherwise the valve can open with no hot water.</div>
+              <div class="set-row-name">${t("room_dlg.calls")}</div>
+              <div class="set-row-desc">${t("room_dlg.calls.desc")}</div>
             </div>
             <div class="set-row-control"><label class="switch"><input type="checkbox" id="roomCallsForHeat" ${this._roomDraft.calls_for_heat !== false ? "checked" : ""} /><span></span></label></div>
           </div>
         </div>`,
       foot: `
-        ${editing ? `<button class="danger" id="deleteRoom" type="button">Delete</button>` : ""}
+        ${editing ? `<button class="danger" id="deleteRoom" type="button">${t("common.delete")}</button>` : ""}
         <span style="flex:1"></span>
-        <button class="secondary" data-close-dialog type="button">Cancel</button>
-        <button class="primary" id="saveRoom" type="button">${editing ? "Save changes" : "Add room"}</button>`,
+        <button class="secondary" data-close-dialog type="button">${t("common.cancel")}</button>
+        <button class="primary" id="saveRoom" type="button">${editing ? t("common.save_changes") : t("rooms.add")}</button>`,
     });
   }
 
@@ -2227,7 +2259,7 @@ class NeatThermostatPanel extends HTMLElement {
     if (!hosts.length) return;
     for (const host of hosts) {
       if (!host.querySelector("ha-entity-picker")) {
-        host.innerHTML = `<p class="entity-picker-loading">Loading entity picker…</p>`;
+        host.innerHTML = `<p class="entity-picker-loading">${t("picker.loading")}</p>`;
       }
     }
     try {
@@ -2235,7 +2267,7 @@ class NeatThermostatPanel extends HTMLElement {
     } catch (err) {
       if (gen !== this._roomPickerMountGen) return;
       for (const host of hosts) {
-        host.innerHTML = `<p class="entity-picker-error">${this._escape(err?.message || "Entity picker unavailable")}</p>`;
+        host.innerHTML = `<p class="entity-picker-error">${this._escape(err?.message || t("picker.unavailable"))}</p>`;
       }
       return;
     }
@@ -2268,7 +2300,7 @@ class NeatThermostatPanel extends HTMLElement {
       });
     }
 
-    const extras = make("extras", { domains: ["sensor"], filter: temperatureSensorFilter, placeholder: "Add a temperature sensor" });
+    const extras = make("extras", { domains: ["sensor"], filter: temperatureSensorFilter, placeholder: t("room_dlg.extras.add") });
     extras?.addEventListener("value-changed", (ev) => {
       const id = ev.detail?.value;
       if (!id) return;
@@ -2295,40 +2327,40 @@ class NeatThermostatPanel extends HTMLElement {
         const primaryName = (primary && this._entityName(primary)) || "—";
         const notNeat = primary && !this._isNeatClimate(primary);
         return `
-          <div class="wp-card${several && this._previewPanelId() === p.id ? " selected" : ""}" data-id="${this._escape(p.id)}" role="button" tabindex="0" ${several ? `title="Show in preview"` : ""}>
+          <div class="wp-card${several && this._previewPanelId() === p.id ? " selected" : ""}" data-id="${this._escape(p.id)}" role="button" tabindex="0" ${several ? `title="${this._escape(t("wall.card.show_in_preview"))}"` : ""}>
             <span class="card-icon">${ICONS.panel}</span>
             <div class="wp-card-text">
               <div class="wp-card-name">${this._escape(p.label || p.id)}</div>
-              <div class="wp-card-meta">Screen: ${this._escape(model.label)} (${model.ratio}) · Device ID: <code>${this._escape(p.id)}</code></div>
-              <div class="wp-card-meta">Controls: <strong>${this._escape(primaryName)}</strong>${notNeat ? ` <span class="set-state warn">Not Neat</span>` : ""}${p.temperature_lock ? ` <span class="set-state">Locked</span>` : ""}</div>
+              <div class="wp-card-meta">${t("wall.card.screen", { shape: this._escape(model.label), ratio: model.ratio, id: `<code>${this._escape(p.id)}</code>` })}</div>
+              <div class="wp-card-meta">${t("wall.card.controls", { name: `<strong>${this._escape(primaryName)}</strong>` })}${notNeat ? ` <span class="set-state warn">${t("wall.card.not_neat")}</span>` : ""}${p.temperature_lock ? ` <span class="set-state">${t("wall.card.locked")}</span>` : ""}</div>
               <div class="wp-card-meta">${this._reportedScreenHtml(p)}</div>
               ${p.model === "nspanel_pro" || this._helperState(p.id)?.paired ? `<div class="wp-card-meta">${this._helperLineHtml(p.id)}</div>` : ""}
-              ${p.kiosk_enabled === false ? "" : `<div class="wp-card-meta kiosk-line">Kiosk: <span data-kiosk-pill="${this._escape(p.id)}">${this._kioskPillHtml(p.id)}</span></div>`}
+              ${p.kiosk_enabled === false ? "" : `<div class="wp-card-meta kiosk-line">${t("wall.card.kiosk")} <span data-kiosk-pill="${this._escape(p.id)}">${this._kioskPillHtml(p.id)}</span></div>`}
             </div>
-            <button class="secondary compact edit-panel" type="button" data-id="${this._escape(p.id)}">Edit</button>
+            <button class="secondary compact edit-panel" type="button" data-id="${this._escape(p.id)}">${t("common.edit")}</button>
           </div>`;
       })
       .join("");
     void neat;
     return `
       <div class="page-head-row">
-        ${this._pageHeader("Wall Panels", "Each wall screen or tablet. On the device, you only pick which panel it is.")}
-        <button class="primary" id="addWallPanel" type="button">${ICONS.plus}Add Wall Panel</button>
+        ${this._pageHeader(t("wall.title"), t("wall.lead"))}
+        <button class="primary" id="addWallPanel" type="button">${ICONS.plus}${t("wall.add")}</button>
       </div>
       ${panels.length
         ? `${this._renderWallPreview(panels)}<div class="wp-list">${cards}</div>${panels.some((p) => p.kiosk_enabled !== false) ? `<div style="height:14px"></div>${this._renderKioskCard()}` : ""}`
-        : `<div class="card empty-state"><p class="muted" style="margin:0">No wall panels yet.</p><button class="primary" id="addWallPanelEmpty" type="button">${ICONS.plus}Add Your First Wall Panel</button></div>`}
+        : `<div class="card empty-state"><p class="muted" style="margin:0">${t("wall.empty")}</p><button class="primary" id="addWallPanelEmpty" type="button">${ICONS.plus}${t("wall.add_first")}</button></div>`}
     `;
   }
 
   /** What the panel itself reported: its screen and the shape that makes it. */
   _reportedScreenHtml(panel) {
     const s = this._state?.wall_screens?.[panel.id];
-    if (!s?.width || !s?.height) return `Reported Screen: <span class="muted">Shows once the panel has opened Neat</span>`;
+    if (!s?.width || !s?.height) return `${t("wall.reported")} <span class="muted">${t("wall.reported.waiting")}</span>`;
     const shape = wallShapeFor(s.width, s.height);
     const size = `${s.width} × ${s.height}`;
-    if (shape.id === wallShapeId(panel.model)) return `Reported Screen: ${size} <span class="set-state good">${shape.label}</span>`;
-    return `Reported Screen: ${size} (${shape.label}) <span class="set-state warn" title="Only the preview uses this; the panel already lays itself out to fit">Preview Is ${this._escape(wallModel(panel.model).label)}</span>`;
+    if (shape.id === wallShapeId(panel.model)) return `${t("wall.reported")} ${size} <span class="set-state good">${shape.label}</span>`;
+    return `${t("wall.reported")} ${size} (${shape.label}) <span class="set-state warn" title="${this._escape(t("wall.reported.mismatch.tip"))}">${t("wall.reported.mismatch", { shape: this._escape(wallModel(panel.model).label) })}</span>`;
   }
 
   _helperState(panelId) {
@@ -2338,17 +2370,17 @@ class NeatThermostatPanel extends HTMLElement {
   /** One line for the panel's card: is the helper there, and is it doing its job. */
   _helperLineHtml(panelId) {
     const h = this._helperState(panelId);
-    if (!h?.paired) return `Helper: <span class="set-state">Not Paired</span>`;
+    if (!h?.paired) return `${t("helper.label")} <span class="set-state">${t("helper.not_paired")}</span>`;
     const s = h.summary || {};
-    if (h.error) return `Helper: <span class="set-state bad" title="${this._escape(h.error)}">Not Answering</span>`;
-    if (!s.version) return `Helper: <span class="muted">Checking…</span>`;
-    const bits = [`Helper: ${this._escape(s.version)}`];
-    if (s.update_state && !/^Updated|^Installed/.test(s.update_state)) bits.push(`Update: ${this._escape(s.update_state)}`);
-    else if (h.shipped_version && h.shipped_version !== s.version) bits.push(`Update: ${this._escape(h.shipped_version)} on its way`);
-    if (s.wifi_rssi != null) bits.push(`Wi-Fi: ${s.wifi_rssi} dBm`);
+    if (h.error) return `${t("helper.label")} <span class="set-state bad" title="${this._escape(h.error)}">${t("helper.not_answering")}</span>`;
+    if (!s.version) return `${t("helper.label")} <span class="muted">${t("helper.checking")}</span>`;
+    const bits = [`${t("helper.label")} ${this._escape(s.version)}`];
+    if (s.update_state && !/^Updated|^Installed/.test(s.update_state)) bits.push(t("helper.update", { state: this._escape(s.update_state) }));
+    else if (h.shipped_version && h.shipped_version !== s.version) bits.push(t("helper.update_coming", { version: this._escape(h.shipped_version) }));
+    if (s.wifi_rssi != null) bits.push(t("helper.wifi", { rssi: s.wifi_rssi }));
     const pill = s.return_button_showing
-      ? `<span class="set-state warn">Sonoff Button Showing</span>`
-      : `<span class="set-state good">OK</span>`;
+      ? `<span class="set-state warn">${t("helper.button_showing")}</span>`
+      : `<span class="set-state good">${t("helper.ok")}</span>`;
     return `${bits.join(" · ")} ${pill}`;
   }
 
@@ -2386,7 +2418,7 @@ class NeatThermostatPanel extends HTMLElement {
     const cls = level <= 20 ? " bad" : level <= 35 ? " warn" : "";
     // Battery outline with a fill that follows the level (body runs y 6..20).
     const fillH = (14 * level) / 100;
-    return `<span class="hero-room-battery${cls}" title="Battery: ${level}%">
+    return `<span class="hero-room-battery${cls}" title="${this._escape(t("hero.tile.battery", { level }))}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16 4h-1.5V2h-5v2H8a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1zm-1 16H9V6h6z"/><rect fill="currentColor" x="10" y="${(19 - fillH).toFixed(1)}" width="4" height="${fillH.toFixed(1)}"/></svg>${level}%</span>`;
   }
 
@@ -2394,8 +2426,8 @@ class NeatThermostatPanel extends HTMLElement {
   _helperUpdateText(state) {
     const m = /at (\d{4})-(\d\d)-(\d\d)T(\d\d:\d\d)/.exec(state || "");
     if (!m) return state || "";
-    const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(m[2]) - 1];
-    return `${Number(m[3])} ${month}, ${m[4]}`;
+    const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"][Number(m[2]) - 1];
+    return t("helper.updated_at", { day: Number(m[3]), month: t(`month_short.${month}`), time: m[4] });
   }
 
   _renderHelperSection(d) {
@@ -2410,55 +2442,55 @@ class NeatThermostatPanel extends HTMLElement {
         </div>`;
     let body;
     if (!editing) {
-      body = `<div class="set-row-desc">Add the panel first, then pair it with the Neat Panel Helper here.</div>`;
+      body = `<div class="set-row-desc">${t("helper.add_first")}</div>`;
     } else if (!h?.paired) {
       body = `
-        <div class="set-row-desc">The Neat Panel Helper is a small app on the panel: it keeps Sonoff's floating "Return to main program" button hidden and tells Neat how the panel is doing. Open it on the panel and enter the code it shows.</div>
+        <div class="set-row-desc">${t("helper.intro")}</div>
         <div class="set-fields">
           <div class="set-field">
-            <div class="set-field-label">Code on the panel</div>
+            <div class="set-field-label">${t("helper.code")}</div>
             <input id="wpHelperCode" inputmode="numeric" maxlength="7" placeholder="123 456" autocomplete="off" />
           </div>
           <div class="set-field">
             <div class="set-field-label">&nbsp;</div>
-            <button class="secondary" id="wpHelperPair" type="button">Pair</button>
+            <button class="secondary" id="wpHelperPair" type="button">${t("helper.pair")}</button>
           </div>
         </div>`;
     } else {
       const status = h.error
-        ? `Status: <span class="set-state bad">Not Answering</span> ${this._escape(h.error)}`
+        ? `${t("helper.status")} <span class="set-state bad">${t("helper.not_answering")}</span> ${this._escape(h.error)}`
         : !s.version
-          ? `Status: <span class="muted">Checking…</span>`
+          ? `${t("helper.status")} <span class="muted">${t("helper.checking")}</span>`
           : [
-              `Status: <span class="set-state good">Connected</span>`,
-              `Helper: ${this._escape(s.version)}`,
-              `Updates: ${s.device_owner ? "Automatic" : "Need a tap on the panel"}`,
-              s.update_state && `Last Update: ${this._escape(this._helperUpdateText(s.update_state))}`,
+              `${t("helper.status")} <span class="set-state good">${t("helper.connected")}</span>`,
+              `${t("helper.label")} ${this._escape(s.version)}`,
+              t(s.device_owner ? "helper.updates_auto" : "helper.updates_tap"),
+              s.update_state && t("helper.last_update", { when: this._escape(this._helperUpdateText(s.update_state)) }),
             ].filter(Boolean).join(" · ");
       const health = [
-        s.model && `Device: ${this._escape(s.model)} (Android ${this._escape(s.android || "—")})`,
-        s.wifi_rssi != null && `Wi-Fi: ${s.wifi_rssi} dBm`,
-        s.uptime_s != null && `Uptime: ${this._formatEta(s.uptime_s / 60)?.replace("~", "") || "—"}`,
-        s.foreground_app && `In Front: ${s.foreground_app === "de.ozerov.fully" ? "Fully Kiosk" : this._escape(s.foreground_app)}`,
+        s.model && t("helper.device", { model: this._escape(s.model), android: this._escape(s.android || "—") }),
+        s.wifi_rssi != null && t("helper.wifi", { rssi: s.wifi_rssi }),
+        s.uptime_s != null && t("helper.uptime", { uptime: this._formatEta(s.uptime_s / 60)?.replace("~", "") || "—" }),
+        s.foreground_app && t("helper.in_front", { app: s.foreground_app === "de.ozerov.fully" ? t("helper.fully") : this._escape(s.foreground_app) }),
       ].filter(Boolean).join(" · ");
       body = `
         <div class="set-row-desc">${status}</div>
         ${health ? `<div class="set-row-desc">${health}</div>` : ""}
-        ${switchRow("wpHelperHide", "Hide Sonoff's floating button", s.return_button_found
-          ? `Switches "Return to main program" off whenever Sonoff turns it back on${s.times_hidden ? ` (done ${s.times_hidden}× since the helper started)` : ""}.${s.can_hide ? "" : " Needs its one-time permission — see the helper's screen."}`
-          : "Sonoff's button wasn't found on this panel.", s.hide_return_button !== false)}
-        ${switchRow("wpHelperCpu", "Keep the panel running with the screen off", "A CPU wake lock. Off by default: on the NSPanel Pro a held lock stopped the screen turning off.", Boolean(s.cpu_lock))}
-        ${switchRow("wpHelperWifi", "Keep Wi-Fi at full power with the screen off", "A Wi-Fi lock. Same caveat — try one at a time and check the screen still turns off.", Boolean(s.wifi_lock))}
-        <div class="form-actions"><span style="flex:1"></span><button class="linkish" id="wpHelperUnpair" type="button">Unpair</button></div>`;
+        ${switchRow("wpHelperHide", t("helper.hide"), s.return_button_found
+          ? `${t("helper.hide.desc")}${s.times_hidden ? t("helper.hide.count", { count: s.times_hidden }) : ""}.${s.can_hide ? "" : t("helper.hide.needs_permission")}`
+          : t("helper.hide.not_found"), s.hide_return_button !== false)}
+        ${switchRow("wpHelperCpu", t("helper.cpu_lock"), t("helper.cpu_lock.desc"), Boolean(s.cpu_lock))}
+        ${switchRow("wpHelperWifi", t("helper.wifi_lock"), t("helper.wifi_lock.desc"), Boolean(s.wifi_lock))}
+        <div class="form-actions"><span style="flex:1"></span><button class="linkish" id="wpHelperUnpair" type="button">${t("helper.unpair")}</button></div>`;
     }
     return `
       <div class="dlg-section" id="wpHelperSection" ${show ? "" : "hidden"}>
-        <div class="dlg-section-title">Sonoff NSPanel Pro</div>
+        <div class="dlg-section-title">${t("wall.shape.nspanel_pro")}</div>
         ${body}
         <div class="set-field">
-          <div class="set-field-label">Panel IP address (optional)</div>
-          <input id="wpHelperHost" placeholder="${this._escape(h?.host || "From the Fully Kiosk device")}" value="${this._escape(d.helperHost || "")}" />
-          <div class="set-row-desc">Only if Neat can't find the panel — blank uses the linked Fully Kiosk device's address. Not the pairing code.</div>
+          <div class="set-field-label">${t("helper.host")}</div>
+          <input id="wpHelperHost" placeholder="${this._escape(h?.host || t("helper.host.placeholder"))}" value="${this._escape(d.helperHost || "")}" />
+          <div class="set-row-desc">${t("helper.host.desc")}</div>
         </div>
       </div>`;
   }
@@ -2470,7 +2502,7 @@ class NeatThermostatPanel extends HTMLElement {
       this._showToast(okText);
       return result;
     } catch (e) {
-      this._showToast(`Helper: ${e?.message || e}`, "err");
+      this._showToast(t("helper.error", { error: e?.message || e }), "err");
       return null;
     }
   }
@@ -2487,29 +2519,29 @@ class NeatThermostatPanel extends HTMLElement {
     $("wpHelperPair")?.addEventListener("click", async () => {
       const code = String($("wpHelperCode")?.value || "").replace(/\s+/g, "");
       if (!/^\d{6}$/.test(code)) {
-        this._showToast("Enter the 6-digit code shown on the panel", "err");
+        this._showToast(t("helper.code_invalid"), "err");
         return;
       }
-      if (await this._helperAction("neat_thermostat/helper_pair", { code }, "Paired with the panel's helper")) this._refreshHelperSection();
+      if (await this._helperAction("neat_thermostat/helper_pair", { code }, t("helper.toast.paired"))) this._refreshHelperSection();
     });
     $("wpHelperUnpair")?.addEventListener("click", async () => {
-      if (!window.confirm("Unpair the helper? It keeps running on the panel; pair again with a new code.")) return;
+      if (!window.confirm(t("helper.unpair.confirm"))) return;
       try {
         await this._ws("neat_thermostat/helper_unpair", { panel_id: this._wallEditingId });
         if (this._state?.wall_helpers?.[this._wallEditingId]) this._state.wall_helpers[this._wallEditingId].paired = false;
         this._refreshHelperSection();
       } catch (e) {
-        this._showToast(`Couldn't unpair: ${e?.message || e}`, "err");
+        this._showToast(t("helper.unpair.failed", { error: e?.message || e }), "err");
       }
     });
-    const toggle = (id, key, label) =>
+    const toggle = (id, key, toast) =>
       $(id)?.addEventListener("change", async (ev) => {
         const on = ev.target.checked;
-        if (!(await this._helperAction("neat_thermostat/helper_config", { [key]: on }, `${label} ${on ? "on" : "off"}`))) ev.target.checked = !on;
+        if (!(await this._helperAction("neat_thermostat/helper_config", { [key]: on }, t(`helper.toast.${toast}.${on ? "on" : "off"}`)))) ev.target.checked = !on;
       });
-    toggle("wpHelperHide", "hide_return_button", "Hide Sonoff's button");
-    toggle("wpHelperCpu", "cpu_lock", "CPU wake lock");
-    toggle("wpHelperWifi", "wifi_lock", "Wi-Fi lock");
+    toggle("wpHelperHide", "hide_return_button", "hide");
+    toggle("wpHelperCpu", "cpu_lock", "cpu");
+    toggle("wpHelperWifi", "wifi_lock", "wifi");
     $("wpHelperHost")?.addEventListener("input", (ev) => {
       this._wallDraft.helperHost = ev.target.value;
     });
@@ -2535,22 +2567,22 @@ class NeatThermostatPanel extends HTMLElement {
 
   _kioskPillHtml(panelId) {
     const s = this._kiosk?.panels?.[panelId];
-    if (!s || !s.linked) return `<span class="set-state">Not Linked</span>`;
-    if (!s.online) return `<span class="set-state bad">Panel Offline</span>`;
+    if (!s || !s.linked) return `<span class="set-state">${t("kiosk.pill.not_linked")}</span>`;
+    if (!s.online) return `<span class="set-state bad">${t("kiosk.pill.offline")}</span>`;
     const pill = s.in_sync
-      ? `<span class="set-state good">In Sync</span>`
-      : `<span class="set-state warn" title="${this._escape(this._kioskDriftText(s))}">${s.page_ok === false ? "Wrong Page" : "Out of Sync"}</span>`;
+      ? `<span class="set-state good">${t("kiosk.pill.in_sync")}</span>`
+      : `<span class="set-state warn" title="${this._escape(this._kioskDriftText(s))}">${s.page_ok === false ? t("kiosk.pill.wrong_page") : t("kiosk.pill.out_of_sync")}</span>`;
     return `${pill}
-      ${s.in_sync ? "" : `<button class="linkish kiosk-act" type="button" data-kiosk-sync="${this._escape(panelId)}">Sync now</button>`}
-      <button class="linkish kiosk-act" type="button" data-kiosk-reload="${this._escape(panelId)}">Reload</button>`;
+      ${s.in_sync ? "" : `<button class="linkish kiosk-act" type="button" data-kiosk-sync="${this._escape(panelId)}">${t("kiosk.sync_now")}</button>`}
+      <button class="linkish kiosk-act" type="button" data-kiosk-reload="${this._escape(panelId)}">${t("kiosk.reload")}</button>`;
   }
 
   _kioskDriftText(s) {
     const out = [];
-    if (s.page_ok === false) out.push(`Showing ${s.current_page || "another page"}`);
+    if (s.page_ok === false) out.push(t("kiosk.drift.page", { page: s.current_page || t("kiosk.drift.another_page") }));
     for (const f of KIOSK_FIELDS) {
       const it = s.settings?.[f.key];
-      if (it && it.ok === false) out.push(`${f.label}: ${kioskDisplay(f, it.actual)} (should be ${kioskDisplay(f, it.target)})`);
+      if (it && it.ok === false) out.push(t("kiosk.drift.setting", { label: f.label, actual: kioskDisplay(f, it.actual), target: kioskDisplay(f, it.target) }));
     }
     return out.join(" · ");
   }
@@ -2569,14 +2601,14 @@ class NeatThermostatPanel extends HTMLElement {
       const v = value == null ? "" : value ? "on" : "off";
       return `<select id="${id}" class="kiosk-select">
           <option value="" ${v === "" ? "selected" : ""}>${this._escape(placeholder)}</option>
-          <option value="on" ${v === "on" ? "selected" : ""}>On</option>
-          <option value="off" ${v === "off" ? "selected" : ""}>Off</option>
+          <option value="on" ${v === "on" ? "selected" : ""}>${t("common.on")}</option>
+          <option value="off" ${v === "off" ? "selected" : ""}>${t("common.off")}</option>
         </select>`;
     }
     const shown = value == null ? "" : field.kind === "pct" ? Math.round(Number(value) / 2.55) : value;
     const isPct = field.kind === "pct" || field.kind === "pct100";
     const max = isPct ? 100 : 86400;
-    return `<div class="num-input kiosk-num"><input id="${id}" type="number" min="0" max="${max}" step="1" placeholder="${this._escape(placeholder)}" value="${this._escape(shown)}" /><span>${isPct ? "%" : "sec"}</span></div>`;
+    return `<div class="num-input kiosk-num"><input id="${id}" type="number" min="0" max="${max}" step="1" placeholder="${this._escape(placeholder)}" value="${this._escape(shown)}" /><span>${isPct ? "%" : t("unit.sec")}</span></div>`;
   }
 
   /** Read a set of kiosk inputs back into backend values (blank fields left out). */
@@ -2598,35 +2630,35 @@ class NeatThermostatPanel extends HTMLElement {
     const head = `
       <div class="card-head">
         <span class="card-icon intel">${ICONS.tune}</span>
-        <div class="card-head-text"><p class="card-title">Kiosk browser</p><p class="card-sub">Fully Kiosk settings every panel shares. Leave a setting blank and Neat won't touch it.</p></div>
+        <div class="card-head-text"><p class="card-title">${t("kiosk.title")}</p><p class="card-sub">${t("kiosk.sub")}</p></div>
       </div>`;
-    if (!k) return `<div class="card" id="kioskCard">${head}<p class="muted" style="margin:0">Loading…</p></div>`;
+    if (!k) return `<div class="card" id="kioskCard">${head}<p class="muted" style="margin:0">${t("common.loading")}</p></div>`;
     if (!k.devices?.length) {
-      return `<div class="card" id="kioskCard">${head}<p class="muted" style="margin:0">Add the <strong>Fully Kiosk Browser</strong> integration in Home Assistant (needs Fully's Plus licence) to manage your panels from here.</p></div>`;
+      return `<div class="card" id="kioskCard">${head}<p class="muted" style="margin:0">${t("kiosk.no_integration")}</p></div>`;
     }
     const d = k.defaults || {};
     const rows = KIOSK_FIELDS.map(
       (f) => `
         <div class="set-row">
           <div class="set-row-text"><div class="set-row-name">${f.label}</div>${f.desc ? `<div class="set-row-desc">${f.desc}</div>` : ""}</div>
-          <div class="set-row-control">${this._kioskControl(f, d[f.key], "kd_", "Not managed")}</div>
+          <div class="set-row-control">${this._kioskControl(f, d[f.key], "kd_", t("kiosk.not_managed"))}</div>
         </div>`
     ).join("");
     return `
       <div class="card" id="kioskCard">
         ${head}
         <div class="set-row">
-          <div class="set-row-text"><div class="set-row-name">Keep panels in sync</div><div class="set-row-desc">Re-applies these when a panel reconnects or drifts. The start URL is always set for you.</div></div>
+          <div class="set-row-text"><div class="set-row-name">${t("kiosk.auto_sync")}</div><div class="set-row-desc">${t("kiosk.auto_sync.desc")}</div></div>
           <div class="set-row-control"><label class="switch"><input type="checkbox" id="kioskAutoSync" ${k.auto_sync !== false ? "checked" : ""} /><span></span></label></div>
         </div>
         ${rows}
         <div class="form-actions">
-          <select id="kioskImportFrom" class="kiosk-select" aria-label="Panel to import from">
+          <select id="kioskImportFrom" class="kiosk-select" aria-label="${this._escape(t("kiosk.import_from"))}">
             ${k.devices.map((dev) => `<option value="${this._escape(dev.id)}">${this._escape(dev.name)}</option>`).join("")}
           </select>
-          <button class="secondary" id="kioskImport" type="button">Import from panel</button>
+          <button class="secondary" id="kioskImport" type="button">${t("kiosk.import")}</button>
           <span style="flex:1"></span>
-          <button class="primary" id="kioskSaveDefaults" type="button">Save &amp; sync all</button>
+          <button class="primary" id="kioskSaveDefaults" type="button">${t("kiosk.save_sync")}</button>
         </div>
       </div>`;
   }
@@ -2634,7 +2666,7 @@ class NeatThermostatPanel extends HTMLElement {
   _bindKioskCard() {
     this.shadowRoot.getElementById("kioskImport")?.addEventListener("click", async () => {
       const select = this.shadowRoot.getElementById("kioskImportFrom");
-      const name = select?.selectedOptions?.[0]?.textContent || "the panel";
+      const name = select?.selectedOptions?.[0]?.textContent || t("kiosk.the_panel");
       try {
         const { settings } = await this._ws("neat_thermostat/kiosk_read", { device_id: select.value });
         let n = 0;
@@ -2645,9 +2677,9 @@ class NeatThermostatPanel extends HTMLElement {
           n++;
         }
         const missed = KIOSK_FIELDS.filter((f) => !f.writeOnly && settings[f.key] == null).map((f) => f.label.toLowerCase());
-        this._showToast(`Imported ${n} setting${n === 1 ? "" : "s"} from ${name}${missed.length ? ` — couldn't read ${missed.join(", ")} (left as they were)` : ""}. Save to apply.`);
+        this._showToast(`${tn("kiosk.imported", n, { name })}${missed.length ? t("kiosk.imported.missed", { list: missed.join(", ") }) : ""}${t("kiosk.imported.save")}`);
       } catch (e) {
-        this._showToast(`Couldn't read ${name}: ${e?.message || e}`, "err");
+        this._showToast(t("kiosk.read_failed", { name, error: e?.message || e }), "err");
       }
     });
     this.shadowRoot.getElementById("kioskSaveDefaults")?.addEventListener("click", async () => {
@@ -2657,10 +2689,10 @@ class NeatThermostatPanel extends HTMLElement {
           kiosk_auto_sync: Boolean(this.shadowRoot.getElementById("kioskAutoSync")?.checked),
         });
         const changed = Object.values(res.kiosk_synced || {}).reduce((n, list) => n + list.length, 0);
-        this._showToast(changed ? `Saved — ${changed} change${changed === 1 ? "" : "s"} sent to your panels` : "Saved — panels already match");
+        this._showToast(changed ? tn("kiosk.saved_sent", changed) : t("kiosk.saved_match"));
         await this._loadKiosk();
       } catch (e) {
-        this._showToast(`Couldn't save: ${e?.message || e}`, "err");
+        this._showToast(t("common.save_failed", { error: e?.message || e }), "err");
       }
     });
   }
@@ -2671,18 +2703,18 @@ class NeatThermostatPanel extends HTMLElement {
       this._kiosk = res;
       this._refreshKioskPills();
       const changed = Object.values(res.synced || {}).reduce((n, list) => n + list.length, 0);
-      this._showToast(changed ? `Synced — ${changed} change${changed === 1 ? "" : "s"} sent` : "Already in sync");
+      this._showToast(changed ? tn("kiosk.synced", changed) : t("kiosk.already_synced"));
     } catch (e) {
-      this._showToast(`Couldn't sync: ${e?.message || e}`, "err");
+      this._showToast(t("kiosk.sync_failed", { error: e?.message || e }), "err");
     }
   }
 
   async _kioskReload(panelId) {
     try {
       await this._ws("neat_thermostat/kiosk_reload", { panel_id: panelId });
-      this._showToast("Reloading the panel");
+      this._showToast(t("kiosk.reloading"));
     } catch (e) {
-      this._showToast(`Couldn't reload: ${e?.message || e}`, "err");
+      this._showToast(t("kiosk.reload_failed", { error: e?.message || e }), "err");
     }
   }
 
@@ -2710,77 +2742,77 @@ class NeatThermostatPanel extends HTMLElement {
     const cfg = this._cfg();
     return this._dialog({
       icon: ICONS.panel,
-      title: editing ? `Edit ${this._escape(d.label || editing)}` : "Add a Wall Panel",
-      sub: editing ? "Change what this panel shows and controls." : "Set up a new wall screen or tablet. You'll pick this panel on the device.",
+      title: editing ? t("wall_dlg.title_edit", { name: this._escape(d.label || editing) }) : t("wall_dlg.title_add"),
+      sub: editing ? t("wall_dlg.sub_edit") : t("wall_dlg.sub_add"),
       body: `
         <div class="dlg-section">
           <div class="set-fields">
             <div class="set-field">
-              <div class="set-field-label">Name</div>
-              <input id="wpLabel" placeholder="e.g. Hallway panel" value="${this._escape(d.label || "")}" />
+              <div class="set-field-label">${t("wall_dlg.name")}</div>
+              <input id="wpLabel" placeholder="${this._escape(t("wall_dlg.name.placeholder"))}" value="${this._escape(d.label || "")}" />
             </div>
             <div class="set-field">
-              <div class="set-field-label">Device ID</div>
+              <div class="set-field-label">${t("wall_dlg.device_id")}</div>
               <input id="wpId" placeholder="hallway" value="${this._escape(d.id || "")}" ${editing ? "readonly" : ""} />
-              <div class="set-row-desc">${editing ? "Fixed — the panel uses it to find its settings." : "Filled in from the name. You'll choose this on the panel."}</div>
+              <div class="set-row-desc">${editing ? t("wall_dlg.device_id.fixed") : t("wall_dlg.device_id.auto")}</div>
             </div>
           </div>
           <div class="set-field">
-            <div class="set-field-label">Screen shape</div>
+            <div class="set-field-label">${t("wall_dlg.shape")}</div>
             <select id="wpModel">
               ${WALL_MODELS.map((m) => `<option value="${m.id}" ${wallModel(d.model).id === m.id ? "selected" : ""}>${m.label} · ${m.ratio} — ${m.hint}</option>`).join("")}
             </select>
-            <div class="set-row-desc">Sizes the preview. The panel fits itself to its real screen, and turns with a tablet.${editing && this._state?.wall_screens?.[editing] ? ` ${this._reportedScreenHtml({ id: editing, model: d.model })}.` : ""}</div>
+            <div class="set-row-desc">${t("wall_dlg.shape.desc")}${editing && this._state?.wall_screens?.[editing] ? ` ${this._reportedScreenHtml({ id: editing, model: d.model })}.` : ""}</div>
           </div>
         </div>
         ${this._renderHelperSection(d)}
         <div class="dlg-section">
-          <div class="dlg-section-title">Controls</div>
+          <div class="dlg-section-title">${t("wall_dlg.section.controls")}</div>
           <div class="set-field">
-            <div class="set-field-label">Thermostat</div>
+            <div class="set-field-label">${t("wall_dlg.thermostat")}</div>
             <div class="entity-picker-host" data-wall-picker="primary"></div>
             <div class="set-row-desc" id="wpPrimaryNote"></div>
           </div>
         </div>
         <div class="dlg-section">
-          <div class="dlg-section-title">Shows</div>
+          <div class="dlg-section-title">${t("wall_dlg.section.shows")}</div>
           <div class="set-fields">
             <div class="set-field">
-              <div class="set-field-label">Inside temperature</div>
+              <div class="set-field-label">${t("wall_dlg.inside_temp")}</div>
               <div class="entity-picker-host" data-wall-picker="insideTemp"></div>
             </div>
             <div class="set-field">
-              <div class="set-field-label">Outside temperature</div>
+              <div class="set-field-label">${t("wall_dlg.outside_temp")}</div>
               <div class="entity-picker-host" data-wall-picker="outsideTemp"></div>
             </div>
             <div class="set-field">
-              <div class="set-field-label">Humidity</div>
+              <div class="set-field-label">${t("wall_dlg.humidity")}</div>
               <div class="entity-picker-host" data-wall-picker="humidity"></div>
             </div>
             <div class="set-field">
-              <div class="set-field-label">Weather</div>
+              <div class="set-field-label">${t("wall_dlg.weather")}</div>
               <div class="entity-picker-host" data-wall-picker="weather"></div>
             </div>
           </div>
-          <div class="set-row-desc">Blank sensors use the house ones from Settings. Room buttons always follow your Rooms list.</div>
+          <div class="set-row-desc">${t("wall_dlg.shows.desc")}</div>
         </div>
         <div class="dlg-section">
-          <div class="dlg-section-title">Screen</div>
+          <div class="dlg-section-title">${t("wall_dlg.section.screen")}</div>
           <div class="set-row">
-            <div class="set-row-text"><div class="set-row-name">Clock after</div><div class="set-row-desc">Idle time before the Neat app shows its clock. A tap (or a wave close to the screen) clears it; the screen turns off later — see "Screen off after" in the kiosk settings.</div></div>
-            <div class="set-row-control"><div class="num-input"><input id="wpIdle" type="number" min="5" step="5" value="${this._escape(d.idleSec ?? 30)}" /><span>sec</span></div></div>
+            <div class="set-row-text"><div class="set-row-name">${t("wall_dlg.clock_after")}</div><div class="set-row-desc">${t("wall_dlg.clock_after.desc")}</div></div>
+            <div class="set-row-control"><div class="num-input"><input id="wpIdle" type="number" min="5" step="5" value="${this._escape(d.idleSec ?? 30)}" /><span>${t("unit.sec")}</span></div></div>
           </div>
           <div class="set-row">
-            <div class="set-row-text"><div class="set-row-name">Temperature lock</div><div class="set-row-desc">${String(cfg.wall_pin || "").trim() ? "Changes on the panel need the house PIN." : "Needs a Wall panel PIN in Settings first."}</div></div>
+            <div class="set-row-text"><div class="set-row-name">${t("wall_dlg.lock")}</div><div class="set-row-desc">${String(cfg.wall_pin || "").trim() ? t("wall_dlg.lock.on") : t("wall_dlg.lock.no_pin")}</div></div>
             <div class="set-row-control"><label class="switch"><input type="checkbox" id="wpLock" ${d.lock ? "checked" : ""} /><span></span></label></div>
           </div>
         </div>
         ${this._renderKioskDialogSection(d)}`,
       foot: `
-        ${editing ? `<button class="danger" id="deleteWallPanel" type="button">Delete</button>` : ""}
+        ${editing ? `<button class="danger" id="deleteWallPanel" type="button">${t("common.delete")}</button>` : ""}
         <span style="flex:1"></span>
-        <button class="secondary" data-close-dialog type="button">Cancel</button>
-        <button class="primary" id="saveWallPanel" type="button">${editing ? "Save changes" : "Add Wall Panel"}</button>`,
+        <button class="secondary" data-close-dialog type="button">${t("common.cancel")}</button>
+        <button class="primary" id="saveWallPanel" type="button">${editing ? t("common.save_changes") : t("wall.add")}</button>`,
     });
   }
 
@@ -2789,21 +2821,21 @@ class NeatThermostatPanel extends HTMLElement {
     const on = d.kioskEnabled !== false;
     const toggle = `
         <div class="set-row">
-          <div class="set-row-text"><div class="set-row-name">Uses Fully Kiosk Browser</div><div class="set-row-desc">Turn off for screens that can't run it (no app installs) — Neat then leaves this panel's browser alone.</div></div>
+          <div class="set-row-text"><div class="set-row-name">${t("wall_dlg.kiosk_enabled")}</div><div class="set-row-desc">${t("wall_dlg.kiosk_enabled.desc")}</div></div>
           <div class="set-row-control"><label class="switch"><input type="checkbox" id="wpKioskEnabled" ${on ? "checked" : ""} /><span></span></label></div>
         </div>`;
     if (!k?.devices?.length) {
       return `
       <div class="dlg-section">
-        <div class="dlg-section-title">Kiosk browser</div>
+        <div class="dlg-section-title">${t("kiosk.title")}</div>
         ${toggle}
-        <div id="wpKioskBody" ${on ? "" : "hidden"}><div class="set-row-desc">Add the <strong>Fully Kiosk Browser</strong> integration in Home Assistant (needs Fully's Plus licence) and Neat can set this panel's start page and settings for you.</div></div>
+        <div id="wpKioskBody" ${on ? "" : "hidden"}><div class="set-row-desc">${t("wall_dlg.kiosk.no_integration")}</div></div>
       </div>`;
     }
     const defaults = k.defaults || {};
     const rows = KIOSK_FIELDS.map((f) => {
       const house = defaults[f.key];
-      const placeholder = house == null ? "Not managed" : `House: ${kioskDisplay(f, house)}`;
+      const placeholder = house == null ? t("kiosk.not_managed") : t("wall_dlg.kiosk.house_value", { value: kioskDisplay(f, house) });
       return `
         <div class="set-row">
           <div class="set-row-text"><div class="set-row-name">${f.label}</div></div>
@@ -2812,18 +2844,18 @@ class NeatThermostatPanel extends HTMLElement {
     }).join("");
     return `
       <div class="dlg-section">
-        <div class="dlg-section-title">Kiosk browser</div>
+        <div class="dlg-section-title">${t("kiosk.title")}</div>
         ${toggle}
         <div id="wpKioskBody" ${on ? "" : "hidden"}>
         <div class="set-field">
-          <div class="set-field-label">Fully Kiosk device</div>
+          <div class="set-field-label">${t("wall_dlg.kiosk.device")}</div>
           <select id="wpKioskDevice">
-            <option value="">Not linked</option>
+            <option value="">${t("wall_dlg.kiosk.not_linked")}</option>
             ${k.devices.map((dev) => `<option value="${this._escape(dev.id)}" ${d.kioskDevice === dev.id ? "selected" : ""}>${this._escape(dev.name)}</option>`).join("")}
           </select>
-          <div class="set-row-desc">Linking lets Neat set this panel's start URL and settings for you.</div>
+          <div class="set-row-desc">${t("wall_dlg.kiosk.device.desc")}</div>
         </div>
-        <div class="set-row-desc">Overrides for this panel only — leave blank to use the house setting.</div>
+        <div class="set-row-desc">${t("wall_dlg.kiosk.overrides")}</div>
         ${rows}
         </div>
       </div>`;
@@ -2860,10 +2892,10 @@ class NeatThermostatPanel extends HTMLElement {
     const value = this._wallDraft.primary;
     if (!value || this._isNeatClimate(value)) {
       note.className = "set-row-desc";
-      note.textContent = "Neat's house thermostat — schedule, presets and boiler control all apply.";
+      note.textContent = t("wall_dlg.thermostat.neat");
     } else {
       note.className = "set-row-desc warn-note";
-      note.textContent = "This isn't a Neat thermostat, so the panel will bypass Neat's schedule and boiler control.";
+      note.textContent = t("wall_dlg.thermostat.not_neat");
     }
   }
 
@@ -2875,7 +2907,7 @@ class NeatThermostatPanel extends HTMLElement {
           <div class="dlg-head">
             <span class="card-icon intel">${icon}</span>
             <div class="card-head-text"><p class="dlg-title">${title}</p><p class="card-sub">${sub}</p></div>
-            <button class="dlg-x" type="button" data-close-dialog aria-label="Close">
+            <button class="dlg-x" type="button" data-close-dialog aria-label="${this._escape(t("common.close"))}">
               <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
             </button>
           </div>
@@ -2931,28 +2963,26 @@ class NeatThermostatPanel extends HTMLElement {
       .join("");
     return `
       <div class="card">
-        <p class="card-title">Preview</p>
+        <p class="card-title">${t("preview.title")}</p>
         <div class="wp-preview-bar">
-          <select id="wpPreviewPanel" aria-label="Panel to preview">${options}</select>
-          <button type="button" class="secondary compact" id="wpPreviewReload">Reload</button>
+          <select id="wpPreviewPanel" aria-label="${this._escape(t("preview.panel"))}">${options}</select>
+          <button type="button" class="secondary compact" id="wpPreviewReload">${t("kiosk.reload")}</button>
           <label class="wp-preview-taps${this._previewTaps ? " live" : ""}">
             <input type="checkbox" id="wpPreviewTaps" ${this._previewTaps ? "checked" : ""} />
-            ${this._previewTaps ? "Taps are live — they change the real heating" : "Allow taps (controls the real heating)"}
+            ${this._previewTaps ? t("preview.taps_live") : t("preview.taps_allow")}
           </label>
         </div>
         <div class="wp-preview-stage">
           <div class="wp-preview-device" style="max-width:${model.width + 28}px">
             <div class="wp-preview-screen" style="aspect-ratio:${model.width} / ${model.height}">
-              <iframe id="wpPreviewFrame" title="Wall panel preview" style="width:${model.width}px;height:${model.height}px"
+              <iframe id="wpPreviewFrame" title="${this._escape(t("preview.frame"))}" style="width:${model.width}px;height:${model.height}px"
                 src="${this._escape(this._wallPreviewSrc(current))}"></iframe>
-              ${this._previewTaps ? "" : `<div class="wp-preview-shield" title="View only — tick Allow taps to use it"></div>`}
+              ${this._previewTaps ? "" : `<div class="wp-preview-shield" title="${this._escape(t("preview.shield"))}"></div>`}
             </div>
           </div>
         </div>
         <p class="muted" style="margin:12px 0 0">
-          <strong id="wpPreviewSize">${this._escape(this._previewSizeText(model))}</strong> —
-          the wall app bundled with this Neat version, live against your real entities, at the panel's screen shape.
-          Saving a panel reloads it.
+          ${t("preview.desc", { size: `<strong id="wpPreviewSize">${this._escape(this._previewSizeText(model))}</strong>` })}
         </p>
       </div>`;
   }
@@ -3019,7 +3049,7 @@ class NeatThermostatPanel extends HTMLElement {
       grid.classList.remove("is-dragging");
       this._suppressZoneClick = true;
       setTimeout(() => (this._suppressZoneClick = false), 0);
-      const order = [...grid.querySelectorAll(tileSel)].map((t) => t.dataset[idKey]);
+      const order = [...grid.querySelectorAll(tileSel)].map((el) => el.dataset[idKey]);
       if (!commit || order.join() === before) {
         if (!commit) this._render();
         this._dragging = false;
@@ -3034,7 +3064,7 @@ class NeatThermostatPanel extends HTMLElement {
         if (ev.button !== 0 || drag || ev.target.closest(".switch")) return;
         drag = {
           tile, pointerId: ev.pointerId, x: ev.clientX, y: ev.clientY, started: false, timer: null,
-          before: [...grid.querySelectorAll(tileSel)].map((t) => t.dataset[idKey]).join(),
+          before: [...grid.querySelectorAll(tileSel)].map((el) => el.dataset[idKey]).join(),
         };
         if (ev.pointerType !== "mouse") drag.timer = setTimeout(begin, 350);
       });
@@ -3060,9 +3090,9 @@ class NeatThermostatPanel extends HTMLElement {
         return;
       }
       // Move the lifted tile into the slot under the pointer.
-      const target = [...grid.querySelectorAll(tileSel)].find((t) => {
-        if (t === drag.tile) return false;
-        const r = t.getBoundingClientRect();
+      const target = [...grid.querySelectorAll(tileSel)].find((el) => {
+        if (el === drag.tile) return false;
+        const r = el.getBoundingClientRect();
         return ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
       });
       if (!target) return;
@@ -3088,10 +3118,10 @@ class NeatThermostatPanel extends HTMLElement {
     this._orderSavedAt = Date.now();
     try {
       await this._ws("neat_thermostat/reorder_rooms", { room_ids: ids });
-      this._showToast("Room order saved");
+      this._showToast(t("rooms.order_saved"));
     } catch (e) {
       this._state.config.rooms = previous;
-      this._showToast(`Couldn't save room order: ${e?.message || e}`, "err");
+      this._showToast(t("rooms.order_failed", { error: e?.message || e }), "err");
       this._render();
     }
   }
@@ -3122,15 +3152,13 @@ class NeatThermostatPanel extends HTMLElement {
       this._previewTaps = ev.target.checked;
       const label = ev.target.closest(".wp-preview-taps");
       label.classList.toggle("live", this._previewTaps);
-      label.lastChild.textContent = this._previewTaps
-        ? " Taps are live — they change the real heating"
-        : " Allow taps (controls the real heating)";
+      label.lastChild.textContent = ` ${this._previewTaps ? t("preview.taps_live") : t("preview.taps_allow")}`;
       let shield = screen.querySelector(".wp-preview-shield");
       if (this._previewTaps) shield?.remove();
       else if (!shield) {
         shield = document.createElement("div");
         shield.className = "wp-preview-shield";
-        shield.title = "View only — tick Allow taps to use it";
+        shield.title = t("preview.shield");
         screen.appendChild(shield);
       }
     });
@@ -3140,7 +3168,7 @@ class NeatThermostatPanel extends HTMLElement {
         if (res.ok) return;
         const stage = this.shadowRoot.querySelector(".wp-preview-stage");
         if (stage) {
-          stage.innerHTML = `<p class="muted wp-preview-missing">The wall app is missing from this Neat install — nothing at <code>${WALL_APP_URL}</code>.</p>`;
+          stage.innerHTML = `<p class="muted wp-preview-missing">${t("preview.missing", { url: `<code>${WALL_APP_URL}</code>` })}</p>`;
         }
       })
       .catch(() => {});
@@ -3160,7 +3188,7 @@ class NeatThermostatPanel extends HTMLElement {
     if (!hosts.length) return;
     for (const host of hosts) {
       if (!host.querySelector("ha-entity-picker")) {
-        host.innerHTML = `<p class="entity-picker-loading">Loading entity picker…</p>`;
+        host.innerHTML = `<p class="entity-picker-loading">${t("picker.loading")}</p>`;
       }
     }
     try {
@@ -3168,13 +3196,13 @@ class NeatThermostatPanel extends HTMLElement {
     } catch (err) {
       if (gen !== this._wallPickerMountGen) return;
       for (const host of hosts) {
-        host.innerHTML = `<p class="entity-picker-error">${this._escape(err?.message || "Entity picker unavailable")}</p>`;
+        host.innerHTML = `<p class="entity-picker-error">${this._escape(err?.message || t("picker.unavailable"))}</p>`;
       }
       return;
     }
     if (gen !== this._wallPickerMountGen || this._view !== "wall_panels") return;
 
-    const mountSingle = (key, { domains, filter, label }) => {
+    const mountSingle = (key, { domains, filter }) => {
       const host = this.shadowRoot.querySelector(`[data-wall-picker="${key}"]`);
       if (!host) return;
       let picker = host.querySelector("ha-entity-picker");
@@ -3183,7 +3211,7 @@ class NeatThermostatPanel extends HTMLElement {
         picker = document.createElement("ha-entity-picker");
         picker.setAttribute("allow-custom-entity", "");
         if (this._hass.userData?.showEntityIdPicker) picker.setAttribute("show-entity-id", "");
-        void label; // the dialog's own field label is enough
+        // No picker label: the dialog's own field label is enough.
         picker.includeDomains = domains;
         if (filter) picker.entityFilter = filter;
         picker.addEventListener("value-changed", (ev) => {
@@ -3197,23 +3225,11 @@ class NeatThermostatPanel extends HTMLElement {
       if (picker.value !== value) picker.value = value || undefined;
     };
 
-    mountSingle("primary", { domains: ["climate"], label: "Primary climate" });
-    mountSingle("insideTemp", {
-      domains: ["sensor"],
-      filter: temperatureSensorFilter,
-      label: "Inside temperature",
-    });
-    mountSingle("outsideTemp", {
-      domains: ["sensor"],
-      filter: temperatureSensorFilter,
-      label: "Outside temperature",
-    });
-    mountSingle("humidity", {
-      domains: ["sensor"],
-      filter: humiditySensorFilter,
-      label: "Humidity",
-    });
-    mountSingle("weather", { domains: ["weather"], label: "Weather" });
+    mountSingle("primary", { domains: ["climate"] });
+    mountSingle("insideTemp", { domains: ["sensor"], filter: temperatureSensorFilter });
+    mountSingle("outsideTemp", { domains: ["sensor"], filter: temperatureSensorFilter });
+    mountSingle("humidity", { domains: ["sensor"], filter: humiditySensorFilter });
+    mountSingle("weather", { domains: ["weather"] });
     this._updateWallPrimaryNote();
   }
 
@@ -3232,7 +3248,7 @@ class NeatThermostatPanel extends HTMLElement {
     if (!hosts.length) return;
     for (const host of hosts) {
       if (!host.querySelector("ha-entity-picker")) {
-        host.innerHTML = `<p class="entity-picker-loading">Loading entity picker…</p>`;
+        host.innerHTML = `<p class="entity-picker-loading">${t("picker.loading")}</p>`;
       }
     }
     try {
@@ -3240,7 +3256,7 @@ class NeatThermostatPanel extends HTMLElement {
     } catch (err) {
       if (gen !== this._settingsPickerMountGen) return;
       for (const host of hosts) {
-        host.innerHTML = `<p class="entity-picker-error">${this._escape(err?.message || "Entity picker unavailable")}</p>`;
+        host.innerHTML = `<p class="entity-picker-error">${this._escape(err?.message || t("picker.unavailable"))}</p>`;
       }
       return;
     }
@@ -3293,8 +3309,8 @@ class NeatThermostatPanel extends HTMLElement {
     single("temperature_sensor", { domains: ["sensor"], filter: temperatureSensorFilter });
     single("backup_temperature_sensor", { domains: ["sensor"], filter: temperatureSensorFilter });
     single("outdoor_temp_sensor", { domains: ["sensor"], filter: temperatureSensorFilter });
-    list("presence_entities", { domains: ["person", "device_tracker"], placeholder: "Add a person or tracker" });
-    list("window_sensors", { domains: ["binary_sensor"], placeholder: "Add a window or door sensor" });
+    list("presence_entities", { domains: ["person", "device_tracker"], placeholder: t("settings.presence.add") });
+    list("window_sensors", { domains: ["binary_sensor"], placeholder: t("settings.windows.add") });
   }
 
   _readSettingsPickerValues() {
@@ -3321,7 +3337,7 @@ class NeatThermostatPanel extends HTMLElement {
     const ids = this._settingsDraft?.[key] || [];
     const presence = key === "presence_entities";
     if (!ids.length) {
-      return `<p class="set-list-empty">${presence ? "Nobody added yet — Away mode is off until you add someone." : "No sensors added."}</p>`;
+      return `<p class="set-list-empty">${presence ? t("settings.presence.empty") : t("settings.windows.empty")}</p>`;
     }
     return this._renderEntityRows(ids, presence ? "presence" : "window", key);
   }
@@ -3333,15 +3349,15 @@ class NeatThermostatPanel extends HTMLElement {
       .map((id) => {
         const st = this._entityState(id);
         const name = st?.attributes?.friendly_name || id;
-        let stateText = st ? st.state : "missing";
+        let stateText = st ? st.state : t("entities.missing");
         let tone = "";
         if (!st || st.state === "unavailable" || st.state === "unknown") tone = "bad";
         else if (presence) {
           tone = st.state === "home" ? "good" : "away";
-          stateText = st.state === "home" ? "Home" : st.state === "not_home" ? "Away" : st.state;
+          stateText = st.state === "home" ? t("overview.stat.home") : st.state === "not_home" ? t("overview.stat.away") : st.state;
         } else if (mode === "window") {
           tone = st.state === "on" ? "warn" : "good";
-          stateText = st.state === "on" ? "Open" : "Closed";
+          stateText = st.state === "on" ? t("overview.stat.open") : t("overview.stat.closed");
         } else {
           stateText = `${st.state}${st.attributes?.unit_of_measurement || ""}`;
         }
@@ -3359,7 +3375,7 @@ class NeatThermostatPanel extends HTMLElement {
               <code>${this._escape(id)}</code>
             </div>
             <span class="set-state ${tone}">${this._escape(stateText)}</span>
-            <button type="button" class="set-remove" data-remove-key="${removeKey}" data-remove-id="${this._escape(id)}" aria-label="Remove ${this._escape(name)}" title="Remove">
+            <button type="button" class="set-remove" data-remove-key="${removeKey}" data-remove-id="${this._escape(id)}" aria-label="${this._escape(t("common.remove_name", { name }))}" title="${this._escape(t("common.remove"))}">
               <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
             </button>
           </div>`;
@@ -3377,7 +3393,7 @@ class NeatThermostatPanel extends HTMLElement {
   _renderSettings() {
     // Building the form before the config arrives would save blanks over the real settings.
     if (!this._state?.config) {
-      return `${this._pageHeader("Settings", "How Neat heats your home.")}<p class="muted">Loading settings…</p>`;
+      return `${this._pageHeader(t("settings.title"), t("settings.lead"))}<p class="muted">${t("settings.loading")}</p>`;
     }
     const cfg = this._cfg();
     if (!this._settingsDraft) this._settingsDraft = this._settingsDraftFromCfg();
@@ -3393,9 +3409,9 @@ class NeatThermostatPanel extends HTMLElement {
     const stepper = (id, value, unit, min, max, step = 1) => {
       const v = Math.min(max, Math.max(min, Math.round(Number(value) || min)));
       return `<div class="num-input stepper" data-stepper="${id}" data-min="${min}" data-max="${max}">
-        <button type="button" data-step="-${step}" aria-label="Less" ${v <= min ? "disabled" : ""}>−</button>
+        <button type="button" data-step="-${step}" aria-label="${this._escape(t("common.less"))}" ${v <= min ? "disabled" : ""}>−</button>
         <input id="${id}" type="number" inputmode="numeric" min="${min}" max="${max}" step="1" value="${v}" />
-        <button type="button" data-step="${step}" aria-label="More" ${v >= max ? "disabled" : ""}>+</button>
+        <button type="button" data-step="${step}" aria-label="${this._escape(t("common.more"))}" ${v >= max ? "disabled" : ""}>+</button>
         ${unit ? `<span>${unit}</span>` : ""}
       </div>`;
     };
@@ -3414,72 +3430,72 @@ class NeatThermostatPanel extends HTMLElement {
     const count = (key) => `<span class="badge" data-settings-count="${key}">${(this._settingsDraft[key] || []).length}</span>`;
 
     return `
-      ${this._pageHeader("Settings", "How Neat heats your home.")}
+      ${this._pageHeader(t("settings.title"), t("settings.lead"))}
       <div class="card">
-        ${head(flameSvg(), "heat", "Heating devices", "The relay Neat switches and the sensors it heats to.")}
+        ${head(flameSvg(), "heat", t("settings.devices.title"), t("settings.devices.sub"))}
         <div class="set-fields">
-          ${field("Boiler relay", "heater", "Changing it turns the old relay off first.")}
-          ${field("House temperature", "temperature_sensor", "The temperature Neat heats the house to.")}
-          ${field("Backup house temperature", "backup_temperature_sensor", "Optional — used if the house sensor stops reporting (e.g. a flat battery). Neat learns how far apart the two usually read and adjusts for it.")}
-          ${field("Outdoor temperature", "outdoor_temp_sensor", "Optional — lets preheat learn how cold weather slows warming up.")}
+          ${field(t("settings.heater"), "heater", t("settings.heater.desc"))}
+          ${field(t("settings.house_sensor"), "temperature_sensor", t("settings.house_sensor.desc"))}
+          ${field(t("settings.backup_sensor"), "backup_temperature_sensor", t("settings.backup_sensor.desc"))}
+          ${field(t("settings.outdoor_sensor"), "outdoor_temp_sensor", t("settings.outdoor_sensor.desc"))}
         </div>
         ${this._sensorStatusBanner()}
-        ${row("Sensor counts as dead after", "No report for this long means a flat battery or lost signal. Zigbee sensors check in at least every 15 min (5 min with faster updates).", stepper("sensorStale", cfg.sensor_stale_minutes ?? 60, "min", 15, 720, 15))}
-        ${row("Faster sensor updates", `Asks Zigbee (ZHA) house sensors to report every 0.1°C or 5 min instead of 0.5°C or 15 min, so Neat sees the house sooner and overshoots less. Uses a little more battery.${this._reportingStatusHtml()}`, toggle("fastReporting", cfg.fast_sensor_reporting))}
+        ${row(t("settings.stale"), t("settings.stale.desc"), stepper("sensorStale", cfg.sensor_stale_minutes ?? 60, t("unit.min"), 15, 720, 15))}
+        ${row(t("settings.fast_reporting"), `${t("settings.fast_reporting.desc")}${this._reportingStatusHtml()}`, toggle("fastReporting", cfg.fast_sensor_reporting))}
       </div>
       ${this._renderRoomsCard()}
       <div class="ov-grid">
         <div class="card">
-          ${head(ICONS.people, "intel", "Presence", "Who lives here. Neat switches to Away once everyone has left.", count("presence_entities"))}
+          ${head(ICONS.people, "intel", t("settings.presence.title"), t("settings.presence.sub"), count("presence_entities"))}
           <div class="set-list" data-settings-list="presence_entities">${this._renderSettingsList("presence_entities")}</div>
           <div class="entity-picker-host set-add" data-settings-picker="presence_entities"></div>
-          ${row("Away delay", "How long everyone must be gone before Away (Eco) starts.", num("awayDelay", cfg.away_delay_minutes ?? 20, "min", 'min="0" max="180" step="5"'))}
+          ${row(t("settings.away_delay"), t("settings.away_delay.desc"), num("awayDelay", cfg.away_delay_minutes ?? 20, t("unit.min"), 'min="0" max="180" step="5"'))}
         </div>
         <div class="card">
-          ${head(ICONS.window, "", "Windows & Doors", "When one of these stays open, the house stops calling for heat until it's shut.", count("window_sensors"))}
+          ${head(ICONS.window, "", t("settings.windows.title"), t("settings.windows.sub"), count("window_sensors"))}
           <div class="set-list" data-settings-list="window_sensors">${this._renderSettingsList("window_sensors")}</div>
           <div class="entity-picker-host set-add" data-settings-picker="window_sensors"></div>
-          ${row("Pause heating after", "How long a window or door must stay open first, so walking through a door doesn't stop the heating. Rooms' own sensors use it too. 0 = straight away.", stepper("windowDelay", cfg.window_open_delay_minutes ?? 3, "min", 0, 30, 1))}
+          ${row(t("settings.windows.pause_after"), t("settings.windows.pause_after.desc"), stepper("windowDelay", cfg.window_open_delay_minutes ?? 3, t("unit.min"), 0, 30, 1))}
         </div>
       </div>
       <div class="ov-grid">
         <div class="card">
-          ${head(ICONS.tune, "", "Temperatures & modes", "Setpoints for each preset.")}
-          ${row("Eco", "Energy-saving setpoint.", num("ecoTemp", cfg.eco_temp ?? 16, "°C", 'step="0.5"'))}
-          ${row("Boost", "Quick warm-up setpoint.", num("boostTemp", cfg.boost_temp ?? 22, "°C", 'step="0.5"'))}
-          ${row("Away", "Used while everyone is out.", num("awayTemp", cfg.away_temp ?? 15, "°C", 'step="0.5"'))}
-          ${row("Summer mode", "Never calls for heat (the safety floor still applies).", toggle("summerMode", cfg.summer_mode))}
+          ${head(ICONS.tune, "", t("settings.temps.title"), t("settings.temps.sub"))}
+          ${row(t("preset.eco"), t("settings.eco.desc"), num("ecoTemp", cfg.eco_temp ?? 16, "°C", 'step="0.5"'))}
+          ${row(t("preset.boost"), t("settings.boost.desc"), num("boostTemp", cfg.boost_temp ?? 22, "°C", 'step="0.5"'))}
+          ${row(t("preset.away"), t("settings.away.desc"), num("awayTemp", cfg.away_temp ?? 15, "°C", 'step="0.5"'))}
+          ${row(t("overview.stat.summer"), t("settings.summer.desc"), toggle("summerMode", cfg.summer_mode))}
         </div>
         <div class="card">
-          ${head(ICONS.sparkle, "intel", "Neat Intelligence", "Learning and comfort features for the house.")}
-          ${row("True Radiant", "Starts heating early so it's warm when a schedule block begins, and stops early by the learned radiator coast.", toggle("trueRadiant", cfg.true_radiant !== false))}
-          ${row("Auto-Schedule", "Adds or adjusts a schedule block when you make the same change at the same time on the same weekday, on two or more different days.", toggle("autoSchedule", cfg.auto_schedule))}
-          ${row("Leaf coaching", "Shows the leaf when you're saving energy.", toggle("leafEnabled", cfg.leaf_enabled !== false))}
-          ${row("Seasonal Savings", "For 3 weeks, lowers each schedule block 0.1°C every 3 days (up to 0.5°C). Turn the heat up during a block and that block eases off and is left alone. At the end the new temperatures are saved into your schedule. Needs the schedule on.", toggle("seasonalSavings", cfg.seasonal_savings))}
-          ${row("Cold-weather preheat", "Lets True Radiant start warming up to 4 hours before a schedule block (normally 2) when the house is slow to heat, so it's still warm on time. Cheaper than keeping the house warmer overnight.", toggle("adaptiveComfort", cfg.adaptive_comfort))}
+          ${head(ICONS.sparkle, "intel", t("intel.title"), t("settings.intel.sub"))}
+          ${row(t("intel.true_radiant"), t("settings.true_radiant.desc"), toggle("trueRadiant", cfg.true_radiant !== false))}
+          ${row(t("intel.auto_schedule"), t("settings.auto_schedule.desc"), toggle("autoSchedule", cfg.auto_schedule))}
+          ${row(t("intel.leaf"), t("settings.leaf.desc"), toggle("leafEnabled", cfg.leaf_enabled !== false))}
+          ${row(t("settings.seasonal"), t("settings.seasonal.desc"), toggle("seasonalSavings", cfg.seasonal_savings))}
+          ${row(t("settings.cold_preheat"), t("settings.cold_preheat.desc"), toggle("adaptiveComfort", cfg.adaptive_comfort))}
           ${this._warmupRow(row)}
         </div>
       </div>
       <div class="ov-grid">
         <div class="card">
-          ${head(ICONS.shield, "warn", "Safety temperature", "Frost and pipe protection.")}
-          ${row("Enabled", "Forces heat even in Away, Eco or Off if the house gets this cold.", toggle("safetyEnabled", cfg.safety_temp_enabled !== false))}
-          ${row("Minimum house temperature", "", num("safetyMin", cfg.safety_min_temp ?? 7, "°C", 'step="0.5" min="5" max="12"'))}
-          ${row("Wall panel PIN", "Unlocks wall panels that have Temperature lock on.", `<div class="num-input"><input id="wallPin" type="password" inputmode="numeric" maxlength="4" value="${this._escape(cfg.wall_pin || "")}" placeholder="••••" /></div>`)}
+          ${head(ICONS.shield, "warn", t("settings.safety.title"), t("settings.safety.sub"))}
+          ${row(t("schedule.enabled"), t("settings.safety.enabled.desc"), toggle("safetyEnabled", cfg.safety_temp_enabled !== false))}
+          ${row(t("settings.safety.min"), "", num("safetyMin", cfg.safety_min_temp ?? 7, "°C", 'step="0.5" min="5" max="12"'))}
+          ${row(t("settings.pin"), t("settings.pin.desc"), `<div class="num-input"><input id="wallPin" type="password" inputmode="numeric" maxlength="4" value="${this._escape(cfg.wall_pin || "")}" placeholder="••••" /></div>`)}
         </div>
         <div class="card">
-          ${head(ICONS.gauge, "", "Boiler behaviour", "Fine-tuning. The defaults suit most homes.")}
-          ${row("Cold tolerance", "Heat starts this far below the target.", num("coldTol", cfg.cold_tolerance ?? 0.3, "°C", 'step="0.1" min="0"'))}
-          ${row("Hot tolerance", "Heat stops this far above the target.", num("hotTol", cfg.hot_tolerance ?? 0.3, "°C", 'step="0.1" min="0"'))}
-          ${row("Minimum on time", "Shortest boiler run (1–30 min). 3–5 min suits most boilers.", stepper("minOnMin", cfg.min_on_minutes ?? 3, "min", 1, 30))}
-          ${row("Minimum off time", "Shortest rest between runs (1–30 min). 3–5 min suits most boilers.", stepper("minOffMin", cfg.min_off_minutes ?? 3, "min", 1, 30))}
+          ${head(ICONS.gauge, "", t("settings.boiler.title"), t("settings.boiler.sub"))}
+          ${row(t("settings.cold_tol"), t("settings.cold_tol.desc"), num("coldTol", cfg.cold_tolerance ?? 0.3, "°C", 'step="0.1" min="0"'))}
+          ${row(t("settings.hot_tol"), t("settings.hot_tol.desc"), num("hotTol", cfg.hot_tolerance ?? 0.3, "°C", 'step="0.1" min="0"'))}
+          ${row(t("settings.min_on"), t("settings.min_on.desc"), stepper("minOnMin", cfg.min_on_minutes ?? 3, t("unit.min"), 1, 30))}
+          ${row(t("settings.min_off"), t("settings.min_off.desc"), stepper("minOffMin", cfg.min_off_minutes ?? 3, t("unit.min"), 1, 30))}
           ${this._relayControlRow(row)}
         </div>
       </div>
       ${this._renderAlertsCard(cfg, { row, toggle, num, head })}
       <div class="save-bar">
-        <span class="muted">Changes apply when you save.</span>
-        <button class="primary" id="saveSettings">Save settings</button>
+        <span class="muted">${t("settings.save_hint")}</span>
+        <button class="primary" id="saveSettings">${t("settings.save")}</button>
       </div>
     `;
   }
@@ -3492,15 +3508,15 @@ class NeatThermostatPanel extends HTMLElement {
     const coast = Number(intel.coast_c ?? 0.1).toFixed(2);
     const coastSamples = Number(intel.coast_samples ?? 0);
     const learned = samples
-      ? `Learned ${rate} °C/h from ${samples} heat run${samples === 1 ? "" : "s"}.`
-      : `Using the default ${rate ?? 1.5} °C/h until it has learned from a few heat runs.`;
+      ? tn("settings.warmup.learned", samples, { rate })
+      : t("settings.warmup.default", { rate: rate ?? 1.5 });
     const coasted = coastSamples
-      ? `Radiators coast ${coast} °C after the boiler stops (${coastSamples} run${coastSamples === 1 ? "" : "s"}).`
-      : `Radiator coast: default ${coast} °C until measured.`;
+      ? tn("settings.warmup.coast_learned", coastSamples, { coast })
+      : t("settings.warmup.coast_default", { coast });
     return row(
-      "Warm-up rate & coast",
-      `${this._escape(learned)} ${this._escape(coasted)} Times preheating and when to stop. Reset if they were learned while the heating was faulty.`,
-      `<button type="button" class="secondary" id="resetWarmup" ${samples || coastSamples ? "" : "disabled"}>Reset</button>`
+      t("settings.warmup"),
+      `${this._escape(learned)} ${this._escape(coasted)} ${t("settings.warmup.desc")}`,
+      `<button type="button" class="secondary" id="resetWarmup" ${samples || coastSamples ? "" : "disabled"}>${t("common.reset")}</button>`
     );
   }
 
@@ -3508,13 +3524,14 @@ class NeatThermostatPanel extends HTMLElement {
   _sensorStatusBanner() {
     const s = this._live().house_sensor || {};
     const name = (id) => this._escape(this._hass?.states?.[id]?.attributes?.friendly_name || id || "");
-    const since = s.since ? ` since ${this._escape(this._ehClock(s.since))}` : "";
+    const time = s.since ? this._escape(this._ehClock(s.since)) : "";
     if (s.source === "backup") {
       const off = Number(s.offset_c || 0);
-      return `<div class="banner warn">${name(s.main)} ${s.since ? `hasn't reported${since}` : "isn't reporting"} — Neat is using ${name(s.backup)}${Math.abs(off) >= 0.05 ? ` (adjusted ${off > 0 ? "+" : ""}${off.toFixed(1)}°C)` : ""}. Check its battery.</div>`;
+      const adjusted = Math.abs(off) >= 0.05 ? t("sensor_banner.adjusted", { offset: `${off > 0 ? "+" : ""}${off.toFixed(1)}` }) : "";
+      return `<div class="banner warn">${t(s.since ? "sensor_banner.backup_since" : "sensor_banner.backup", { main: name(s.main), backup: name(s.backup), time, adjusted })}</div>`;
     }
     if (s.source === "none") {
-      return `<div class="banner err">${s.since ? `No house sensor has reported${since}` : "No house sensor is reporting"} — Neat is heating on a timer (20 min each hour during schedule times, plus frost-protection runs). Check the sensor's battery.</div>`;
+      return `<div class="banner err">${t(s.since ? "sensor_banner.none_since" : "sensor_banner.none", { time })}</div>`;
     }
     return "";
   }
@@ -3525,10 +3542,10 @@ class NeatThermostatPanel extends HTMLElement {
     const lines = Object.entries(rep).map(([id, r]) => {
       const name = this._escape(this._hass?.states?.[id]?.attributes?.friendly_name || id);
       let text;
-      if (!r.supported) text = "not a Zigbee (ZHA) sensor — unchanged";
-      else if (r.ok) text = r.fast ? "reporting every 0.1°C / 5 min" : "back to ZHA's normal reporting";
-      else if (r.pending) text = `${this._escape(r.error || "waiting for ZHA")}…`;
-      else text = `not set yet: ${this._escape(r.error || "unknown error")}`;
+      if (!r.supported) text = t("reporting.not_zha");
+      else if (r.ok) text = r.fast ? t("reporting.fast") : t("reporting.normal");
+      else if (r.pending) text = `${this._escape(r.error || t("reporting.waiting"))}…`;
+      else text = t("reporting.not_set", { error: this._escape(r.error || t("reporting.unknown_error")) });
       return `<br><span class="${r.supported && !r.ok && !r.pending ? "warn-text" : ""}">${name}: ${text}</span>`;
     });
     return lines.join("");
@@ -3539,15 +3556,15 @@ class NeatThermostatPanel extends HTMLElement {
     const until = this._live().control_released_until;
     if (until) {
       return row(
-        "Boiler relay",
-        `<span class="badge warn">Released</span> Switch the relay by hand to test it. Neat takes control back at ${this._escape(this._ehClock(until))}.`,
-        `<button type="button" class="primary" id="takeControl">Take control now</button>`
+        t("settings.heater"),
+        `<span class="badge warn">${t("relay.released")}</span> ${t("relay.released.desc", { time: this._escape(this._ehClock(until)) })}`,
+        `<button type="button" class="primary" id="takeControl">${t("relay.take_control")}</button>`
       );
     }
     return row(
-      "Boiler relay",
-      "Neat keeps the relay in step with the heating. Release it for up to an hour to test the relay by hand; Neat then takes it back automatically.",
-      `<button type="button" class="secondary" id="releaseControl">Release for testing</button>`
+      t("settings.heater"),
+      t("relay.desc"),
+      `<button type="button" class="secondary" id="releaseControl">${t("relay.release")}</button>`
     );
   }
 
@@ -3563,7 +3580,7 @@ class NeatThermostatPanel extends HTMLElement {
     const saved = Array.isArray(cfg.alert_notify) ? cfg.alert_notify : [];
     const available = new Set(Object.keys(this._hass?.services?.notify || {}));
     const label = (name) =>
-      name.startsWith("mobile_app_") ? `Phone: ${name.slice(11).replace(/_/g, " ")}` : name.replace(/_/g, " ");
+      name.startsWith("mobile_app_") ? t("alerts.phone", { name: name.slice(11).replace(/_/g, " ") }) : name.replace(/_/g, " ");
     const services = this._notifyServices(saved);
     const list = services.length
       ? services
@@ -3572,19 +3589,19 @@ class NeatThermostatPanel extends HTMLElement {
             <div class="set-row">
               <div class="set-row-text">
                 <div class="set-row-name">${this._escape(label(name))}</div>
-                <div class="set-row-desc"><code>notify.${this._escape(name)}</code>${available.has(name) ? "" : " · no longer exists"}</div>
+                <div class="set-row-desc"><code>notify.${this._escape(name)}</code>${available.has(name) ? "" : t("alerts.gone")}</div>
               </div>
               <div class="set-row-control"><label class="switch"><input type="checkbox" data-alert-notify="${this._escape(name)}" ${saved.includes(name) ? "checked" : ""} /><span></span></label></div>
             </div>`
           )
           .join("")
-      : `<p class="muted">No notify services found. Install the Home Assistant Companion app on a phone to get alerts there.</p>`;
+      : `<p class="muted">${t("alerts.none")}</p>`;
     return `
       <div class="card">
-        ${head(ICONS.bell, "warn", "Alerts", "Tells you when the heating isn't working. Alerts always appear in Home Assistant's notifications too.")}
-        ${row("House not warming", "Alert when the boiler has been called this long without the house warming up.", toggle("noHeatAlert", cfg.no_heat_alert !== false))}
-        ${row("Alert after", "Boiler-on time, added up across runs.", num("noHeatMinutes", cfg.no_heat_alert_minutes ?? 60, "min", 'step="10" min="20" max="240"'))}
-        <div class="set-field-label" style="margin-top:10px">Send to</div>
+        ${head(ICONS.bell, "warn", t("alerts.title"), t("alerts.sub"))}
+        ${row(t("alerts.not_warming"), t("alerts.not_warming.desc"), toggle("noHeatAlert", cfg.no_heat_alert !== false))}
+        ${row(t("alerts.after"), t("alerts.after.desc"), num("noHeatMinutes", cfg.no_heat_alert_minutes ?? 60, t("unit.min"), 'step="10" min="20" max="240"'))}
+        <div class="set-field-label" style="margin-top:10px">${t("alerts.send_to")}</div>
         <div class="notify-list">${list}</div>
       </div>`;
   }
@@ -3632,18 +3649,18 @@ class NeatThermostatPanel extends HTMLElement {
       <div class="shell${this._narrow ? " narrow" : ""}">
         <header class="page-header">
           <div class="panel-header-top">
-            <button type="button" class="panel-ha-menu-btn" id="haMenu" aria-label="Open menu">
+            <button type="button" class="panel-ha-menu-btn" id="haMenu" aria-label="${this._escape(t("app.menu"))}">
               <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="currentColor" d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2Z"/></svg>
             </button>
             <div class="panel-brand-row">
               <div class="panel-brand-mark" aria-hidden="true">${logoSvg()}</div>
               <div>
-                <div class="panel-brand-title">Neat Thermostat</div>
-                <div class="panel-brand-sub">Intelligent Heating Control</div>
+                <div class="panel-brand-title">${t("app.title")}</div>
+                <div class="panel-brand-sub">${t("app.subtitle")}</div>
               </div>
             </div>
           </div>
-          <nav class="tab-bar" aria-label="Neat sections">${tabs}</nav>
+          <nav class="tab-bar" aria-label="${this._escape(t("app.sections"))}">${tabs}</nav>
         </header>
         <div class="main">
           <div class="main-inner">
@@ -3652,7 +3669,7 @@ class NeatThermostatPanel extends HTMLElement {
             ${body}
           </div>
         </div>
-        <p class="panel-build-footer">neat ${PANEL_VERSION}</p>
+        <p class="panel-build-footer">${t("app.footer", { version: PANEL_VERSION })}</p>
       </div>
       ${this._renderDialog()}
     `;
@@ -3694,7 +3711,7 @@ class NeatThermostatPanel extends HTMLElement {
     });
 
     this.shadowRoot.getElementById("resetWarmup")?.addEventListener("click", async () => {
-      if (!window.confirm("Forget the learned warm-up rate and radiator coast? Neat goes back to its defaults and learns again from the next heat runs.")) return;
+      if (!window.confirm(t("settings.warmup.reset_confirm"))) return;
       try {
         await this._ws("neat_thermostat/reset_warmup");
         // Update just this row: a full redraw would drop unsaved Settings edits.
@@ -3706,9 +3723,9 @@ class NeatThermostatPanel extends HTMLElement {
         tmp.innerHTML = html;
         btn?.closest(".set-row")?.querySelector(".set-row-desc")?.replaceWith(tmp.querySelector(".set-row-desc"));
         if (btn) btn.disabled = true;
-        this._showToast("Warm-up rate reset");
+        this._showToast(t("settings.warmup.reset_done"));
       } catch (e) {
-        this._showToast(`Couldn't reset it: ${e?.message || e}`, "err");
+        this._showToast(t("settings.warmup.reset_failed", { error: e?.message || e }), "err");
       }
     });
 
@@ -3734,22 +3751,22 @@ class NeatThermostatPanel extends HTMLElement {
         await this._loadState();
         this._showToast(done);
       } catch (e) {
-        this._showToast(`Couldn't do that: ${e?.message || e}`, "err");
+        this._showToast(t("relay.failed", { error: e?.message || e }), "err");
       }
     };
     this.shadowRoot.getElementById("releaseControl")?.addEventListener("click", () => {
-      if (!window.confirm("Release the boiler relay for an hour? Neat stops switching it so you can test it by hand, then takes it back automatically.")) return;
-      void relayAction("neat_thermostat/release_control", "Relay released for an hour");
+      if (!window.confirm(t("relay.release_confirm"))) return;
+      void relayAction("neat_thermostat/release_control", t("relay.released_toast"));
     });
     this.shadowRoot.getElementById("takeControl")?.addEventListener("click", () => {
-      void relayAction("neat_thermostat/take_control", "Neat has the relay again");
+      void relayAction("neat_thermostat/take_control", t("relay.taken_toast"));
     });
 
     this.shadowRoot.getElementById("stopSeasonal")?.addEventListener("click", async () => {
       try {
         await this._ws("neat_thermostat/stop_seasonal_savings");
         await this._loadState();
-        this._showToast("Seasonal Savings stopped");
+        this._showToast(t("seasonal.stopped"));
       } catch (e) {
         this._error = String(e.message || e);
         this._showToast(this._error, "err");
@@ -3762,21 +3779,21 @@ class NeatThermostatPanel extends HTMLElement {
       const room = this._focusRoom();
       const entity = room ? this._roomEntity(room) : this._neatClimateEntities().home;
       if (!entity) {
-        this._showToast(room ? `Neat's ${room.name} thermostat isn't available` : "Neat's house thermostat isn't available", "err");
+        this._showToast(room ? t("dial.room_unavailable", { name: room.name }) : t("dial.house_unavailable"), "err");
         return;
       }
       try {
         await this._hass.callService("climate", service, { entity_id: entity, ...data });
         // The entity updates straight away; redraw once HA has pushed it.
         setTimeout(() => this._render(), 250);
-        this._showToast(room ? `${room.name} · ${label}` : label);
+        this._showToast(room ? t("hero.toast.room", { name: room.name, label }) : label);
       } catch (e) {
-        this._showToast(`Couldn't change it: ${e?.message || e}`, "err");
+        this._showToast(t("hero.toast.failed", { error: e?.message || e }), "err");
       }
     };
     this.shadowRoot.querySelectorAll("[data-hero-hvac]").forEach((btn) => {
       btn.addEventListener("click", () =>
-        heroCall("set_hvac_mode", { hvac_mode: btn.dataset.heroHvac }, btn.dataset.heroHvac === "off" ? "Heating off" : "Heating on")
+        heroCall("set_hvac_mode", { hvac_mode: btn.dataset.heroHvac }, btn.dataset.heroHvac === "off" ? t("hero.toast.heating_off") : t("hero.toast.heating_on"))
       );
     });
     this.shadowRoot.querySelectorAll("[data-hero-preset]").forEach((btn) => {
@@ -3784,7 +3801,7 @@ class NeatThermostatPanel extends HTMLElement {
         const room = this._focusRoom();
         const current = this._entityState(room ? this._roomEntity(room) : this._neatClimateEntities().home)?.attributes?.preset_mode;
         const next = current === btn.dataset.heroPreset ? "none" : btn.dataset.heroPreset;
-        heroCall("set_preset_mode", { preset_mode: next }, next === "none" ? "Preset cleared" : `${next[0].toUpperCase() + next.slice(1)} on`);
+        heroCall("set_preset_mode", { preset_mode: next }, next === "none" ? t("hero.toast.preset_cleared") : t("hero.toast.preset_on", { preset: t(`preset.${next}`) }));
       });
     });
     this.shadowRoot.querySelectorAll(".dial-step").forEach((btn) => {
@@ -3820,24 +3837,24 @@ class NeatThermostatPanel extends HTMLElement {
     this.shadowRoot.getElementById("schedCopy")?.addEventListener("click", () => {
       const day = this._selectedDay;
       this._clipboard = JSON.parse(JSON.stringify(this._cfg().schedule?.[day] || []));
-      this._flash = `Copied ${DAY_SHORT[day]} schedule`;
+      this._flash = t("schedule.copied", { day: DAY_SHORT[day] });
       this._render();
     });
     this.shadowRoot.getElementById("schedPaste")?.addEventListener("click", () => {
       if (!this._clipboard) {
-        this._error = "Nothing copied yet";
+        this._error = t("schedule.nothing_copied");
         this._render();
         return;
       }
       this._mutateSchedule((schedule) => {
         schedule[this._selectedDay] = JSON.parse(JSON.stringify(this._clipboard));
       });
-      this._flash = `Pasted onto ${DAY_SHORT[this._selectedDay]}`;
+      this._flash = t("schedule.pasted", { day: DAY_SHORT[this._selectedDay] });
       this._render();
     });
     this.shadowRoot.getElementById("schedRemove")?.addEventListener("click", () => {
       if (!this._selectedPoint) {
-        this._error = "Select an orange setpoint to remove";
+        this._error = t("schedule.select_to_remove");
         this._render();
         return;
       }
@@ -3848,7 +3865,7 @@ class NeatThermostatPanel extends HTMLElement {
         schedule[day] = blocks;
       });
       this._selectedPoint = null;
-      this._flash = "Setpoint removed (save to keep)";
+      this._flash = t("schedule.removed");
       this._render();
     });
     this.shadowRoot.getElementById("schedAdd")?.addEventListener("click", () => {
@@ -3863,7 +3880,7 @@ class NeatThermostatPanel extends HTMLElement {
         schedule[day] = blocks;
       });
       this._selectedDay = day;
-      this._flash = "Setpoint added (save to keep)";
+      this._flash = t("schedule.added");
       this._render();
     });
 
@@ -3876,7 +3893,7 @@ class NeatThermostatPanel extends HTMLElement {
             schedule_enabled: this.shadowRoot.getElementById("schedEnabled").value === "true",
           });
           await this._loadState();
-          this._showToast("Schedule saved");
+          this._showToast(t("schedule.saved"));
         } catch (e) {
           this._error = String(e.message || e);
           this._showToast(this._error, "err");
@@ -3890,7 +3907,7 @@ class NeatThermostatPanel extends HTMLElement {
       saveSettings.addEventListener("click", async () => {
         const devices = this._readSettingsPickerValues();
         if (!devices.heater || !devices.temperature_sensor) {
-          this._showToast("Pick a boiler relay and a house temperature sensor", "err");
+          this._showToast(t("settings.need_devices"), "err");
           return;
         }
         try {
@@ -3931,7 +3948,7 @@ class NeatThermostatPanel extends HTMLElement {
           });
           this._settingsDraft = null;
           await this._loadState();
-          this._showToast("Settings saved");
+          this._showToast(t("settings.saved"));
         } catch (e) {
           this._error = String(e.message || e);
           this._showToast(this._error, "err");
@@ -3951,7 +3968,7 @@ class NeatThermostatPanel extends HTMLElement {
         const extras = (draft.extras || []).map((s) => String(s).trim()).filter(Boolean);
         const callsForHeat = this.shadowRoot.getElementById("roomCallsForHeat")?.checked !== false;
         if (!name || !trv) {
-          this._error = "Room name and TRV required";
+          this._error = t("room_dlg.required");
           this._showToast(this._error, "err");
           return;
         }
@@ -3987,7 +4004,7 @@ class NeatThermostatPanel extends HTMLElement {
           this._editingRoomId = null;
           this._roomDraft = { name: "", trv: "", sensor: "", extras: [], calls_for_heat: true };
           await this._loadState();
-          this._showToast(`Room ${name} saved`);
+          this._showToast(t("room_dlg.saved", { name }));
         } catch (e) {
           this._error = String(e.message || e);
           this._showToast(this._error, "err");
@@ -4000,7 +4017,7 @@ class NeatThermostatPanel extends HTMLElement {
         const id = this._editingRoomId;
         if (!id) return;
         const room = (this._cfg().rooms || []).find((r) => r.id === id);
-        if (!window.confirm(`Delete room “${room?.name || id}”?`)) return;
+        if (!window.confirm(t("room_dlg.delete_confirm", { name: room?.name || id }))) return;
         const rooms = (this._cfg().rooms || []).filter((r) => r.id !== id);
         try {
           await this._ws("neat_thermostat/update_rooms", { rooms });
@@ -4008,7 +4025,7 @@ class NeatThermostatPanel extends HTMLElement {
           this._editingRoomId = null;
           this._roomDraft = { name: "", trv: "", sensor: "", extras: [], calls_for_heat: true };
           await this._loadState();
-          this._showToast("Room deleted");
+          this._showToast(t("room_dlg.deleted"));
         } catch (e) {
           this._error = String(e.message || e);
           this._showToast(this._error, "err");
@@ -4076,7 +4093,7 @@ class NeatThermostatPanel extends HTMLElement {
             await this._ws("neat_thermostat/update_rooms", { rooms });
             await this._loadState();
             const next = rooms.find((r) => r.id === id);
-            this._showToast(`Call for heat ${next?.calls_for_heat !== false ? "On" : "Off"} for ${next?.name || id}`);
+            this._showToast(t(next?.calls_for_heat !== false ? "rooms.calls_on" : "rooms.calls_off", { name: next?.name || id }));
           } catch (e) {
             this._showToast(String(e.message || e), "err");
             this._render();
@@ -4091,17 +4108,17 @@ class NeatThermostatPanel extends HTMLElement {
         const id = slugId(this.shadowRoot.getElementById("wpId").value);
         const label = this.shadowRoot.getElementById("wpLabel").value.trim() || id;
         if (!id) {
-          this._showToast("Give the panel a name", "err");
+          this._showToast(t("wall_dlg.need_name"), "err");
           return;
         }
         if (!this._wallEditingId && (this._cfg().wall_panels || []).some((p) => p.id === id)) {
-          this._showToast(`A panel with ID “${id}” already exists`, "err");
+          this._showToast(t("wall_dlg.id_exists", { id }), "err");
           return;
         }
         const helperHost = String(this.shadowRoot.getElementById("wpHelperHost")?.value ?? this._wallDraft.helperHost ?? "").trim();
         if (helperHost && !/[.:a-z]/i.test(helperHost)) {
           // Seen 14 Oct: the pairing code typed into the address box.
-          this._showToast("Panel IP address looks like a code — enter an address like 192.168.1.50, or leave it blank", "err");
+          this._showToast(t("wall_dlg.host_looks_like_code"), "err");
           return;
         }
         const draft = this._readWallPickerValues();
@@ -4145,7 +4162,7 @@ class NeatThermostatPanel extends HTMLElement {
           this._wallEditingId = null;
           await this._loadState();
           await this._loadKiosk();
-          this._showToast(`Wall panel ${label} saved`);
+          this._showToast(t("wall_dlg.saved", { name: label }));
         } catch (e) {
           this._error = String(e.message || e);
           this._showToast(this._error, "err");
@@ -4167,13 +4184,13 @@ class NeatThermostatPanel extends HTMLElement {
       this.shadowRoot.getElementById("deleteWallPanel")?.addEventListener("click", async () => {
         const id = this._wallEditingId;
         const panel = (this._cfg().wall_panels || []).find((p) => p.id === id);
-        if (!id || !window.confirm(`Delete wall panel “${panel?.label || id}”? The device will need setting up again.`)) return;
+        if (!id || !window.confirm(t("wall_dlg.delete_confirm", { name: panel?.label || id }))) return;
         try {
           await this._ws("neat_thermostat/delete_wall_panel", { panel_id: id });
           this._dialogKind = null;
           this._wallEditingId = null;
           await this._loadState();
-          this._showToast("Wall panel deleted");
+          this._showToast(t("wall_dlg.deleted"));
         } catch (e) {
           this._showToast(String(e.message || e), "err");
         }
