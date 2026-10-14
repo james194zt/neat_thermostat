@@ -25,6 +25,12 @@ def test_shape_round_trips(shape):
     assert WallPanelConfig.from_dict(panel.to_dict()).model == shape
 
 
+def test_pairing_code_in_the_address_box_is_ignored():
+    assert WallPanelConfig.from_dict({"id": "hallway", "helper_host": "931710"}).helper_host == ""
+    assert WallPanelConfig.from_dict({"id": "hallway", "helper_host": " 192.168.1.50 "}).helper_host == "192.168.1.50"
+    assert WallPanelConfig.from_dict({"id": "hallway", "helper_host": "panel.local"}).helper_host == "panel.local"
+
+
 def test_fully_kiosk_is_on_by_default_and_off_keeps_the_device():
     assert WallPanelConfig.from_dict({"id": "hallway", "kiosk_device": "abc"}).linked_kiosk_device == "abc"
     off = WallPanelConfig.from_dict({"id": "hallway", "kiosk_device": "abc", "kiosk_enabled": False})

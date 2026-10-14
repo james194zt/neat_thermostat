@@ -128,6 +128,13 @@ def _wall_shape(value: Any) -> str:
     return shape if shape in WALL_PANEL_SHAPES else DEFAULT_WALL_PANEL_MODEL
 
 
+def _helper_host(value: Any) -> str:
+    """Helper address override. Digits only is a pairing code typed in the wrong box
+    (seen 14 Oct: "931710"), not an address: ignore it so the Fully address is used."""
+    host = str(value or "").strip()
+    return "" if host.isdigit() else host
+
+
 @dataclass
 class WallPanelConfig:
     """Central config for one physical wall screen."""
@@ -171,7 +178,7 @@ class WallPanelConfig:
             kiosk_device=str(data.get("kiosk_device") or ""),
             kiosk_overrides=clean_settings(data.get("kiosk_overrides")),
             kiosk_enabled=bool(data.get("kiosk_enabled", True)),
-            helper_host=str(data.get("helper_host") or "").strip(),
+            helper_host=_helper_host(data.get("helper_host")),
         )
 
 

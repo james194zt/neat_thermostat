@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.44
+ * @version 0.6.45
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.44";
+const PANEL_VERSION = "0.6.45";
 // New-room defaults (match RoomConfig / DEFAULT_TARGET_TEMP / DEFAULT_ECO_TEMP).
 const ROOM_TEMP_DEFAULTS = { follow_house: true, house_offset: 0, hold_ends: "house_change", target_temp: 20, eco_temp: 16 };
 const HEAT_ORANGE = "#F57C00";
@@ -2388,12 +2388,12 @@ class NeatThermostatPanel extends HTMLElement {
     return `
       <div class="dlg-section" id="wpHelperSection" ${show ? "" : "hidden"}>
         <div class="dlg-section-title">Sonoff NSPanel Pro</div>
-        <div class="set-field">
-          <div class="set-field-label">Panel address</div>
-          <input id="wpHelperHost" placeholder="${this._escape(h?.host || "From the Fully Kiosk device")}" value="${this._escape(d.helperHost || "")}" />
-          <div class="set-row-desc">Blank uses the linked Fully Kiosk device's address.</div>
-        </div>
         ${body}
+        <div class="set-field">
+          <div class="set-field-label">Panel IP address (optional)</div>
+          <input id="wpHelperHost" placeholder="${this._escape(h?.host || "From the Fully Kiosk device")}" value="${this._escape(d.helperHost || "")}" />
+          <div class="set-row-desc">Only if Neat can't find the panel — blank uses the linked Fully Kiosk device's address. Not the pairing code.</div>
+        </div>
       </div>`;
   }
 
@@ -4030,6 +4030,12 @@ class NeatThermostatPanel extends HTMLElement {
           this._showToast(`A panel with ID “${id}” already exists`, "err");
           return;
         }
+        const helperHost = String(this.shadowRoot.getElementById("wpHelperHost")?.value ?? this._wallDraft.helperHost ?? "").trim();
+        if (helperHost && !/[.:a-z]/i.test(helperHost)) {
+          // Seen 14 Oct: the pairing code typed into the address box.
+          this._showToast("Panel IP address looks like a code — enter an address like 192.168.1.50, or leave it blank", "err");
+          return;
+        }
         const draft = this._readWallPickerValues();
         // Blank = Neat's house climate (resolved to its real entity id by the backend).
         const primary = String(draft.primary || "").trim();
@@ -4054,7 +4060,7 @@ class NeatThermostatPanel extends HTMLElement {
               temperature_lock: Boolean(this.shadowRoot.getElementById("wpLock")?.checked),
               model: wallModel(this.shadowRoot.getElementById("wpModel")?.value).id,
               kiosk_enabled: this.shadowRoot.getElementById("wpKioskEnabled")?.checked ?? this._wallDraft.kioskEnabled !== false,
-              helper_host: String(this.shadowRoot.getElementById("wpHelperHost")?.value ?? this._wallDraft.helperHost ?? "").trim(),
+              helper_host: helperHost,
               ...(this.shadowRoot.getElementById("wpKioskDevice")
                 ? {
                     kiosk_device: this.shadowRoot.getElementById("wpKioskDevice").value,

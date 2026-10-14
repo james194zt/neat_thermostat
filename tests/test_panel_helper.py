@@ -129,6 +129,9 @@ async def test_pairing_before_saving_the_screen_type(hass, setup, aioclient_mock
     state = await coord.async_helper_pair("hallway", "123456")
     assert state["paired"] and state["summary"]["version"] == "0.2.0"
     assert "hallway" in await coord.async_helpers_state()
+    # Pairing records the type: only an NSPanel Pro has a helper.
+    assert coord.get_wall_panel("hallway").model == "nspanel_pro"
+    assert coord.get_wall_panel("hallway").helper_host == HOST
 
 
 def test_summary_spots_a_showing_button():

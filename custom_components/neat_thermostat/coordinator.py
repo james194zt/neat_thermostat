@@ -1485,6 +1485,13 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise panel_helper.HelperError(f"unknown panel {panel_id}")
         key = await panel_helper.async_pair(self.hass, panel_helper.helper_host(self.hass, panel), code)
         await self._async_save_helper_key(panel_id, key)
+        if panel.model != panel_helper.HELPER_MODEL:
+            # Only an NSPanel Pro has a helper to pair with: record the type too.
+            panels = [
+                {**p.to_dict(), "model": panel_helper.HELPER_MODEL} if p.id == panel_id else p.to_dict()
+                for p in self.config.wall_panels
+            ]
+            await self.async_save_config({"wall_panels": panels})
         await self.async_helper_poll(panel_id)
         return (await self.async_helpers_state()).get(panel_id) or {"paired": True}
 
