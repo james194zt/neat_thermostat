@@ -1,13 +1,13 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.45
+ * @version 0.6.46
  */
 const NAV = [
   { id: "overview", label: "Overview" },
   { id: "energy", label: "Energy" },
   { id: "schedule", label: "Schedule" },
-  { id: "wall_panels", label: "Wall panels" },
+  { id: "wall_panels", label: "Wall Panels" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.45";
+const PANEL_VERSION = "0.6.46";
 // New-room defaults (match RoomConfig / DEFAULT_TARGET_TEMP / DEFAULT_ECO_TEMP).
 const ROOM_TEMP_DEFAULTS = { follow_house: true, house_offset: 0, hold_ends: "house_change", target_temp: 20, eco_temp: 16 };
 const HEAT_ORANGE = "#F57C00";
@@ -2287,11 +2287,11 @@ class NeatThermostatPanel extends HTMLElement {
             <span class="card-icon">${ICONS.panel}</span>
             <div class="wp-card-text">
               <div class="wp-card-name">${this._escape(p.label || p.id)}</div>
-              <div class="wp-card-meta">${this._escape(model.label)} · ${model.ratio} · device ID <code>${this._escape(p.id)}</code></div>
-              <div class="wp-card-meta">Controls <strong>${this._escape(primaryName)}</strong>${notNeat ? ` <span class="set-state warn">not Neat</span>` : ""}${p.temperature_lock ? ` · <span class="set-state">Locked</span>` : ""}</div>
+              <div class="wp-card-meta">Screen: ${this._escape(model.label)} (${model.ratio}) · Device ID: <code>${this._escape(p.id)}</code></div>
+              <div class="wp-card-meta">Controls: <strong>${this._escape(primaryName)}</strong>${notNeat ? ` <span class="set-state warn">Not Neat</span>` : ""}${p.temperature_lock ? ` <span class="set-state">Locked</span>` : ""}</div>
               <div class="wp-card-meta">${this._reportedScreenHtml(p)}</div>
               ${p.model === "nspanel_pro" || this._helperState(p.id)?.paired ? `<div class="wp-card-meta">${this._helperLineHtml(p.id)}</div>` : ""}
-              ${p.kiosk_enabled === false ? "" : `<div class="wp-card-meta kiosk-line" data-kiosk-pill="${this._escape(p.id)}">${this._kioskPillHtml(p.id)}</div>`}
+              ${p.kiosk_enabled === false ? "" : `<div class="wp-card-meta kiosk-line">Kiosk: <span data-kiosk-pill="${this._escape(p.id)}">${this._kioskPillHtml(p.id)}</span></div>`}
             </div>
             <button class="secondary compact edit-panel" type="button" data-id="${this._escape(p.id)}">Edit</button>
           </div>`;
@@ -2300,23 +2300,23 @@ class NeatThermostatPanel extends HTMLElement {
     void neat;
     return `
       <div class="page-head-row">
-        ${this._pageHeader("Wall panels", "Each wall screen or tablet. On the device, you only pick which panel it is.")}
-        <button class="primary" id="addWallPanel" type="button">${ICONS.plus}Add wall panel</button>
+        ${this._pageHeader("Wall Panels", "Each wall screen or tablet. On the device, you only pick which panel it is.")}
+        <button class="primary" id="addWallPanel" type="button">${ICONS.plus}Add Wall Panel</button>
       </div>
       ${panels.length
         ? `${this._renderWallPreview(panels)}<div class="wp-list">${cards}</div>${panels.some((p) => p.kiosk_enabled !== false) ? `<div style="height:14px"></div>${this._renderKioskCard()}` : ""}`
-        : `<div class="card empty-state"><p class="muted" style="margin:0">No wall panels yet.</p><button class="primary" id="addWallPanelEmpty" type="button">${ICONS.plus}Add your first wall panel</button></div>`}
+        : `<div class="card empty-state"><p class="muted" style="margin:0">No wall panels yet.</p><button class="primary" id="addWallPanelEmpty" type="button">${ICONS.plus}Add Your First Wall Panel</button></div>`}
     `;
   }
 
   /** What the panel itself reported: its screen and the shape that makes it. */
   _reportedScreenHtml(panel) {
     const s = this._state?.wall_screens?.[panel.id];
-    if (!s?.width || !s?.height) return `<span class="muted">Screen size shows here once the panel has opened Neat</span>`;
+    if (!s?.width || !s?.height) return `Reported Screen: <span class="muted">Shows once the panel has opened Neat</span>`;
     const shape = wallShapeFor(s.width, s.height);
-    const size = `${s.width}×${s.height}`;
-    if (shape.id === wallShapeId(panel.model)) return `Panel reports ${size} <span class="set-state good">${shape.label}</span>`;
-    return `Panel reports ${size} — that's <strong>${shape.label}</strong> <span class="set-state warn" title="Only the preview uses this; the panel already lays itself out to fit">preview set to ${this._escape(wallModel(panel.model).label)}</span>`;
+    const size = `${s.width} × ${s.height}`;
+    if (shape.id === wallShapeId(panel.model)) return `Reported Screen: ${size} <span class="set-state good">${shape.label}</span>`;
+    return `Reported Screen: ${size} (${shape.label}) <span class="set-state warn" title="Only the preview uses this; the panel already lays itself out to fit">Preview Is ${this._escape(wallModel(panel.model).label)}</span>`;
   }
 
   _helperState(panelId) {
@@ -2326,17 +2326,26 @@ class NeatThermostatPanel extends HTMLElement {
   /** One line for the panel's card: is the helper there, and is it doing its job. */
   _helperLineHtml(panelId) {
     const h = this._helperState(panelId);
-    if (!h?.paired) return `<span class="set-state">Helper not paired</span>`;
+    if (!h?.paired) return `Helper: <span class="set-state">Not Paired</span>`;
     const s = h.summary || {};
-    if (h.error) return `<span class="set-state bad" title="${this._escape(h.error)}">Helper not answering</span>`;
-    const bits = [`Helper ${this._escape(s.version || "?")}`];
-    if (s.update_state && !/^Updated|^Installed/.test(s.update_state)) bits.push(this._escape(s.update_state));
-    else if (h.shipped_version && s.version && h.shipped_version !== s.version) bits.push(`update to ${this._escape(h.shipped_version)} on its way`);
-    if (s.wifi_rssi != null) bits.push(`Wi-Fi ${s.wifi_rssi} dBm`);
+    if (h.error) return `Helper: <span class="set-state bad" title="${this._escape(h.error)}">Not Answering</span>`;
+    if (!s.version) return `Helper: <span class="muted">Checking…</span>`;
+    const bits = [`Helper: ${this._escape(s.version)}`];
+    if (s.update_state && !/^Updated|^Installed/.test(s.update_state)) bits.push(`Update: ${this._escape(s.update_state)}`);
+    else if (h.shipped_version && h.shipped_version !== s.version) bits.push(`Update: ${this._escape(h.shipped_version)} on its way`);
+    if (s.wifi_rssi != null) bits.push(`Wi-Fi: ${s.wifi_rssi} dBm`);
     const pill = s.return_button_showing
-      ? `<span class="set-state warn">Sonoff button showing</span>`
+      ? `<span class="set-state warn">Sonoff Button Showing</span>`
       : `<span class="set-state good">OK</span>`;
     return `${bits.join(" · ")} ${pill}`;
+  }
+
+  /** "Updated to 0.2.1 at 2026-10-14T14:09:53" → "14 Oct, 14:09"; other states as they are. */
+  _helperUpdateText(state) {
+    const m = /at (\d{4})-(\d\d)-(\d\d)T(\d\d:\d\d)/.exec(state || "");
+    if (!m) return state || "";
+    const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(m[2]) - 1];
+    return `${Number(m[3])} ${month}, ${m[4]}`;
   }
 
   _renderHelperSection(d) {
@@ -2367,13 +2376,20 @@ class NeatThermostatPanel extends HTMLElement {
         </div>`;
     } else {
       const status = h.error
-        ? `<span class="set-state bad">Not answering</span> ${this._escape(h.error)}`
-        : `<span class="set-state good">Connected</span> Helper ${this._escape(s.version || "?")}${s.device_owner ? " · updates itself" : " · updates need a tap on the panel"}${s.update_state ? ` · ${this._escape(s.update_state)}` : ""}`;
+        ? `Status: <span class="set-state bad">Not Answering</span> ${this._escape(h.error)}`
+        : !s.version
+          ? `Status: <span class="muted">Checking…</span>`
+          : [
+              `Status: <span class="set-state good">Connected</span>`,
+              `Helper: ${this._escape(s.version)}`,
+              `Updates: ${s.device_owner ? "Automatic" : "Need a tap on the panel"}`,
+              s.update_state && `Last Update: ${this._escape(this._helperUpdateText(s.update_state))}`,
+            ].filter(Boolean).join(" · ");
       const health = [
-        s.model && `${this._escape(s.model)}, Android ${this._escape(s.android || "?")}`,
-        s.wifi_rssi != null && `Wi-Fi ${s.wifi_rssi} dBm`,
-        s.uptime_s != null && `up ${this._formatEta(s.uptime_s / 60)?.replace("~", "") || "—"}`,
-        s.foreground_app && `in front: ${s.foreground_app === "de.ozerov.fully" ? "Fully Kiosk" : this._escape(s.foreground_app)}`,
+        s.model && `Device: ${this._escape(s.model)} (Android ${this._escape(s.android || "—")})`,
+        s.wifi_rssi != null && `Wi-Fi: ${s.wifi_rssi} dBm`,
+        s.uptime_s != null && `Uptime: ${this._formatEta(s.uptime_s / 60)?.replace("~", "") || "—"}`,
+        s.foreground_app && `In Front: ${s.foreground_app === "de.ozerov.fully" ? "Fully Kiosk" : this._escape(s.foreground_app)}`,
       ].filter(Boolean).join(" · ");
       body = `
         <div class="set-row-desc">${status}</div>
@@ -2469,11 +2485,11 @@ class NeatThermostatPanel extends HTMLElement {
 
   _kioskPillHtml(panelId) {
     const s = this._kiosk?.panels?.[panelId];
-    if (!s || !s.linked) return `<span class="set-state">Kiosk not linked</span>`;
-    if (!s.online) return `<span class="set-state bad">Panel offline</span>`;
+    if (!s || !s.linked) return `<span class="set-state">Not Linked</span>`;
+    if (!s.online) return `<span class="set-state bad">Panel Offline</span>`;
     const pill = s.in_sync
-      ? `<span class="set-state good">In sync</span>`
-      : `<span class="set-state warn" title="${this._escape(this._kioskDriftText(s))}">${s.page_ok === false ? "Wrong page" : "Out of sync"}</span>`;
+      ? `<span class="set-state good">In Sync</span>`
+      : `<span class="set-state warn" title="${this._escape(this._kioskDriftText(s))}">${s.page_ok === false ? "Wrong Page" : "Out of Sync"}</span>`;
     return `${pill}
       ${s.in_sync ? "" : `<button class="linkish kiosk-act" type="button" data-kiosk-sync="${this._escape(panelId)}">Sync now</button>`}
       <button class="linkish kiosk-act" type="button" data-kiosk-reload="${this._escape(panelId)}">Reload</button>`;
@@ -2644,7 +2660,7 @@ class NeatThermostatPanel extends HTMLElement {
     const cfg = this._cfg();
     return this._dialog({
       icon: ICONS.panel,
-      title: editing ? `Edit ${this._escape(d.label || editing)}` : "Add a wall panel",
+      title: editing ? `Edit ${this._escape(d.label || editing)}` : "Add a Wall Panel",
       sub: editing ? "Change what this panel shows and controls." : "Set up a new wall screen or tablet. You'll pick this panel on the device.",
       body: `
         <div class="dlg-section">
@@ -2714,7 +2730,7 @@ class NeatThermostatPanel extends HTMLElement {
         ${editing ? `<button class="danger" id="deleteWallPanel" type="button">Delete</button>` : ""}
         <span style="flex:1"></span>
         <button class="secondary" data-close-dialog type="button">Cancel</button>
-        <button class="primary" id="saveWallPanel" type="button">${editing ? "Save changes" : "Add wall panel"}</button>`,
+        <button class="primary" id="saveWallPanel" type="button">${editing ? "Save changes" : "Add Wall Panel"}</button>`,
     });
   }
 
