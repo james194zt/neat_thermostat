@@ -121,8 +121,10 @@ def default_schedule() -> dict[str, list[dict[str, Any]]]:
 
 
 def _wall_shape(value: Any) -> str:
-    """Screen shape; hardware models from before 0.6.40 (all 480×480) become square."""
+    """Screen type; the pre-0.6.40 NSPanel Pro model id becomes the NSPanel Pro type."""
     shape = str(value or "")
+    if shape == "nspanel_pro_gen2":
+        return "nspanel_pro"
     return shape if shape in WALL_PANEL_SHAPES else DEFAULT_WALL_PANEL_MODEL
 
 
@@ -144,6 +146,8 @@ class WallPanelConfig:
     # Off for screens that don't run Fully Kiosk: Neat then leaves the panel alone,
     # but remembers the linked device for when it's switched back on.
     kiosk_enabled: bool = True
+    # Neat Panel Helper address (NSPanel Pro); blank = the linked Fully device's address.
+    helper_host: str = ""
 
     @property
     def linked_kiosk_device(self) -> str:
@@ -167,6 +171,7 @@ class WallPanelConfig:
             kiosk_device=str(data.get("kiosk_device") or ""),
             kiosk_overrides=clean_settings(data.get("kiosk_overrides")),
             kiosk_enabled=bool(data.get("kiosk_enabled", True)),
+            helper_host=str(data.get("helper_host") or "").strip(),
         )
 
 

@@ -10,7 +10,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 
-from . import kiosk
+from . import kiosk, panel_helper
 from .const import DOMAIN, HEATER_DOMAINS
 from .models import RoomConfig, WallPanelConfig, default_schedule
 
@@ -48,6 +48,9 @@ def async_register_ws_handlers(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_kiosk_apply)
     websocket_api.async_register_command(hass, ws_kiosk_read)
     websocket_api.async_register_command(hass, ws_kiosk_reload)
+    websocket_api.async_register_command(hass, ws_helper_pair)
+    websocket_api.async_register_command(hass, ws_helper_unpair)
+    websocket_api.async_register_command(hass, ws_helper_config)
 
 
 @websocket_api.websocket_command(
@@ -71,8 +74,79 @@ async def ws_get_state(
             "live": coordinator.data,
             "entry_id": coordinator.entry.entry_id,
             "wall_screens": await coordinator.async_wall_screens(),
+            "wall_helpers": await coordinator.async_helpers_state(),
         },
     )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "neat_thermostat/helper_pair",
+        vol.Optional("entry_id"): cv.string,
+        vol.Required("panel_id"): cv.string,
+        vol.Required("code"): cv.string,
+    }
+)
+@websocket_api.async_response
+async def ws_helper_pair(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
+        return
+    try:
+        result = await coordinator.async_helper_pair(msg["panel_id"], msg["code"])
+    except panel_helper.HelperError as err:
+        connection.send_error(msg["id"], "helper_error", str(err))
+        return
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "neat_thermostat/helper_unpair",
+        vol.Optional("entry_id"): cv.string,
+        vol.Required("panel_id"): cv.string,
+    }
+)
+@websocket_api.async_response
+async def ws_helper_unpair(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
+        return
+    await coordinator.async_helper_unpair(msg["panel_id"])
+    connection.send_result(msg["id"], {})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "neat_thermostat/helper_config",
+        vol.Optional("entry_id"): cv.string,
+        vol.Required("panel_id"): cv.string,
+        vol.Optional("hide_return_button"): cv.boolean,
+        vol.Optional("cpu_lock"): cv.boolean,
+        vol.Optional("wifi_lock"): cv.boolean,
+    }
+)
+@websocket_api.async_response
+async def ws_helper_config(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
+        return
+    settings = {k: msg[k] for k in ("hide_return_button", "cpu_lock", "wifi_lock") if k in msg}
+    try:
+        result = await coordinator.async_helper_config(msg["panel_id"], settings)
+    except panel_helper.HelperError as err:
+        connection.send_error(msg["id"], "helper_error", str(err))
+        return
+    connection.send_result(msg["id"], result)
 
 
 @websocket_api.websocket_command(

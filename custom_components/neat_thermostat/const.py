@@ -63,7 +63,8 @@ DEFAULT_NO_HEAT_ALERT_MINUTES = 60
 DEFAULT_SENSOR_STALE_MINUTES = 60
 # Wall panel screen shape (stored as "model"): picks the preview size in the panel JS.
 # The wall app lays itself out from its real screen, so this never changes the panel.
-WALL_PANEL_SHAPES = ("square", "tall", "landscape", "wide")
+# "nspanel_pro" is a square Sonoff NSPanel Pro, which can also run the Neat Panel Helper.
+WALL_PANEL_SHAPES = ("square", "tall", "landscape", "wide", "nspanel_pro")
 DEFAULT_WALL_PANEL_MODEL = "square"
 # Seasonal Savings: over this many days, take this much off each schedule
 # block every few days, up to the max; blocks the user turns up are left be.

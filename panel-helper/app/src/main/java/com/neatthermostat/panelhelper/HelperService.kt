@@ -41,6 +41,10 @@ class HelperService : Service() {
         startedAt = System.currentTimeMillis()
         startForeground(NOTIFICATION_ID, notification())
         prefs = HelperPrefs(this)
+        if (prefs.updateTarget != 0L && prefs.updateTarget <= BuildConfig.VERSION_CODE) {
+            prefs.updateState = "Updated to ${BuildConfig.VERSION_NAME} at ${java.time.LocalDateTime.now().withNano(0)}"
+            prefs.updateTarget = 0L
+        }
         guard = AccessibilityGuard(this, prefs).also { it.start() }
         sensors = PanelSensors(this) { if (prefs.wakeOnApproach) wakeScreen() }.also { it.start() }
         applyStayAwake()
@@ -69,24 +73,26 @@ class HelperService : Service() {
 
     // ---- Stay awake ----
     private fun applyStayAwake() {
-        if (prefs.stayAwake) {
-            if (cpuLock == null) {
-                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-                cpuLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "neat:helper").apply {
-                    setReferenceCounted(false)
-                    acquire()
-                }
+        if (prefs.cpuLock && cpuLock == null) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            cpuLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "neat:helper").apply {
+                setReferenceCounted(false)
+                acquire()
             }
-            if (wifiLock == null) {
-                val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-                @Suppress("DEPRECATION")
-                wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "neat:helper").apply {
-                    setReferenceCounted(false)
-                    acquire()
-                }
+        } else if (!prefs.cpuLock) {
+            cpuLock?.takeIf { it.isHeld }?.release()
+            cpuLock = null
+        }
+        if (prefs.wifiLock && wifiLock == null) {
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            @Suppress("DEPRECATION")
+            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "neat:helper").apply {
+                setReferenceCounted(false)
+                acquire()
             }
-        } else {
-            releaseLocks()
+        } else if (!prefs.wifiLock) {
+            wifiLock?.takeIf { it.isHeld }?.release()
+            wifiLock = null
         }
     }
 
@@ -142,7 +148,12 @@ class HelperService : Service() {
     private fun handle(method: String, path: String, body: JSONObject): JSONObject = when {
         method == "GET" && path == "/status" -> status()
         method == "POST" && path == "/config" -> {
-            if (body.has("stay_awake")) prefs.stayAwake = body.getBoolean("stay_awake")
+            if (body.has("stay_awake")) { // 0.1.x name: both locks
+                prefs.cpuLock = body.getBoolean("stay_awake")
+                prefs.wifiLock = body.getBoolean("stay_awake")
+            }
+            if (body.has("cpu_lock")) prefs.cpuLock = body.getBoolean("cpu_lock")
+            if (body.has("wifi_lock")) prefs.wifiLock = body.getBoolean("wifi_lock")
             if (body.has("wake_on_approach")) prefs.wakeOnApproach = body.getBoolean("wake_on_approach")
             if (body.has("blocked_services")) {
                 prefs.blockedServices = if (body.isNull("blocked_services")) null else {
@@ -156,6 +167,9 @@ class HelperService : Service() {
         }
         method == "POST" && path == "/guard/apply" -> JSONObject().put("changed", guard.enforce("asked by Neat")).put("guard", guard.status())
         method == "POST" && path == "/fully/launch" -> JSONObject().put("launched", launchFully())
+        method == "POST" && path == "/update" -> Updater.start(
+            this, body.getString("url"), body.getString("sha256"), body.getLong("version_code"),
+        )
         else -> throw NoSuchElementException()
     }
 
@@ -168,6 +182,11 @@ class HelperService : Service() {
         return JSONObject()
             .put("app", "neat-panel-helper")
             .put("version", BuildConfig.VERSION_NAME)
+            .put("version_code", BuildConfig.VERSION_CODE)
+            .put("device_owner", AdminReceiver.isDeviceOwner(this))
+            .put("update", JSONObject()
+                .put("state", prefs.updateState)
+                .put("target", prefs.updateTarget))
             .put("device", JSONObject()
                 .put("manufacturer", Build.MANUFACTURER)
                 .put("model", Build.MODEL)
@@ -178,7 +197,8 @@ class HelperService : Service() {
             .put("helper_running_s", (System.currentTimeMillis() - startedAt) / 1000)
             .put("screen_on", pm.isInteractive)
             .put("stay_awake", JSONObject()
-                .put("enabled", prefs.stayAwake)
+                .put("cpu_lock_enabled", prefs.cpuLock)
+                .put("wifi_lock_enabled", prefs.wifiLock)
                 .put("cpu_lock", cpuLock?.isHeld == true)
                 .put("wifi_lock", wifiLock?.isHeld == true))
             .put("wifi", JSONObject()

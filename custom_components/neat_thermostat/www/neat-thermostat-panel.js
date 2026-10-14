@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.41
+ * @version 0.6.42
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.41";
+const PANEL_VERSION = "0.6.42";
 // New-room defaults (match RoomConfig / DEFAULT_TARGET_TEMP / DEFAULT_ECO_TEMP).
 const ROOM_TEMP_DEFAULTS = { follow_house: true, house_offset: 0, hold_ends: "house_change", target_temp: 20, eco_temp: 16 };
 const HEAT_ORANGE = "#F57C00";
@@ -61,10 +61,18 @@ const WALL_MODELS = [
   { id: "tall", label: "Tall", ratio: "9:16", width: 405, height: 720, hint: "tall in-wall panels, upright tablets" },
   { id: "landscape", label: "Landscape", ratio: "16:10", width: 960, height: 600, hint: "tablets on their side" },
   { id: "wide", label: "Wide", ratio: "2:1", width: 720, height: 360, hint: "panoramic panels" },
+  // A square panel with extras: the Neat Panel Helper app (hides Sonoff's floating button, health).
+  { id: "nspanel_pro", label: "Sonoff NSPanel Pro", ratio: "1:1", width: 480, height: 480, hint: "480×480, with the Neat Panel Helper", shape: "square" },
 ];
 
 function wallModel(id) {
   return WALL_MODELS.find((m) => m.id === id) || WALL_MODELS[0];
+}
+
+/** The plain shape a screen type lays out as (NSPanel Pro → square). */
+function wallShapeId(id) {
+  const m = wallModel(id);
+  return m.shape || m.id;
 }
 
 /** The shape a reported screen is (same thresholds as the wall app's layouts). */
@@ -2282,6 +2290,7 @@ class NeatThermostatPanel extends HTMLElement {
               <div class="wp-card-meta">${this._escape(model.label)} · ${model.ratio} · device ID <code>${this._escape(p.id)}</code></div>
               <div class="wp-card-meta">Controls <strong>${this._escape(primaryName)}</strong>${notNeat ? ` <span class="set-state warn">not Neat</span>` : ""}${p.temperature_lock ? ` · <span class="set-state">Locked</span>` : ""}</div>
               <div class="wp-card-meta">${this._reportedScreenHtml(p)}</div>
+              ${p.model === "nspanel_pro" ? `<div class="wp-card-meta">${this._helperLineHtml(p.id)}</div>` : ""}
               ${p.kiosk_enabled === false ? "" : `<div class="wp-card-meta kiosk-line" data-kiosk-pill="${this._escape(p.id)}">${this._kioskPillHtml(p.id)}</div>`}
             </div>
             <button class="secondary compact edit-panel" type="button" data-id="${this._escape(p.id)}">Edit</button>
@@ -2306,8 +2315,138 @@ class NeatThermostatPanel extends HTMLElement {
     if (!s?.width || !s?.height) return `<span class="muted">Screen size shows here once the panel has opened Neat</span>`;
     const shape = wallShapeFor(s.width, s.height);
     const size = `${s.width}×${s.height}`;
-    if (shape.id === wallModel(panel.model).id) return `Panel reports ${size} <span class="set-state good">${shape.label}</span>`;
+    if (shape.id === wallShapeId(panel.model)) return `Panel reports ${size} <span class="set-state good">${shape.label}</span>`;
     return `Panel reports ${size} — that's <strong>${shape.label}</strong> <span class="set-state warn" title="Only the preview uses this; the panel already lays itself out to fit">preview set to ${this._escape(wallModel(panel.model).label)}</span>`;
+  }
+
+  _helperState(panelId) {
+    return this._state?.wall_helpers?.[panelId] || null;
+  }
+
+  /** One line for the panel's card: is the helper there, and is it doing its job. */
+  _helperLineHtml(panelId) {
+    const h = this._helperState(panelId);
+    if (!h?.paired) return `<span class="set-state">Helper not paired</span>`;
+    const s = h.summary || {};
+    if (h.error) return `<span class="set-state bad" title="${this._escape(h.error)}">Helper not answering</span>`;
+    const bits = [`Helper ${this._escape(s.version || "?")}`];
+    if (s.update_state && !/^Updated|^Installed/.test(s.update_state)) bits.push(this._escape(s.update_state));
+    else if (h.shipped_version && s.version && h.shipped_version !== s.version) bits.push(`update to ${this._escape(h.shipped_version)} on its way`);
+    if (s.wifi_rssi != null) bits.push(`Wi-Fi ${s.wifi_rssi} dBm`);
+    const pill = s.return_button_showing
+      ? `<span class="set-state warn">Sonoff button showing</span>`
+      : `<span class="set-state good">OK</span>`;
+    return `${bits.join(" · ")} ${pill}`;
+  }
+
+  _renderHelperSection(d) {
+    const editing = this._wallEditingId;
+    const show = d.model === "nspanel_pro";
+    const h = editing ? this._helperState(editing) : null;
+    const s = h?.summary || {};
+    const switchRow = (id, name, desc, on) => `
+        <div class="set-row">
+          <div class="set-row-text"><div class="set-row-name">${name}</div><div class="set-row-desc">${desc}</div></div>
+          <div class="set-row-control"><label class="switch"><input type="checkbox" id="${id}" ${on ? "checked" : ""} /><span></span></label></div>
+        </div>`;
+    let body;
+    if (!editing) {
+      body = `<div class="set-row-desc">Add the panel first, then pair it with the Neat Panel Helper here.</div>`;
+    } else if (!h?.paired) {
+      body = `
+        <div class="set-row-desc">The Neat Panel Helper is a small app on the panel: it keeps Sonoff's floating "Return to main program" button hidden and tells Neat how the panel is doing. Open it on the panel and enter the code it shows.</div>
+        <div class="set-fields">
+          <div class="set-field">
+            <div class="set-field-label">Code on the panel</div>
+            <input id="wpHelperCode" inputmode="numeric" maxlength="7" placeholder="123 456" autocomplete="off" />
+          </div>
+          <div class="set-field">
+            <div class="set-field-label">&nbsp;</div>
+            <button class="secondary" id="wpHelperPair" type="button">Pair</button>
+          </div>
+        </div>`;
+    } else {
+      const status = h.error
+        ? `<span class="set-state bad">Not answering</span> ${this._escape(h.error)}`
+        : `<span class="set-state good">Connected</span> Helper ${this._escape(s.version || "?")}${s.device_owner ? " · updates itself" : " · updates need a tap on the panel"}${s.update_state ? ` · ${this._escape(s.update_state)}` : ""}`;
+      const health = [
+        s.model && `${this._escape(s.model)}, Android ${this._escape(s.android || "?")}`,
+        s.wifi_rssi != null && `Wi-Fi ${s.wifi_rssi} dBm`,
+        s.uptime_s != null && `up ${this._formatEta(s.uptime_s / 60)?.replace("~", "") || "—"}`,
+        s.foreground_app && `in front: ${s.foreground_app === "de.ozerov.fully" ? "Fully Kiosk" : this._escape(s.foreground_app)}`,
+      ].filter(Boolean).join(" · ");
+      body = `
+        <div class="set-row-desc">${status}</div>
+        ${health ? `<div class="set-row-desc">${health}</div>` : ""}
+        ${switchRow("wpHelperHide", "Hide Sonoff's floating button", s.return_button_found
+          ? `Switches "Return to main program" off whenever Sonoff turns it back on${s.times_hidden ? ` (done ${s.times_hidden}× since the helper started)` : ""}.${s.can_hide ? "" : " Needs its one-time permission — see the helper's screen."}`
+          : "Sonoff's button wasn't found on this panel.", s.hide_return_button !== false)}
+        ${switchRow("wpHelperCpu", "Keep the panel running with the screen off", "A CPU wake lock. Off by default: on the NSPanel Pro a held lock stopped the screen turning off.", Boolean(s.cpu_lock))}
+        ${switchRow("wpHelperWifi", "Keep Wi-Fi at full power with the screen off", "A Wi-Fi lock. Same caveat — try one at a time and check the screen still turns off.", Boolean(s.wifi_lock))}
+        <div class="form-actions"><span style="flex:1"></span><button class="linkish" id="wpHelperUnpair" type="button">Unpair</button></div>`;
+    }
+    return `
+      <div class="dlg-section" id="wpHelperSection" ${show ? "" : "hidden"}>
+        <div class="dlg-section-title">Sonoff NSPanel Pro</div>
+        <div class="set-field">
+          <div class="set-field-label">Panel address</div>
+          <input id="wpHelperHost" placeholder="${this._escape(h?.host || "From the Fully Kiosk device")}" value="${this._escape(d.helperHost || "")}" />
+          <div class="set-row-desc">Blank uses the linked Fully Kiosk device's address.</div>
+        </div>
+        ${body}
+      </div>`;
+  }
+
+  async _helperAction(type, payload, okText) {
+    try {
+      const result = await this._ws(type, { panel_id: this._wallEditingId, ...payload });
+      if (this._state) this._state.wall_helpers = { ...(this._state.wall_helpers || {}), [this._wallEditingId]: result };
+      this._showToast(okText);
+      return result;
+    } catch (e) {
+      this._showToast(`Helper: ${e?.message || e}`, "err");
+      return null;
+    }
+  }
+
+  _refreshHelperSection() {
+    const el = this.shadowRoot.getElementById("wpHelperSection");
+    if (!el) return;
+    el.outerHTML = this._renderHelperSection(this._wallDraft);
+    this._bindHelperSection();
+  }
+
+  _bindHelperSection() {
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    $("wpHelperPair")?.addEventListener("click", async () => {
+      const code = String($("wpHelperCode")?.value || "").replace(/\s+/g, "");
+      if (!/^\d{6}$/.test(code)) {
+        this._showToast("Enter the 6-digit code shown on the panel", "err");
+        return;
+      }
+      if (await this._helperAction("neat_thermostat/helper_pair", { code }, "Paired with the panel's helper")) this._refreshHelperSection();
+    });
+    $("wpHelperUnpair")?.addEventListener("click", async () => {
+      if (!window.confirm("Unpair the helper? It keeps running on the panel; pair again with a new code.")) return;
+      try {
+        await this._ws("neat_thermostat/helper_unpair", { panel_id: this._wallEditingId });
+        if (this._state?.wall_helpers?.[this._wallEditingId]) this._state.wall_helpers[this._wallEditingId].paired = false;
+        this._refreshHelperSection();
+      } catch (e) {
+        this._showToast(`Couldn't unpair: ${e?.message || e}`, "err");
+      }
+    });
+    const toggle = (id, key, label) =>
+      $(id)?.addEventListener("change", async (ev) => {
+        const on = ev.target.checked;
+        if (!(await this._helperAction("neat_thermostat/helper_config", { [key]: on }, `${label} ${on ? "on" : "off"}`))) ev.target.checked = !on;
+      });
+    toggle("wpHelperHide", "hide_return_button", "Hide Sonoff's button");
+    toggle("wpHelperCpu", "cpu_lock", "CPU wake lock");
+    toggle("wpHelperWifi", "wifi_lock", "Wi-Fi lock");
+    $("wpHelperHost")?.addEventListener("input", (ev) => {
+      this._wallDraft.helperHost = ev.target.value;
+    });
   }
 
   async _loadKiosk(pillsOnly = false) {
@@ -2528,6 +2667,7 @@ class NeatThermostatPanel extends HTMLElement {
             <div class="set-row-desc">Sizes the preview. The panel fits itself to its real screen, and turns with a tablet.${editing && this._state?.wall_screens?.[editing] ? ` ${this._reportedScreenHtml({ id: editing, model: d.model })}.` : ""}</div>
           </div>
         </div>
+        ${this._renderHelperSection(d)}
         <div class="dlg-section">
           <div class="dlg-section-title">Controls</div>
           <div class="set-field">
@@ -2643,6 +2783,7 @@ class NeatThermostatPanel extends HTMLElement {
       kioskDevice: panel?.kiosk_device || (!panel && this._kiosk?.devices?.length === 1 ? this._kiosk.devices[0].id : ""),
       kioskOverrides: { ...(panel?.kiosk_overrides || {}) },
       kioskEnabled: panel?.kiosk_enabled !== false,
+      helperHost: panel?.helper_host || "",
     };
     this._openDialog("wall");
   }
@@ -3913,6 +4054,7 @@ class NeatThermostatPanel extends HTMLElement {
               temperature_lock: Boolean(this.shadowRoot.getElementById("wpLock")?.checked),
               model: wallModel(this.shadowRoot.getElementById("wpModel")?.value).id,
               kiosk_enabled: this.shadowRoot.getElementById("wpKioskEnabled")?.checked ?? this._wallDraft.kioskEnabled !== false,
+              helper_host: String(this.shadowRoot.getElementById("wpHelperHost")?.value ?? this._wallDraft.helperHost ?? "").trim(),
               ...(this.shadowRoot.getElementById("wpKioskDevice")
                 ? {
                     kiosk_device: this.shadowRoot.getElementById("wpKioskDevice").value,
@@ -3936,6 +4078,13 @@ class NeatThermostatPanel extends HTMLElement {
           this._render();
         }
       });
+      // Picking Sonoff NSPanel Pro shows its section straight away.
+      this.shadowRoot.getElementById("wpModel")?.addEventListener("change", (ev) => {
+        this._wallDraft.model = ev.target.value;
+        const section = this.shadowRoot.getElementById("wpHelperSection");
+        if (section) section.hidden = ev.target.value !== "nspanel_pro";
+      });
+      this._bindHelperSection();
       this.shadowRoot.getElementById("wpKioskEnabled")?.addEventListener("change", (ev) => {
         this._wallDraft.kioskEnabled = ev.target.checked;
         const body = this.shadowRoot.getElementById("wpKioskBody");

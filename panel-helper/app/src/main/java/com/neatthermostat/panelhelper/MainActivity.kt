@@ -69,11 +69,17 @@ class MainActivity : Activity() {
         text("Panel address: ${ip()}:${StatusServer.PORT}", 14f, muted = true)
 
         val missing = HelperService.missingPermissions(this)
+        val owner = AdminReceiver.isDeviceOwner(this)
         gap()
         text("One-time setup", 16f, bold = true)
-        if (missing.isEmpty()) {
-            text("All set.", 14f, colour = "#52C41A")
-        } else {
+        if (missing.isEmpty() && owner) {
+            text("All set. Neat keeps this helper up to date.", 14f, colour = "#52C41A")
+        }
+        if (!owner) {
+            text("For silent updates from Neat (needs no accounts on the panel):", 14f, muted = true)
+            text("adb shell dpm set-device-owner $packageName/.AdminReceiver", 12f, mono = true)
+        }
+        if (missing.isNotEmpty()) {
             text("Run these once over adb (they stay after a reboot):", 14f, muted = true)
             val pkg = packageName
             for (perm in missing) {

@@ -52,7 +52,7 @@ from .intelligence import (
     update_warmup_from_cycle,
 )
 from .control import boiler_cycle_guard, house_calls_for_heat, next_schedule_change, room_calls_for_heat
-from . import kiosk, zigbee_reporting
+from . import kiosk, panel_helper, zigbee_reporting
 from .sensor_health import (
     NO_HEARTBEAT_STALE_MINUTES,
     OFFSET_FRESH_MINUTES,
@@ -105,6 +105,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._wall_screens: dict[str, dict[str, Any]] | None = None
         # A panel coming back changes several entities at once: one version refresh at a time.
         self._version_refresh_lock = asyncio.Lock()
+        # Neat Panel Helper: last status per panel (display only), last update request sent.
+        self._helper_status: dict[str, dict[str, Any]] = {}
+        self._helper_update_sent: dict[str, tuple[Any, datetime]] = {}
         # Last seen heater availability, so a dropout is logged once.
         self._heater_available = True
         self._main_hvac_mode = "heat"
@@ -1455,6 +1458,122 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         stored = await self._kiosk_store.async_load() or {}
         await self._kiosk_store.async_save({**stored, "screens": screens})
 
+    # ---- Neat Panel Helper (NSPanel Pro) ----
+    async def _async_helper_keys(self) -> dict[str, str]:
+        """Pairing keys by panel id (kept in .storage, never in the config entry)."""
+        stored = await self._kiosk_store.async_load() or {}
+        return dict(stored.get("helper_keys") or {})
+
+    async def _async_save_helper_key(self, panel_id: str, key: str | None) -> None:
+        stored = await self._kiosk_store.async_load() or {}
+        keys = dict(stored.get("helper_keys") or {})
+        if key:
+            keys[panel_id] = key
+        else:
+            keys.pop(panel_id, None)
+        await self._kiosk_store.async_save({**stored, "helper_keys": keys})
+
+    def _helper_panels(self) -> list[WallPanelConfig]:
+        return [p for p in self.config.wall_panels if p.model == panel_helper.HELPER_MODEL]
+
+    async def async_helper_pair(self, panel_id: str, code: str) -> dict[str, Any]:
+        panel = self.get_wall_panel(panel_id)
+        if panel is None:
+            raise panel_helper.HelperError(f"unknown panel {panel_id}")
+        key = await panel_helper.async_pair(self.hass, panel_helper.helper_host(self.hass, panel), code)
+        await self._async_save_helper_key(panel_id, key)
+        await self.async_helper_poll(panel_id)
+        return (await self.async_helpers_state())[panel_id]
+
+    async def async_helper_unpair(self, panel_id: str) -> None:
+        await self._async_save_helper_key(panel_id, None)
+        self._helper_status.pop(panel_id, None)
+
+    async def async_helper_config(self, panel_id: str, settings: dict[str, Any]) -> dict[str, Any]:
+        """Change the helper's own settings (hide the return button, stay-awake locks)."""
+        panel = self.get_wall_panel(panel_id)
+        key = (await self._async_helper_keys()).get(panel_id, "")
+        if panel is None or not key:
+            raise panel_helper.HelperError("pair with the helper first")
+        body: dict[str, Any] = {}
+        if "hide_return_button" in settings:
+            # null = automatic (Sonoff's return button), [] = leave every service alone
+            body["blocked_services"] = None if settings["hide_return_button"] else []
+        for flag in ("cpu_lock", "wifi_lock"):
+            if flag in settings:
+                body[flag] = bool(settings[flag])
+        await panel_helper.async_request(
+            self.hass, panel_helper.helper_host(self.hass, panel), "POST", "/config", key=key, body=body
+        )
+        await self.async_helper_poll(panel_id)
+        return (await self.async_helpers_state())[panel_id]
+
+    async def async_helper_poll(self, panel_id: str | None = None) -> None:
+        """Read each paired helper's status; give it the shipped version when it's behind."""
+        from .panel import WWW_DIR
+
+        keys = await self._async_helper_keys()
+        bundled = await self.hass.async_add_executor_job(panel_helper.bundled_helper, WWW_DIR)
+        for panel in self._helper_panels():
+            if panel_id and panel.id != panel_id:
+                continue
+            key = keys.get(panel.id)
+            if not key:
+                continue
+            host = panel_helper.helper_host(self.hass, panel)
+            entry: dict[str, Any] = {"checked_at": dt_util.utcnow().isoformat()}
+            try:
+                status = await panel_helper.async_request(self.hass, host, "GET", "/status", key=key)
+                entry["summary"] = panel_helper.summary(status)
+                entry["error"] = ""
+            except panel_helper.HelperError as err:
+                entry["summary"] = (self._helper_status.get(panel.id) or {}).get("summary") or {}
+                entry["error"] = str(err)
+            self._helper_status[panel.id] = entry
+            have = (entry.get("summary") or {}).get("version_code")
+            if not entry["error"] and bundled and have is not None and int(have) < int(bundled["version_code"]):
+                await self._async_helper_update(panel, host, key, bundled)
+
+    async def _async_helper_update(
+        self, panel: WallPanelConfig, host: str, key: str, bundled: dict[str, Any]
+    ) -> None:
+        """Ask a helper to install the shipped version (at most once an hour per version)."""
+        last = self._helper_update_sent.get(panel.id)
+        now = dt_util.utcnow()
+        if last and last[0] == bundled["version_code"] and now - last[1] < timedelta(hours=1):
+            return
+        url = panel_helper.apk_url(self.hass, panel)
+        if not url:
+            return
+        self._helper_update_sent[panel.id] = (bundled["version_code"], now)
+        try:
+            await panel_helper.async_request(
+                self.hass, host, "POST", "/update", key=key,
+                body={"url": url, "sha256": bundled["sha256"], "version_code": bundled["version_code"]},
+            )
+            _LOGGER.info("Neat: asked the helper on %s to update to %s", panel.id, bundled.get("version"))
+        except panel_helper.HelperError as err:
+            _LOGGER.warning("Neat: couldn't update the helper on %s: %s", panel.id, err)
+
+    async def async_helpers_state(self) -> dict[str, dict[str, Any]]:
+        """Per NSPanel Pro panel: paired?, address, last status, and the version Neat ships."""
+        from .panel import WWW_DIR
+
+        keys = await self._async_helper_keys()
+        bundled = await self.hass.async_add_executor_job(panel_helper.bundled_helper, WWW_DIR)
+        out: dict[str, dict[str, Any]] = {}
+        for panel in self._helper_panels():
+            cached = self._helper_status.get(panel.id) or {}
+            out[panel.id] = {
+                "paired": bool(keys.get(panel.id)),
+                "host": panel_helper.helper_host(self.hass, panel),
+                "summary": cached.get("summary") or {},
+                "error": cached.get("error") or "",
+                "checked_at": cached.get("checked_at"),
+                "shipped_version": (bundled or {}).get("version"),
+            }
+        return out
+
     def wall_panel_payload(self, panel_id: str) -> dict[str, Any] | None:
         panel = self.get_wall_panel(panel_id)
         if panel is None:
@@ -1686,6 +1805,13 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.hass.async_create_task(self.async_kiosk_version_refresh())
 
         self._unsubs.append(async_track_time_interval(self.hass, _kiosk_check, timedelta(minutes=10)))
+
+        @callback
+        def _helper_check(_now: Any) -> None:
+            if self._helper_panels():
+                self.hass.async_create_task(self.async_helper_poll())
+
+        self._unsubs.append(async_track_time_interval(self.hass, _helper_check, timedelta(minutes=1)))
 
         # @callback keeps it on the event loop; without it HA runs it in a worker thread, where
         # async_create_task is refused and the refresh coroutine is dropped (never awaited).

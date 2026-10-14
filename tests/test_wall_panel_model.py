@@ -13,13 +13,13 @@ def test_panel_saved_before_models_gets_default():
     assert panel.model == DEFAULT_WALL_PANEL_MODEL == "square"
 
 
-def test_old_hardware_model_becomes_square():
+def test_old_hardware_model_becomes_nspanel_pro():
     # Before 0.6.40 the only choice was the 480×480 NSPanel Pro.
-    assert WallPanelConfig.from_dict({"id": "hallway", "model": "nspanel_pro_gen2"}).model == "square"
+    assert WallPanelConfig.from_dict({"id": "hallway", "model": "nspanel_pro_gen2"}).model == "nspanel_pro"
     assert WallPanelConfig.from_dict({"id": "hallway", "model": "made_up"}).model == "square"
 
 
-@pytest.mark.parametrize("shape", ["square", "tall", "landscape", "wide"])
+@pytest.mark.parametrize("shape", ["square", "tall", "landscape", "wide", "nspanel_pro"])
 def test_shape_round_trips(shape):
     panel = WallPanelConfig.from_dict({"id": "kitchen", "model": shape})
     assert WallPanelConfig.from_dict(panel.to_dict()).model == shape
