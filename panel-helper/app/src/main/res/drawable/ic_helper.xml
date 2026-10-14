@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A teal thermostat ring, like Neat's dial. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#16191D"
+        android:pathData="M24,0a24,24 0 1,0 0.01,0z" />
+    <path
+        android:strokeColor="#19D4DE"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M14.1,33.9A14,14 0 1,1 33.9,33.9" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,17a7,7 0 1,0 0.01,0z" />
+</vector>
