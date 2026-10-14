@@ -33,7 +33,10 @@ export class DisplayPower {
     if (window.__neatFullyBound || typeof window.fully?.bind !== "function") return;
     try {
       window.fully.bind("onMotion", "window.__neatWake && window.__neatWake();");
-      window.fully.bind("screenOn", "window.__neatWake && window.__neatWake();");
+      window.fully.bind(
+        "screenOn",
+        "window.__neatWake && window.__neatWake(); window.__neatScreenOn && window.__neatScreenOn();",
+      );
       window.__neatFullyBound = true;
     } catch {
       // Not Fully, or JS interface disabled.

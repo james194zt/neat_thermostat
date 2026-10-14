@@ -801,9 +801,21 @@ function renderRooms() {
   }
 }
 
+// A reconnect on wake takes a second or two and the last states are on screen
+// meanwhile, so only say "Offline" when it lasts.
+const OFFLINE_PILL_DELAY_MS = 4000;
+let offlinePillTimer = null;
+
 function setConnectionState(connected) {
+  clearTimeout(offlinePillTimer);
   ui.connectionDot?.classList.toggle("online", connected);
-  ui.connectionDot?.classList.toggle("offline", !connected);
+  if (connected) {
+    ui.connectionDot?.classList.remove("offline");
+    // Straight away, not on the poll: picks up config changes made while asleep.
+    if (!embeddedMode) refreshConfigFromCentral();
+  } else {
+    offlinePillTimer = setTimeout(() => ui.connectionDot?.classList.add("offline"), OFFLINE_PILL_DELAY_MS);
+  }
   if (ui.connectionLabel) {
     ui.connectionLabel.textContent = connected
       ? embeddedMode
@@ -1160,6 +1172,17 @@ async function connect() {
     showError(error.message);
   }
 }
+
+// Waking up (screen back on, page visible again, network back): make sure the HA
+// connection is really live now, instead of trusting a socket that died while asleep.
+function checkConnectionOnWake() {
+  client?.checkAlive?.();
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) checkConnectionOnWake();
+});
+window.addEventListener("online", checkConnectionOnWake);
+window.__neatScreenOn = checkConnectionOnWake; // Fully's screenOn (display-power.js)
 
 ui.retrySetup.addEventListener("click", openSetupPage);
 ui.openSetupFromPicker?.addEventListener("click", openSetupPage);

@@ -10,6 +10,11 @@ export class HomeAssistantClient {
     this.states = new Map();
     this.connected = false;
     this.reconnectTimer = null;
+    // While the page is visible, check now and then that the socket is really alive:
+    // after the panel sleeps, HA has often dropped it while it still looks open here.
+    this.heartbeat = setInterval(() => {
+      if (!document.hidden) this.checkAlive();
+    }, 30000);
   }
 
   connect() {
@@ -38,6 +43,61 @@ export class HomeAssistantClient {
     this.reconnectTimer = setTimeout(() => this.connect(), 3000);
   }
 
+  /**
+   * Make sure the connection is live — call on wake (screen on, page visible again).
+   * A ping HA must answer within a moment; no answer, or no socket, means reconnect
+   * right away rather than showing stale numbers until the network notices.
+   */
+  checkAlive(timeoutMs = 1500) {
+    if (this.ws?.readyState === WebSocket.CONNECTING) return; // already on its way
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.connected) {
+      this.reconnectNow();
+      return;
+    }
+    if (this.pingPending) return;
+    const id = this.messageId++;
+    this.pingPending = true;
+    const timer = setTimeout(() => {
+      this.pending.delete(id);
+      this.pingPending = false;
+      this.reconnectNow();
+    }, timeoutMs);
+    this.pending.set(id, {
+      resolve: () => {
+        clearTimeout(timer);
+        this.pingPending = false;
+      },
+      reject: () => {
+        clearTimeout(timer);
+        this.pingPending = false;
+      },
+    });
+    this.sendRaw({ id, type: "ping" });
+  }
+
+  /** Drop the old socket (without its 3 s retry) and connect again now. */
+  reconnectNow() {
+    clearTimeout(this.reconnectTimer);
+    const old = this.ws;
+    this.ws = null;
+    if (old) {
+      old.onclose = null;
+      old.onerror = null;
+      old.onmessage = null;
+      try {
+        old.close();
+      } catch {
+        // Already closed.
+      }
+    }
+    // Requests sent on the dead socket will never be answered.
+    for (const { reject } of this.pending.values()) reject(new Error("Reconnecting to Home Assistant"));
+    this.pending.clear();
+    this.pingPending = false;
+    this.setConnected(false);
+    this.connect();
+  }
+
   setConnected(value) {
     if (this.connected === value) return;
     this.connected = value;
@@ -60,6 +120,13 @@ export class HomeAssistantClient {
     if (message.type === "auth_invalid") {
       this.setConnected(false);
       throw new Error("Invalid Home Assistant access token");
+    }
+
+    if (message.type === "pong" && this.pending.has(message.id)) {
+      const { resolve } = this.pending.get(message.id);
+      this.pending.delete(message.id);
+      resolve();
+      return;
     }
 
     if (message.type === "result" && message.id && this.pending.has(message.id)) {
@@ -153,6 +220,7 @@ export class HomeAssistantClient {
 
   disconnect() {
     clearTimeout(this.reconnectTimer);
+    clearInterval(this.heartbeat);
     this.ws?.close();
     this.ws = null;
     this.setConnected(false);

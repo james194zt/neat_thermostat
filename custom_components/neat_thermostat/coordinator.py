@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Any
@@ -102,6 +103,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # and the screen each wall panel last reported ("screens").
         self._kiosk_store: Store = Store(hass, 1, f"{DOMAIN}.kiosk_{entry.entry_id}")
         self._wall_screens: dict[str, dict[str, Any]] | None = None
+        # A panel coming back changes several entities at once: one version refresh at a time.
+        self._version_refresh_lock = asyncio.Lock()
         # Last seen heater availability, so a dropout is logged once.
         self._heater_available = True
         self._main_hvac_mode = "heat"
@@ -1588,6 +1591,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             came_back = (old is None or old.state == "unavailable") and new is not None and new.state != "unavailable"
             # Back online: re-apply everything soon (it may have lost settings or rebooted).
             self._kiosk_schedule(panel_id, delay=5 if came_back else 10, force=came_back)
+            if came_back:  # and give it a new wall app version it slept through
+                self.hass.async_create_task(self.async_kiosk_version_refresh())
 
         self._kiosk_watched = watched
         self._kiosk_unsub = (
@@ -1623,29 +1628,40 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Once per new wall app version: clear each linked panel's cache and reload it.
 
         The app reloads itself on a new version, but only Fully's own button can clear the
-        browser cache (stale files caused glitches). The version is saved, so this runs once
-        per update, not on every restart."""
+        browser cache (stale files caused glitches). The version is saved per panel, so this
+        runs once per update, not on every restart — and a panel that was asleep or offline
+        at the time gets it when it's back (called again then, and every 10 min)."""
+        async with self._version_refresh_lock:
+            return await self._async_kiosk_version_refresh()
+
+    async def _async_kiosk_version_refresh(self) -> list[str]:
         from .panel import WWW_DIR
 
         version = await self.hass.async_add_executor_job(kiosk.bundled_wall_version, WWW_DIR)
         if not version:
             return []
         stored = await self._kiosk_store.async_load() or {}
-        if stored.get("wall_version") == version:
-            return []
+        done = stored.get("wall_versions")
+        if done is None:  # before 0.6.41 one version was kept for all panels
+            done = {p.id: stored.get("wall_version") for p in self.config.wall_panels}
+        done = dict(done)
         refreshed: list[str] = []
         for panel in self.config.wall_panels:
-            if not panel.linked_kiosk_device:
+            if not panel.linked_kiosk_device or done.get(panel.id) == version:
                 continue
             status = kiosk.panel_status(self.hass, panel, self.config.kiosk_defaults)
             if not status.get("online") or not status.get("expected_url"):
-                continue
+                continue  # asleep/offline: retried when it's back
             try:
                 await kiosk.async_fresh_load(self.hass, panel.linked_kiosk_device, status["expected_url"])
                 refreshed.append(panel.id)
+                done[panel.id] = version
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("Neat: couldn't refresh wall panel %s: %s", panel.id, err)
-        await self._kiosk_store.async_save({**stored, "wall_version": version})
+        if done != stored.get("wall_versions"):
+            stored = await self._kiosk_store.async_load() or {}  # screens may have changed meanwhile
+            stored.pop("wall_version", None)
+            await self._kiosk_store.async_save({**stored, "wall_versions": done})
         if refreshed:
             _LOGGER.info("Neat: wall app %s — cleared cache and reloaded %s", version, ", ".join(refreshed))
         return refreshed
@@ -1667,6 +1683,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             for panel in self.config.wall_panels:
                 if panel.linked_kiosk_device:
                     self._kiosk_schedule(panel.id, delay=1)
+            self.hass.async_create_task(self.async_kiosk_version_refresh())
 
         self._unsubs.append(async_track_time_interval(self.hass, _kiosk_check, timedelta(minutes=10)))
 

@@ -32,6 +32,7 @@ KIOSK_SETTINGS: dict[str, tuple[str, tuple[float, float] | None]] = {
     "proximity_motion": ("config", None),
     "proximity_threshold": ("config", (0, 100)),
     "js_interface": ("config", None),
+    "stay_awake": ("config", None),
 }
 # Settings with no HA entity: written with fully_kiosk.set_config, never read back, so
 # they're only sent on an explicit sync/save or when the panel comes back online.
@@ -41,6 +42,10 @@ FULLY_CONFIG_KEYS = {
     # "Enable JavaScript Interface": the wall app binds Fully's onMotion/screenOn
     # through it; without it a wave never clears the clock (seen 13 Oct).
     "js_interface": "websiteIntegration",
+    # "Prevent from Sleep while Screen Off": a CPU wake lock, so the panel (and its
+    # Wi-Fi) stays up with the screen off and wakes straight to live data. The screen
+    # still turns off, so the backlight isn't on all day.
+    "stay_awake": "preventSleepWhileScreenOff",
 }
 # Other entities we need from the same device.
 _CURRENT_PAGE = ("sensor", "current_page")

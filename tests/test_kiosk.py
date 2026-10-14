@@ -224,11 +224,39 @@ async def test_wall_screen_report_is_kept_per_panel(hass, setup, monkeypatch):
     screens = await coord.async_wall_screens()
     assert set(screens) == {"hallway"}
     assert {k: screens["hallway"][k] for k in ("width", "height", "scale")} == {"width": 480, "height": 480, "scale": 1.5}
-    # Saved alongside the wall version, and a version refresh doesn't wipe it.
+    # Saved alongside the wall versions, and a version refresh doesn't wipe it.
+    device_id = _make_device(hass)
+    hass.states.async_set(f"sensor.{P}_current_page", GOOD_PAGE)
+    _mocks(hass)
+    await coord.async_save_config({"wall_panels": [_panel(device_id).to_dict()]})
     monkeypatch.setattr(kiosk, "bundled_wall_version", lambda _dir: "2.0.59")
-    await coord.async_kiosk_version_refresh()
+    assert await coord.async_kiosk_version_refresh() == ["hallway"]
     stored = await coord._kiosk_store.async_load()
-    assert stored["wall_version"] == "2.0.59" and stored["screens"]["hallway"]["width"] == 480
+    assert stored["wall_versions"] == {"hallway": "2.0.59"} and stored["screens"]["hallway"]["width"] == 480
+
+
+async def test_panel_asleep_at_a_new_version_gets_it_when_back(hass, setup, monkeypatch):
+    coord, _calls = setup
+    device_id = _make_device(hass)
+    hass.states.async_set(f"sensor.{P}_current_page", "unavailable")  # screen off, Fully asleep
+    calls = _mocks(hass)
+    await coord.async_save_config({"wall_panels": [_panel(device_id).to_dict()]})
+    monkeypatch.setattr(kiosk, "bundled_wall_version", lambda _dir: "2.0.60")
+    assert await coord.async_kiosk_version_refresh() == []
+    assert not calls["press"]
+    hass.states.async_set(f"sensor.{P}_current_page", GOOD_PAGE)  # woke up
+    assert await coord.async_kiosk_version_refresh() == ["hallway"]
+    assert len(calls["press"]) == 1 and len(calls["load_url"]) == 1
+    assert await coord.async_kiosk_version_refresh() == []  # once only
+
+
+async def test_stay_awake_is_sent_to_fully(hass):
+    device_id = _make_device(hass)
+    hass.states.async_set(f"sensor.{P}_current_page", GOOD_PAGE)
+    calls = _mocks(hass)
+    await kiosk.async_apply(hass, _panel(device_id), {"stay_awake": True}, force=True)
+    sent = {c.data["key"]: c.data["value"] for c in calls["set_config"]}
+    assert sent["preventSleepWhileScreenOff"] is True
 
 
 def test_bundled_wall_version_reads_the_shipped_app():

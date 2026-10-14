@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.40
+ * @version 0.6.41
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.40";
+const PANEL_VERSION = "0.6.41";
 // New-room defaults (match RoomConfig / DEFAULT_TARGET_TEMP / DEFAULT_ECO_TEMP).
 const ROOM_TEMP_DEFAULTS = { follow_house: true, house_offset: 0, hold_ends: "house_change", target_temp: 20, eco_temp: 16 };
 const HEAT_ORANGE = "#F57C00";
@@ -946,6 +946,7 @@ const KIOSK_FIELDS = [
   { key: "proximity_motion", label: "Wave to wake", desc: "Uses the panel's proximity sensor — for panels without a camera, like the NSPanel Pro. Needs the JavaScript interface on. Sent on save or sync; HA can't read it back.", kind: "bool", writeOnly: true },
   { key: "js_interface", label: "JavaScript interface", desc: "Lets the Neat wall app hear Fully's motion and screen-on events, so a wave clears the clock. Sent on save or sync; HA can't read it back.", kind: "bool", writeOnly: true },
   { key: "proximity_threshold", label: "Wave sensitivity", desc: "Fully's proximity threshold. Its default is 50%.", kind: "pct100", writeOnly: true },
+  { key: "stay_awake", label: "Stay awake with the screen off", desc: "Keeps the panel and its Wi-Fi running while the screen is off, so it wakes straight to live data instead of reconnecting first. The screen still turns off. Sent on save or sync; HA can't read it back.", kind: "bool", writeOnly: true },
 ];
 
 /** Fully stores brightness 0–255; people think in %. */
