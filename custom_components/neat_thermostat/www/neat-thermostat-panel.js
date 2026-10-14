@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.42
+ * @version 0.6.43
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.42";
+const PANEL_VERSION = "0.6.43";
 // New-room defaults (match RoomConfig / DEFAULT_TARGET_TEMP / DEFAULT_ECO_TEMP).
 const ROOM_TEMP_DEFAULTS = { follow_house: true, house_offset: 0, hold_ends: "house_change", target_temp: 20, eco_temp: 16 };
 const HEAT_ORANGE = "#F57C00";
