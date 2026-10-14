@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.43
+ * @version 0.6.44
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.43";
+const PANEL_VERSION = "0.6.44";
 // New-room defaults (match RoomConfig / DEFAULT_TARGET_TEMP / DEFAULT_ECO_TEMP).
 const ROOM_TEMP_DEFAULTS = { follow_house: true, house_offset: 0, hold_ends: "house_change", target_temp: 20, eco_temp: 16 };
 const HEAT_ORANGE = "#F57C00";
@@ -2290,7 +2290,7 @@ class NeatThermostatPanel extends HTMLElement {
               <div class="wp-card-meta">${this._escape(model.label)} · ${model.ratio} · device ID <code>${this._escape(p.id)}</code></div>
               <div class="wp-card-meta">Controls <strong>${this._escape(primaryName)}</strong>${notNeat ? ` <span class="set-state warn">not Neat</span>` : ""}${p.temperature_lock ? ` · <span class="set-state">Locked</span>` : ""}</div>
               <div class="wp-card-meta">${this._reportedScreenHtml(p)}</div>
-              ${p.model === "nspanel_pro" ? `<div class="wp-card-meta">${this._helperLineHtml(p.id)}</div>` : ""}
+              ${p.model === "nspanel_pro" || this._helperState(p.id)?.paired ? `<div class="wp-card-meta">${this._helperLineHtml(p.id)}</div>` : ""}
               ${p.kiosk_enabled === false ? "" : `<div class="wp-card-meta kiosk-line" data-kiosk-pill="${this._escape(p.id)}">${this._kioskPillHtml(p.id)}</div>`}
             </div>
             <button class="secondary compact edit-panel" type="button" data-id="${this._escape(p.id)}">Edit</button>

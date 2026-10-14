@@ -115,6 +115,22 @@ async def test_wrong_code_is_reported(hass, setup, aioclient_mock, monkeypatch):
     assert not (await coord.async_helpers_state())["hallway"]["paired"]
 
 
+async def test_pairing_before_saving_the_screen_type(hass, setup, aioclient_mock, monkeypatch):
+    """The NSPanel section shows as soon as the type is picked, so pairing can come before
+    Save: the panel is still saved as square (seen live 14 Oct: KeyError → 'Unknown error')."""
+    coord, _calls_ = setup
+    hass.config.internal_url = "http://192.168.1.10:8123"
+    monkeypatch.setattr(panel_helper, "bundled_helper", lambda _dir: SHIPPED)
+    await coord.async_save_config(
+        {"wall_panels": [{"id": "hallway", "label": "Hallway", "model": "square", "helper_host": HOST}]}
+    )
+    aioclient_mock.post(f"{BASE}/pair", json={"key": "k1"})
+    aioclient_mock.get(f"{BASE}/status", json=_status(version_code=3))
+    state = await coord.async_helper_pair("hallway", "123456")
+    assert state["paired"] and state["summary"]["version"] == "0.2.0"
+    assert "hallway" in await coord.async_helpers_state()
+
+
 def test_summary_spots_a_showing_button():
     s = panel_helper.summary(_status(showing=True))
     assert s["return_button_showing"] and s["hide_return_button"]

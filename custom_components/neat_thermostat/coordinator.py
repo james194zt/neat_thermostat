@@ -1473,8 +1473,11 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             keys.pop(panel_id, None)
         await self._kiosk_store.async_save({**stored, "helper_keys": keys})
 
-    def _helper_panels(self) -> list[WallPanelConfig]:
-        return [p for p in self.config.wall_panels if p.model == panel_helper.HELPER_MODEL]
+    def _helper_panels(self, keys: dict[str, str] | None = None) -> list[WallPanelConfig]:
+        """NSPanel Pro panels, plus any panel already paired (pairing can come before the
+        Screen type is saved — the dialog shows the section as soon as it's picked)."""
+        keys = keys or {}
+        return [p for p in self.config.wall_panels if p.model == panel_helper.HELPER_MODEL or p.id in keys]
 
     async def async_helper_pair(self, panel_id: str, code: str) -> dict[str, Any]:
         panel = self.get_wall_panel(panel_id)
@@ -1483,7 +1486,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         key = await panel_helper.async_pair(self.hass, panel_helper.helper_host(self.hass, panel), code)
         await self._async_save_helper_key(panel_id, key)
         await self.async_helper_poll(panel_id)
-        return (await self.async_helpers_state())[panel_id]
+        return (await self.async_helpers_state()).get(panel_id) or {"paired": True}
 
     async def async_helper_unpair(self, panel_id: str) -> None:
         await self._async_save_helper_key(panel_id, None)
@@ -1506,7 +1509,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.hass, panel_helper.helper_host(self.hass, panel), "POST", "/config", key=key, body=body
         )
         await self.async_helper_poll(panel_id)
-        return (await self.async_helpers_state())[panel_id]
+        return (await self.async_helpers_state()).get(panel_id) or {"paired": True}
 
     async def async_helper_poll(self, panel_id: str | None = None) -> None:
         """Read each paired helper's status; give it the shipped version when it's behind."""
@@ -1514,7 +1517,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         keys = await self._async_helper_keys()
         bundled = await self.hass.async_add_executor_job(panel_helper.bundled_helper, WWW_DIR)
-        for panel in self._helper_panels():
+        for panel in self._helper_panels(keys):
             if panel_id and panel.id != panel_id:
                 continue
             key = keys.get(panel.id)
@@ -1562,7 +1565,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         keys = await self._async_helper_keys()
         bundled = await self.hass.async_add_executor_job(panel_helper.bundled_helper, WWW_DIR)
         out: dict[str, dict[str, Any]] = {}
-        for panel in self._helper_panels():
+        for panel in self._helper_panels(keys):
             cached = self._helper_status.get(panel.id) or {}
             out[panel.id] = {
                 "paired": bool(keys.get(panel.id)),
@@ -1808,8 +1811,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         @callback
         def _helper_check(_now: Any) -> None:
-            if self._helper_panels():
-                self.hass.async_create_task(self.async_helper_poll())
+            # Cheap when nothing is paired: it only reads the stored keys.
+            self.hass.async_create_task(self.async_helper_poll())
 
         self._unsubs.append(async_track_time_interval(self.hass, _helper_check, timedelta(minutes=1)))
 
