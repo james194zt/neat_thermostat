@@ -32,6 +32,7 @@ from .const import (
     DEFAULT_TRUE_RADIANT,
     DEFAULT_WALL_PIN,
     ROOM_HOLD_ENDS,
+    WALL_PANEL_SHAPES,
 )
 
 
@@ -119,6 +120,12 @@ def default_schedule() -> dict[str, list[dict[str, Any]]]:
     return {day: default_day_schedule() for day in DAYS}
 
 
+def _wall_shape(value: Any) -> str:
+    """Screen shape; hardware models from before 0.6.40 (all 480×480) become square."""
+    shape = str(value or "")
+    return shape if shape in WALL_PANEL_SHAPES else DEFAULT_WALL_PANEL_MODEL
+
+
 @dataclass
 class WallPanelConfig:
     """Central config for one physical wall screen."""
@@ -134,6 +141,14 @@ class WallPanelConfig:
     # Fully Kiosk Browser device (HA device id) and settings that differ from the house defaults.
     kiosk_device: str = ""
     kiosk_overrides: dict[str, Any] = field(default_factory=dict)
+    # Off for screens that don't run Fully Kiosk: Neat then leaves the panel alone,
+    # but remembers the linked device for when it's switched back on.
+    kiosk_enabled: bool = True
+
+    @property
+    def linked_kiosk_device(self) -> str:
+        """The Fully device Neat manages for this panel ("" = none)."""
+        return self.kiosk_device if self.kiosk_enabled else ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -148,9 +163,10 @@ class WallPanelConfig:
             sensors=dict(data.get("sensors") or {}),
             display=dict(data.get("display") or {"idleMs": 30000, "panelEntity": ""}),
             temperature_lock=bool(data.get("temperature_lock", False)),
-            model=str(data.get("model") or DEFAULT_WALL_PANEL_MODEL),
+            model=_wall_shape(data.get("model")),
             kiosk_device=str(data.get("kiosk_device") or ""),
             kiosk_overrides=clean_settings(data.get("kiosk_overrides")),
+            kiosk_enabled=bool(data.get("kiosk_enabled", True)),
         )
 
 

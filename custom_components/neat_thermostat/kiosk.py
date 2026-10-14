@@ -162,7 +162,9 @@ def read_current(hass: HomeAssistant, device_id: str) -> dict[str, Any]:
 
 def panel_status(hass: HomeAssistant, panel: Any, defaults: dict[str, Any]) -> dict[str, Any]:
     """Target vs actual for one wall panel."""
-    device_id = getattr(panel, "kiosk_device", "") or ""
+    device_id = getattr(panel, "linked_kiosk_device", None)
+    if device_id is None:
+        device_id = getattr(panel, "kiosk_device", "") or ""
     if not device_id:
         return {"linked": False}
     entities = device_entities(hass, device_id)

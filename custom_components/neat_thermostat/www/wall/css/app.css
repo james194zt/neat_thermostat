@@ -257,17 +257,31 @@ button {
   min-height: 0;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "down dial up";
   align-items: center;
   justify-items: center;
   gap: 1vmin;
 }
 
-.dial {
+/* The box takes whatever room the layout gives; app.js fits the dial inside it at the
+   arc's shape and sets --d so the centre text grows with the dial. */
+.dial-box {
+  grid-area: dial;
   position: relative;
+  width: 100%;
   height: 100%;
-  max-height: 100%;
-  max-width: 100%;
-  aspect-ratio: 200 / 166;
+  min-width: 0;
+  min-height: 0;
+}
+
+.dial {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transform: translate(-50%, -50%);
   touch-action: none;
 }
 
@@ -347,7 +361,7 @@ button {
 }
 
 .caption {
-  font-size: 3.1vmin;
+  font-size: calc(var(--d, 1vmin) * 3.1);
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -367,33 +381,33 @@ button {
   display: flex;
   align-items: flex-start;
   line-height: 1;
-  margin: 2vmin 0 0.4vmin; /* "Set to" sits a little above the number */
+  margin: calc(var(--d, 1vmin) * 2) 0 calc(var(--d, 1vmin) * 0.4); /* "Set to" sits a little above the number */
   font-variant-numeric: tabular-nums;
 }
 
 .temp-int {
-  font-size: 19.5vmin;
+  font-size: calc(var(--d, 1vmin) * 19.5);
   font-weight: 400;
   letter-spacing: -0.05em;
 }
 
 .temp-dec {
-  font-size: 9vmin;
+  font-size: calc(var(--d, 1vmin) * 9);
   font-weight: 400;
-  margin-top: 1.2vmin;
+  margin-top: calc(var(--d, 1vmin) * 1.2);
   letter-spacing: -0.03em;
 }
 
 .temp-unit {
-  font-size: 6.6vmin;
+  font-size: calc(var(--d, 1vmin) * 6.6);
   font-weight: 400;
-  margin-top: 1.2vmin;
-  margin-left: 0.4vmin;
+  margin-top: calc(var(--d, 1vmin) * 1.2);
+  margin-left: calc(var(--d, 1vmin) * 0.4);
   color: var(--text-muted);
 }
 
 .current-temp.is-off .temp-int {
-  font-size: 9vmin;
+  font-size: calc(var(--d, 1vmin) * 9);
   font-weight: 400;
   letter-spacing: 0.02em;
   color: var(--text-muted);
@@ -410,17 +424,17 @@ button {
 }
 
 .sub {
-  margin-top: 2.2vmin; /* a little breathing room under the target */
-  font-size: 3.8vmin;
+  margin-top: calc(var(--d, 1vmin) * 2.2); /* a little breathing room under the target */
+  font-size: calc(var(--d, 1vmin) * 3.8);
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .eta {
-  font-size: 3.4vmin;
+  font-size: calc(var(--d, 1vmin) * 3.4);
   font-weight: 600;
   color: var(--heat-soft);
-  margin-top: 0.6vmin;
+  margin-top: calc(var(--d, 1vmin) * 0.6);
   min-height: 1.2em;
 }
 
@@ -430,10 +444,10 @@ button {
 
 .leaf {
   display: none;
-  width: 4vmin;
-  height: 4vmin;
+  width: calc(var(--d, 1vmin) * 4);
+  height: calc(var(--d, 1vmin) * 4);
   color: var(--green);
-  margin-top: 0.4vmin;
+  margin-top: calc(var(--d, 1vmin) * 0.4);
 }
 
 .leaf.is-active {
@@ -460,6 +474,14 @@ button {
   background: var(--surface-hi);
   box-shadow: inset 0 0 0 1px var(--line);
   transition: transform 0.08s ease, background 0.15s ease;
+}
+
+#tempDown {
+  grid-area: down;
+}
+
+#tempUp {
+  grid-area: up;
 }
 
 .step svg {
@@ -644,6 +666,168 @@ button {
   font-weight: 700;
   background: rgba(239, 83, 80, 0.18);
   color: var(--red);
+}
+
+/* —— Screen shapes ——
+   The layout follows the screen's real shape, so nothing needs setting on the panel and a
+   tablet re-lays itself out when turned. Square (≈1:1, the rules above) is the reference. */
+
+/* Tall (9:16, 1:2, an upright tablet): the dial takes the full width, −/+ sit under it,
+   rooms go two per row. */
+@media (max-aspect-ratio: 4/5) {
+  .app {
+    padding-bottom: 4vmin;
+  }
+
+  .stage {
+    margin: 3vmin 0 3vmin;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas: "dial dial" "down up";
+    row-gap: 3vmin;
+    column-gap: 14vmin;
+  }
+
+  /* Spare height goes above the dial, so −/+ stay right under it. */
+  .dial {
+    top: auto;
+    bottom: 0;
+    transform: translateX(-50%);
+  }
+
+  #tempDown {
+    justify-self: end;
+  }
+
+  #tempUp {
+    justify-self: start;
+  }
+
+  .modes {
+    margin-bottom: 2.4vmin;
+  }
+
+  .room-strip,
+  .room-strip.room-strip--many {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-columns: auto;
+    gap: 2vmin;
+  }
+
+  /* More than four rooms: scroll the grid, keep the dial big. */
+  .room-strip.room-strip--many {
+    max-height: 52vmin;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .room-chip {
+    padding: 2.4vmin 2.6vmin;
+  }
+
+  .room-name {
+    font-size: 3.4vmin;
+  }
+
+  .room-temp {
+    font-size: 7vmin;
+  }
+
+  .room-set {
+    font-size: 3.2vmin;
+  }
+}
+
+/* Landscape (16:10 tablets, 2:1 panoramic): dial on the left with −/+ under it (as on
+   tall screens), then the modes in a column, then the rooms two per row. */
+@media (min-aspect-ratio: 5/4) {
+  .app {
+    grid-template-columns: minmax(0, 1fr) auto 46vmin;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-areas:
+      "top top top"
+      "notices notices notices"
+      "stage modes rooms";
+    column-gap: 3vmin;
+  }
+
+  .stage {
+    margin: 2vmin 0 0;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas: "dial dial" "down up";
+    row-gap: 2vmin;
+    column-gap: 12vmin;
+  }
+
+  /* Spare height goes above the dial, so −/+ stay right under it. */
+  .dial {
+    top: auto;
+    bottom: 0;
+    transform: translateX(-50%);
+  }
+
+  .step {
+    width: 13vmin;
+    height: 13vmin;
+  }
+
+  #tempDown {
+    justify-self: end;
+  }
+
+  #tempUp {
+    justify-self: start;
+  }
+
+  .modes {
+    align-self: center;
+    margin: 2vmin 0 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1vmin;
+    padding: 1vmin;
+    border-radius: 7vmin;
+  }
+
+  .mode-btn {
+    justify-content: flex-start;
+    min-height: 13vmin;
+    padding: 0 3.8vmin 0 3vmin;
+    font-size: 3.8vmin;
+    gap: 1.8vmin;
+  }
+
+  .mode-btn svg {
+    width: 4.8vmin;
+    height: 4.8vmin;
+  }
+
+  .rooms {
+    align-self: center;
+    margin-top: 2vmin;
+    max-height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .room-strip,
+  .room-strip.room-strip--many {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-columns: auto;
+    gap: 1.6vmin;
+  }
+
+  .room-strip.room-strip--many {
+    max-height: 78vmin;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .room-chip {
+    min-height: 19vmin;
+  }
 }
 
 /* —— Overlays / screensaver —— */

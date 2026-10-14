@@ -49,6 +49,7 @@ const ui = {
   modeFace: document.getElementById("modeFace"),
   modeIcon: document.getElementById("modeIcon"),
   ringLeaf: document.getElementById("ringLeaf"),
+  dialBox: document.getElementById("dialBox"),
   thermoRing: document.getElementById("thermoRing"),
   dialFill: document.getElementById("dialFill"),
   dialHit: document.getElementById("dialHit"),
@@ -362,6 +363,33 @@ const DIAL_COLOURS = {
   off: ["#5f656b", "#8a9096"],
   idle: ["#FFD180", "#FF9800"],
 };
+
+// The centre text was tuned on a square screen, where the dial is 50.5vmin tall. Tall and
+// landscape layouts give the dial far more room, so its text follows the dial (--d), not the screen.
+const DIAL_SQUARE_VMIN = 50.5;
+
+/** Fit the dial into its box at the arc's own aspect (a stretched box would break drag maths). */
+function fitDial() {
+  const box = ui.dialBox;
+  const dial = ui.thermoRing;
+  if (!box || !dial) return;
+  const w = box.clientWidth;
+  const h = box.clientHeight;
+  if (!w || !h) return;
+  const aspect = 200 / DIAL.viewH;
+  const height = Math.min(h, w / aspect);
+  dial.style.height = `${height.toFixed(1)}px`;
+  dial.style.width = `${(height * aspect).toFixed(1)}px`;
+  ui.app?.style.setProperty("--d", `${(height / DIAL_SQUARE_VMIN).toFixed(3)}px`);
+}
+
+if (ui.dialBox) {
+  if (typeof ResizeObserver === "function") {
+    new ResizeObserver(fitDial).observe(ui.dialBox);
+  }
+  window.addEventListener("resize", fitDial);
+  window.addEventListener("orientationchange", fitDial);
+}
 
 function getGaugeRange(state) {
   const min = Number(state?.attributes?.min_temp);
@@ -842,6 +870,7 @@ function showApp() {
   ui.errorOverlay.classList.add("hidden");
   ui.deviceOverlay?.classList.add("hidden");
   ui.app.hidden = false;
+  fitDial(); // the box had no size while hidden (and old WebViews lack ResizeObserver)
 }
 
 function showError(message) {

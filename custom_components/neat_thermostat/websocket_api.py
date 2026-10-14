@@ -70,6 +70,7 @@ async def ws_get_state(
             "config": coordinator.config.to_dict(),
             "live": coordinator.data,
             "entry_id": coordinator.entry.entry_id,
+            "wall_screens": await coordinator.async_wall_screens(),
         },
     )
 
@@ -298,7 +299,7 @@ async def ws_upsert_wall_panel(
     config = await coordinator.async_save_config(
         {"wall_panels": [p.to_dict() for p in panels]}
     )
-    synced = await coordinator.async_kiosk_apply(panel.id) if panel.kiosk_device else {}
+    synced = await coordinator.async_kiosk_apply(panel.id) if panel.linked_kiosk_device else {}
     connection.send_result(
         msg["id"],
         {"wall_panels": [p.to_dict() for p in config.wall_panels], "panel": panel.to_dict(), "kiosk_synced": synced},
@@ -333,6 +334,8 @@ async def ws_delete_wall_panel(
         vol.Required("type"): "neat_thermostat/get_wall_panel_config",
         vol.Required("panel_id"): cv.string,
         vol.Optional("entry_id"): cv.string,
+        # The wall app's real screen (CSS px), shown in Neat's Wall panels tab.
+        vol.Optional("screen"): dict,
     }
 )
 @websocket_api.async_response
@@ -347,6 +350,8 @@ async def ws_get_wall_panel_config(
     if payload is None:
         connection.send_error(msg["id"], "not_found", f"Unknown panel {msg['panel_id']}")
         return
+    if msg.get("screen"):
+        await coordinator.async_report_wall_screen(msg["panel_id"], msg["screen"])
     connection.send_result(msg["id"], {"config": payload})
 
 
@@ -533,12 +538,12 @@ async def ws_kiosk_reload(
     """Reload the wall app on a panel."""
     coordinator = _coordinator(hass, msg.get("entry_id"))
     panel = coordinator.get_wall_panel(msg["panel_id"]) if coordinator else None
-    if panel is None or not panel.kiosk_device:
+    if panel is None or not panel.linked_kiosk_device:
         connection.send_error(msg["id"], "not_found", "That wall panel isn't linked to a Fully Kiosk device")
         return
     status = kiosk.panel_status(hass, panel, coordinator.config.kiosk_defaults)
     if not status.get("online") or not status.get("expected_url"):
         connection.send_error(msg["id"], "offline", "The panel is offline")
         return
-    await kiosk.async_fresh_load(hass, panel.kiosk_device, status["expected_url"])
+    await kiosk.async_fresh_load(hass, panel.linked_kiosk_device, status["expected_url"])
     connection.send_result(msg["id"], {"ok": True})

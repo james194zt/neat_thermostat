@@ -202,6 +202,35 @@ async def test_new_wall_app_version_clears_cache_once(hass, setup, monkeypatch):
     assert len(calls["press"]) == 2
 
 
+async def test_panel_without_fully_is_left_alone(hass, setup, monkeypatch):
+    coord, _calls = setup
+    device_id = _make_device(hass)
+    calls = _mocks(hass)
+    panel = {**_panel(device_id).to_dict(), "kiosk_enabled": False}
+    await coord.async_save_config({"kiosk_defaults": {"kiosk_lock": True}, "wall_panels": [panel]})
+    assert coord.kiosk_status()["panels"]["hallway"] == {"linked": False}
+    assert await coord.async_kiosk_apply() == {}
+    monkeypatch.setattr(kiosk, "bundled_wall_version", lambda _dir: "2.0.59")
+    assert await coord.async_kiosk_version_refresh() == []
+    assert not any(v for k, v in calls.items() if k != "order")
+
+
+async def test_wall_screen_report_is_kept_per_panel(hass, setup, monkeypatch):
+    coord, _calls = setup
+    await coord.async_save_config({"wall_panels": [_panel("").to_dict()]})
+    await coord.async_report_wall_screen("hallway", {"width": 480, "height": 480, "scale": 1.5})
+    await coord.async_report_wall_screen("nope", {"width": 1, "height": 1})  # unknown panel
+    await coord.async_report_wall_screen("hallway", {"width": "x"})  # junk
+    screens = await coord.async_wall_screens()
+    assert set(screens) == {"hallway"}
+    assert {k: screens["hallway"][k] for k in ("width", "height", "scale")} == {"width": 480, "height": 480, "scale": 1.5}
+    # Saved alongside the wall version, and a version refresh doesn't wipe it.
+    monkeypatch.setattr(kiosk, "bundled_wall_version", lambda _dir: "2.0.59")
+    await coord.async_kiosk_version_refresh()
+    stored = await coord._kiosk_store.async_load()
+    assert stored["wall_version"] == "2.0.59" and stored["screens"]["hallway"]["width"] == 480
+
+
 def test_bundled_wall_version_reads_the_shipped_app():
     from custom_components.neat_thermostat.panel import WWW_DIR
 

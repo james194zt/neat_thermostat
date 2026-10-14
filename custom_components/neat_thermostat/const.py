@@ -61,8 +61,10 @@ DEFAULT_NO_HEAT_ALERT_MINUTES = 60
 # A house sensor silent this long is treated as dead (ZHA's default heartbeat
 # is 15 min, so this is several missed reports).
 DEFAULT_SENSOR_STALE_MINUTES = 60
-# Wall panel hardware model; the panel JS holds each model's screen size.
-DEFAULT_WALL_PANEL_MODEL = "nspanel_pro_gen2"
+# Wall panel screen shape (stored as "model"): picks the preview size in the panel JS.
+# The wall app lays itself out from its real screen, so this never changes the panel.
+WALL_PANEL_SHAPES = ("square", "tall", "landscape", "wide")
+DEFAULT_WALL_PANEL_MODEL = "square"
 # Seasonal Savings: over this many days, take this much off each schedule
 # block every few days, up to the max; blocks the user turns up are left be.
 SEASONAL_SAVINGS_DAYS = 21

@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.39
+ * @version 0.6.40
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.39";
+const PANEL_VERSION = "0.6.40";
 // New-room defaults (match RoomConfig / DEFAULT_TARGET_TEMP / DEFAULT_ECO_TEMP).
 const ROOM_TEMP_DEFAULTS = { follow_house: true, house_offset: 0, hold_ends: "house_change", target_temp: 20, eco_temp: 16 };
 const HEAT_ORANGE = "#F57C00";
@@ -53,14 +53,27 @@ const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
 // the preview runs it embedded, so it always matches the installed version.
 const WALL_APP_URL = "/neat_thermostat/static/wall/index.html";
-// Wall panel hardware: the preview renders the app at each model's screen size.
-// Add new devices here; the first entry is the default (matches DEFAULT_WALL_PANEL_MODEL).
+// Wall screen shapes (stored as the panel's "model"): the preview renders the app at this
+// size. The wall app itself lays out from its real screen, so this never changes the panel.
+// The first entry is the default (matches DEFAULT_WALL_PANEL_MODEL); old hardware ids fall back to it.
 const WALL_MODELS = [
-  { id: "nspanel_pro_gen2", label: "Sonoff NSPanel Pro Gen2", width: 480, height: 480, screen: '3.95" 480×480' },
+  { id: "square", label: "Square", ratio: "1:1", width: 480, height: 480, hint: "most in-wall panels" },
+  { id: "tall", label: "Tall", ratio: "9:16", width: 405, height: 720, hint: "tall in-wall panels, upright tablets" },
+  { id: "landscape", label: "Landscape", ratio: "16:10", width: 960, height: 600, hint: "tablets on their side" },
+  { id: "wide", label: "Wide", ratio: "2:1", width: 720, height: 360, hint: "panoramic panels" },
 ];
 
 function wallModel(id) {
   return WALL_MODELS.find((m) => m.id === id) || WALL_MODELS[0];
+}
+
+/** The shape a reported screen is (same thresholds as the wall app's layouts). */
+function wallShapeFor(width, height) {
+  const r = width / height;
+  if (r >= 1.75) return wallModel("wide");
+  if (r >= 1.25) return wallModel("landscape");
+  if (r <= 0.8) return wallModel("tall");
+  return wallModel("square");
 }
 
 const STYLES = `
@@ -2265,9 +2278,10 @@ class NeatThermostatPanel extends HTMLElement {
             <span class="card-icon">${ICONS.panel}</span>
             <div class="wp-card-text">
               <div class="wp-card-name">${this._escape(p.label || p.id)}</div>
-              <div class="wp-card-meta">${this._escape(model.label)} · device ID <code>${this._escape(p.id)}</code></div>
+              <div class="wp-card-meta">${this._escape(model.label)} · ${model.ratio} · device ID <code>${this._escape(p.id)}</code></div>
               <div class="wp-card-meta">Controls <strong>${this._escape(primaryName)}</strong>${notNeat ? ` <span class="set-state warn">not Neat</span>` : ""}${p.temperature_lock ? ` · <span class="set-state">Locked</span>` : ""}</div>
-              <div class="wp-card-meta kiosk-line" data-kiosk-pill="${this._escape(p.id)}">${this._kioskPillHtml(p.id)}</div>
+              <div class="wp-card-meta">${this._reportedScreenHtml(p)}</div>
+              ${p.kiosk_enabled === false ? "" : `<div class="wp-card-meta kiosk-line" data-kiosk-pill="${this._escape(p.id)}">${this._kioskPillHtml(p.id)}</div>`}
             </div>
             <button class="secondary compact edit-panel" type="button" data-id="${this._escape(p.id)}">Edit</button>
           </div>`;
@@ -2276,13 +2290,23 @@ class NeatThermostatPanel extends HTMLElement {
     void neat;
     return `
       <div class="page-head-row">
-        ${this._pageHeader("Wall panels", "Each physical NSPanel. On the device, you only pick which panel it is.")}
+        ${this._pageHeader("Wall panels", "Each wall screen or tablet. On the device, you only pick which panel it is.")}
         <button class="primary" id="addWallPanel" type="button">${ICONS.plus}Add wall panel</button>
       </div>
       ${panels.length
-        ? `${this._renderWallPreview(panels)}<div class="wp-list">${cards}</div><div style="height:14px"></div>${this._renderKioskCard()}`
+        ? `${this._renderWallPreview(panels)}<div class="wp-list">${cards}</div>${panels.some((p) => p.kiosk_enabled !== false) ? `<div style="height:14px"></div>${this._renderKioskCard()}` : ""}`
         : `<div class="card empty-state"><p class="muted" style="margin:0">No wall panels yet.</p><button class="primary" id="addWallPanelEmpty" type="button">${ICONS.plus}Add your first wall panel</button></div>`}
     `;
+  }
+
+  /** What the panel itself reported: its screen and the shape that makes it. */
+  _reportedScreenHtml(panel) {
+    const s = this._state?.wall_screens?.[panel.id];
+    if (!s?.width || !s?.height) return `<span class="muted">Screen size shows here once the panel has opened Neat</span>`;
+    const shape = wallShapeFor(s.width, s.height);
+    const size = `${s.width}×${s.height}`;
+    if (shape.id === wallModel(panel.model).id) return `Panel reports ${size} <span class="set-state good">${shape.label}</span>`;
+    return `Panel reports ${size} — that's <strong>${shape.label}</strong> <span class="set-state warn" title="Only the preview uses this; the panel already lays itself out to fit">preview set to ${this._escape(wallModel(panel.model).label)}</span>`;
   }
 
   async _loadKiosk(pillsOnly = false) {
@@ -2481,7 +2505,7 @@ class NeatThermostatPanel extends HTMLElement {
     return this._dialog({
       icon: ICONS.panel,
       title: editing ? `Edit ${this._escape(d.label || editing)}` : "Add a wall panel",
-      sub: editing ? "Change what this panel shows and controls." : "Set up a new NSPanel. You'll pick this panel on the device.",
+      sub: editing ? "Change what this panel shows and controls." : "Set up a new wall screen or tablet. You'll pick this panel on the device.",
       body: `
         <div class="dlg-section">
           <div class="set-fields">
@@ -2496,10 +2520,11 @@ class NeatThermostatPanel extends HTMLElement {
             </div>
           </div>
           <div class="set-field">
-            <div class="set-field-label">Model</div>
+            <div class="set-field-label">Screen shape</div>
             <select id="wpModel">
-              ${WALL_MODELS.map((m) => `<option value="${m.id}" ${wallModel(d.model).id === m.id ? "selected" : ""}>${this._escape(m.label)} (${this._escape(m.screen)})</option>`).join("")}
+              ${WALL_MODELS.map((m) => `<option value="${m.id}" ${wallModel(d.model).id === m.id ? "selected" : ""}>${m.label} · ${m.ratio} — ${m.hint}</option>`).join("")}
             </select>
+            <div class="set-row-desc">Sizes the preview. The panel fits itself to its real screen, and turns with a tablet.${editing && this._state?.wall_screens?.[editing] ? ` ${this._reportedScreenHtml({ id: editing, model: d.model })}.` : ""}</div>
           </div>
         </div>
         <div class="dlg-section">
@@ -2554,7 +2579,20 @@ class NeatThermostatPanel extends HTMLElement {
 
   _renderKioskDialogSection(d) {
     const k = this._kiosk;
-    if (!k?.devices?.length) return "";
+    const on = d.kioskEnabled !== false;
+    const toggle = `
+        <div class="set-row">
+          <div class="set-row-text"><div class="set-row-name">Uses Fully Kiosk Browser</div><div class="set-row-desc">Turn off for screens that can't run it (no app installs) — Neat then leaves this panel's browser alone.</div></div>
+          <div class="set-row-control"><label class="switch"><input type="checkbox" id="wpKioskEnabled" ${on ? "checked" : ""} /><span></span></label></div>
+        </div>`;
+    if (!k?.devices?.length) {
+      return `
+      <div class="dlg-section">
+        <div class="dlg-section-title">Kiosk browser</div>
+        ${toggle}
+        <div id="wpKioskBody" ${on ? "" : "hidden"}><div class="set-row-desc">Add the <strong>Fully Kiosk Browser</strong> integration in Home Assistant (needs Fully's Plus licence) and Neat can set this panel's start page and settings for you.</div></div>
+      </div>`;
+    }
     const defaults = k.defaults || {};
     const rows = KIOSK_FIELDS.map((f) => {
       const house = defaults[f.key];
@@ -2568,6 +2606,8 @@ class NeatThermostatPanel extends HTMLElement {
     return `
       <div class="dlg-section">
         <div class="dlg-section-title">Kiosk browser</div>
+        ${toggle}
+        <div id="wpKioskBody" ${on ? "" : "hidden"}>
         <div class="set-field">
           <div class="set-field-label">Fully Kiosk device</div>
           <select id="wpKioskDevice">
@@ -2578,6 +2618,7 @@ class NeatThermostatPanel extends HTMLElement {
         </div>
         <div class="set-row-desc">Overrides for this panel only — leave blank to use the house setting.</div>
         ${rows}
+        </div>
       </div>`;
   }
 
@@ -2600,6 +2641,7 @@ class NeatThermostatPanel extends HTMLElement {
       lock: Boolean(panel?.temperature_lock),
       kioskDevice: panel?.kiosk_device || (!panel && this._kiosk?.devices?.length === 1 ? this._kiosk.devices[0].id : ""),
       kioskOverrides: { ...(panel?.kiosk_overrides || {}) },
+      kioskEnabled: panel?.kiosk_enabled !== false,
     };
     this._openDialog("wall");
   }
@@ -2669,7 +2711,7 @@ class NeatThermostatPanel extends HTMLElement {
   }
 
   _previewSizeText(model) {
-    return `${model.label} · ${model.screen}`;
+    return `${model.label} · ${model.ratio}`;
   }
 
   _renderWallPreview(panels) {
@@ -2701,7 +2743,7 @@ class NeatThermostatPanel extends HTMLElement {
         </div>
         <p class="muted" style="margin:12px 0 0">
           <strong id="wpPreviewSize">${this._escape(this._previewSizeText(model))}</strong> —
-          the wall app bundled with this Neat version, live against your real entities, at the model's screen size.
+          the wall app bundled with this Neat version, live against your real entities, at the panel's screen shape.
           Saving a panel reloads it.
         </p>
       </div>`;
@@ -3214,7 +3256,7 @@ class NeatThermostatPanel extends HTMLElement {
           ${head(ICONS.shield, "warn", "Safety temperature", "Frost and pipe protection.")}
           ${row("Enabled", "Forces heat even in Away, Eco or Off if the house gets this cold.", toggle("safetyEnabled", cfg.safety_temp_enabled !== false))}
           ${row("Minimum house temperature", "", num("safetyMin", cfg.safety_min_temp ?? 7, "°C", 'step="0.5" min="5" max="12"'))}
-          ${row("Wall panel PIN", "Unlocks NSPanels that have Temperature lock on.", `<div class="num-input"><input id="wallPin" type="password" inputmode="numeric" maxlength="4" value="${this._escape(cfg.wall_pin || "")}" placeholder="••••" /></div>`)}
+          ${row("Wall panel PIN", "Unlocks wall panels that have Temperature lock on.", `<div class="num-input"><input id="wallPin" type="password" inputmode="numeric" maxlength="4" value="${this._escape(cfg.wall_pin || "")}" placeholder="••••" /></div>`)}
         </div>
         <div class="card">
           ${head(ICONS.gauge, "", "Boiler behaviour", "Fine-tuning. The defaults suit most homes.")}
@@ -3869,6 +3911,7 @@ class NeatThermostatPanel extends HTMLElement {
               display: { idleMs: idleSec * 1000, panelEntity: "" },
               temperature_lock: Boolean(this.shadowRoot.getElementById("wpLock")?.checked),
               model: wallModel(this.shadowRoot.getElementById("wpModel")?.value).id,
+              kiosk_enabled: this.shadowRoot.getElementById("wpKioskEnabled")?.checked ?? this._wallDraft.kioskEnabled !== false,
               ...(this.shadowRoot.getElementById("wpKioskDevice")
                 ? {
                     kiosk_device: this.shadowRoot.getElementById("wpKioskDevice").value,
@@ -3891,6 +3934,11 @@ class NeatThermostatPanel extends HTMLElement {
           this._showToast(this._error, "err");
           this._render();
         }
+      });
+      this.shadowRoot.getElementById("wpKioskEnabled")?.addEventListener("change", (ev) => {
+        this._wallDraft.kioskEnabled = ev.target.checked;
+        const body = this.shadowRoot.getElementById("wpKioskBody");
+        if (body) body.hidden = !ev.target.checked;
       });
       this.shadowRoot.getElementById("deleteWallPanel")?.addEventListener("click", async () => {
         const id = this._wallEditingId;

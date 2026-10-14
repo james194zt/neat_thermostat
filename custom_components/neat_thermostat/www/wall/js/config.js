@@ -174,6 +174,20 @@ function readCachedNeatConfig(deviceId) {
   }
 }
 
+/** This screen's size, so Neat can show which shape the panel really is. Not from
+ *  Neat's own preview or a test page (those aren't the panel). */
+function realScreen() {
+  const params = new URLSearchParams(location.search);
+  if (params.has("embedded") || params.has("preview") || window.top !== window) return {};
+  return {
+    screen: {
+      width: Math.round(window.innerWidth),
+      height: Math.round(window.innerHeight),
+      scale: Number(window.devicePixelRatio || 1),
+    },
+  };
+}
+
 async function loadFromNeat(hassClient, deviceId) {
   if (!deviceId) return null;
   if (!hassClient?.request) {
@@ -184,6 +198,7 @@ async function loadFromNeat(hassClient, deviceId) {
   try {
     const result = await hassClient.request("neat_thermostat/get_wall_panel_config", {
       panel_id: deviceId,
+      ...realScreen(),
     });
     const config = result?.config || null;
     if (config) {

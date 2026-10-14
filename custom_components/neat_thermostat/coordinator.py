@@ -98,8 +98,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._kiosk_watched: dict[str, str] = {}
         self._kiosk_timers: dict[str, Any] = {}
         self._kiosk_attempts: dict[str, int] = {}
-        # Wall app version the panels were last given a cache-clearing reload for.
+        # Wall app version the panels were last given a cache-clearing reload for,
+        # and the screen each wall panel last reported ("screens").
         self._kiosk_store: Store = Store(hass, 1, f"{DOMAIN}.kiosk_{entry.entry_id}")
+        self._wall_screens: dict[str, dict[str, Any]] | None = None
         # Last seen heater availability, so a dropout is logged once.
         self._heater_available = True
         self._main_hvac_mode = "heat"
@@ -1421,6 +1423,35 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return home
         return configured
 
+    async def async_wall_screens(self) -> dict[str, dict[str, Any]]:
+        """Screen size each wall panel last reported (CSS px), by panel id."""
+        if self._wall_screens is None:
+            stored = await self._kiosk_store.async_load() or {}
+            self._wall_screens = dict(stored.get("screens") or {})
+        return self._wall_screens
+
+    async def async_report_wall_screen(self, panel_id: str, screen: dict[str, Any]) -> None:
+        """Remember a panel's real screen, so Neat can say which shape it is.
+        Saved only when the size changes (the app reports on every start)."""
+        if self.get_wall_panel(panel_id) is None:
+            return
+        try:
+            width = round(float(screen["width"]))
+            height = round(float(screen["height"]))
+            scale = round(float(screen.get("scale") or 1), 2)
+        except (KeyError, TypeError, ValueError):
+            return
+        if not (0 < width <= 10000 and 0 < height <= 10000):
+            return
+        screens = await self.async_wall_screens()
+        new = {"width": width, "height": height, "scale": scale}
+        old = screens.get(panel_id) or {}
+        if {k: old.get(k) for k in new} == new:
+            return
+        screens[panel_id] = {**new, "reported_at": dt_util.utcnow().isoformat()}
+        stored = await self._kiosk_store.async_load() or {}
+        await self._kiosk_store.async_save({**stored, "screens": screens})
+
     def wall_panel_payload(self, panel_id: str) -> dict[str, Any] | None:
         panel = self.get_wall_panel(panel_id)
         if panel is None:
@@ -1527,7 +1558,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for panel in self.config.wall_panels:
             if panel_id and panel.id != panel_id:
                 continue
-            if not panel.kiosk_device:
+            if not panel.linked_kiosk_device:
                 continue
             try:
                 out[panel.id] = await kiosk.async_apply(self.hass, panel, self.config.kiosk_defaults, force=force)
@@ -1539,8 +1570,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _kiosk_subscribe(self) -> None:
         watched: dict[str, str] = {}
         for panel in self.config.wall_panels:
-            if panel.kiosk_device:
-                for entity_id in kiosk.device_entities(self.hass, panel.kiosk_device).values():
+            if panel.linked_kiosk_device:
+                for entity_id in kiosk.device_entities(self.hass, panel.linked_kiosk_device).values():
                     watched[entity_id] = panel.id
         if self._kiosk_unsub is not None and watched == self._kiosk_watched:
             return
@@ -1574,7 +1605,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         async def _run(_now: Any) -> None:
             self._kiosk_timers.pop(panel_id, None)
             panel = self.get_wall_panel(panel_id)
-            if panel is None or not panel.kiosk_device or not self.config.kiosk_auto_sync:
+            if panel is None or not panel.linked_kiosk_device or not self.config.kiosk_auto_sync:
                 return
             status = kiosk.panel_status(self.hass, panel, self.config.kiosk_defaults)
             if not status.get("online"):
@@ -1604,17 +1635,17 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return []
         refreshed: list[str] = []
         for panel in self.config.wall_panels:
-            if not panel.kiosk_device:
+            if not panel.linked_kiosk_device:
                 continue
             status = kiosk.panel_status(self.hass, panel, self.config.kiosk_defaults)
             if not status.get("online") or not status.get("expected_url"):
                 continue
             try:
-                await kiosk.async_fresh_load(self.hass, panel.kiosk_device, status["expected_url"])
+                await kiosk.async_fresh_load(self.hass, panel.linked_kiosk_device, status["expected_url"])
                 refreshed.append(panel.id)
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("Neat: couldn't refresh wall panel %s: %s", panel.id, err)
-        await self._kiosk_store.async_save({"wall_version": version})
+        await self._kiosk_store.async_save({**stored, "wall_version": version})
         if refreshed:
             _LOGGER.info("Neat: wall app %s — cleared cache and reloaded %s", version, ", ".join(refreshed))
         return refreshed
@@ -1634,7 +1665,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         def _kiosk_check(_now: Any) -> None:
             # Safety net: catch drift on settings HA can only read occasionally.
             for panel in self.config.wall_panels:
-                if panel.kiosk_device:
+                if panel.linked_kiosk_device:
                     self._kiosk_schedule(panel.id, delay=1)
 
         self._unsubs.append(async_track_time_interval(self.hass, _kiosk_check, timedelta(minutes=10)))
