@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.46
+ * @version 0.6.47
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.46";
+const PANEL_VERSION = "0.6.47";
 // New-room defaults (match RoomConfig / DEFAULT_TARGET_TEMP / DEFAULT_ECO_TEMP).
 const ROOM_TEMP_DEFAULTS = { follow_house: true, house_offset: 0, hold_ends: "house_change", target_temp: 20, eco_temp: 16 };
 const HEAT_ORANGE = "#F57C00";
@@ -714,6 +714,15 @@ table.data tbody tr.room-row.selected {
 .hero-room-temp { font-size: 30px; font-weight: 400; letter-spacing: -0.03em; line-height: 1.15; font-variant-numeric: tabular-nums; }
 .hero-room-temp.unknown { color: var(--secondary-text-color); }
 .hero-room-target { font-size: 12px; color: var(--secondary-text-color); }
+/* Setpoint on the left, the TRV's battery right-aligned on the same line. */
+.hero-room-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 18px; }
+.hero-room-battery {
+  display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0;
+  font-size: 12px; font-variant-numeric: tabular-nums; color: var(--secondary-text-color);
+}
+.hero-room-battery svg { width: 14px; height: 14px; }
+.hero-room-battery.warn { color: var(--nt-amber, #ffc107); }
+.hero-room-battery.bad { color: var(--nt-red); }
 .hero-room.heat .hero-room-target { color: var(--nt-heat-soft); }
 .hero-empty { font-size: 13px; color: var(--secondary-text-color); margin: 0; }
 @media (max-width: 720px) {
@@ -1549,11 +1558,14 @@ class NeatThermostatPanel extends HTMLElement {
               ${!offline && heat ? `<span class="hero-room-flame" title="Calling for heat">${flameSvg()}</span>` : ""}
             </span>
             <span class="hero-room-temp${now == null ? " unknown" : ""}">${now == null ? "—" : `${this._escape(formatTemp(Math.round(now * 10) / 10))}°`}</span>
-            ${offline
-              ? `<span class="hero-room-target"><span class="hero-room-off">Offline</span></span>`
-              : roomOff
-                ? `<span class="hero-room-target">Off</span>`
-                : `<span class="hero-room-target">${heat ? "Heating to" : "Set"} ${this._escape(set ?? "—")}°</span>`}
+            <span class="hero-room-foot">
+              ${offline
+                ? `<span class="hero-room-target"><span class="hero-room-off">Offline</span></span>`
+                : roomOff
+                  ? `<span class="hero-room-target">Off</span>`
+                  : `<span class="hero-room-target">${heat ? "Heating to" : "Set"} ${this._escape(set ?? "—")}°</span>`}
+              ${offline ? "" : this._trvBatteryHtml(room.trv_entity)}
+            </span>
           </button>`;
       })
       .join("");
@@ -2338,6 +2350,44 @@ class NeatThermostatPanel extends HTMLElement {
       ? `<span class="set-state warn">Sonoff Button Showing</span>`
       : `<span class="set-state good">OK</span>`;
     return `${bits.join(" · ")} ${pill}`;
+  }
+
+  /** The battery sensor (%) on a TRV's device, like the Radiators card; cached per registry. */
+  _trvBatteryEntity(trvId) {
+    const entities = this._hass?.entities;
+    if (!trvId || !entities) return null;
+    if (this._batteryFor !== entities) {
+      this._batteryFor = entities;
+      this._batteryCache = new Map();
+    }
+    if (this._batteryCache.has(trvId)) return this._batteryCache.get(trvId);
+    let found = null;
+    const dev = entities[trvId]?.device_id;
+    if (dev) {
+      for (const [id, ent] of Object.entries(entities)) {
+        if (ent.device_id !== dev || id === trvId || ent.hidden || !id.startsWith("sensor.")) continue;
+        const st = this._hass.states[id];
+        if (st?.attributes?.device_class === "battery" && st.attributes.unit_of_measurement === "%") {
+          found = id;
+          break;
+        }
+      }
+    }
+    this._batteryCache.set(trvId, found);
+    return found;
+  }
+
+  /** Right-aligned battery level for a room tile ("" if the TRV has no battery sensor). */
+  _trvBatteryHtml(trvId) {
+    const id = this._trvBatteryEntity(trvId);
+    const pct = id ? Number(this._entityState(id)?.state) : NaN;
+    if (!Number.isFinite(pct)) return "";
+    const level = Math.max(0, Math.min(100, Math.round(pct)));
+    const cls = level <= 20 ? " bad" : level <= 35 ? " warn" : "";
+    // Battery outline with a fill that follows the level (body runs y 6..20).
+    const fillH = (14 * level) / 100;
+    return `<span class="hero-room-battery${cls}" title="Battery: ${level}%">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16 4h-1.5V2h-5v2H8a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1zm-1 16H9V6h6z"/><rect fill="currentColor" x="10" y="${(19 - fillH).toFixed(1)}" width="4" height="${fillH.toFixed(1)}"/></svg>${level}%</span>`;
   }
 
   /** "Updated to 0.2.1 at 2026-10-14T14:09:53" → "14 Oct, 14:09"; other states as they are. */
