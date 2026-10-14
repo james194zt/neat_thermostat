@@ -212,7 +212,13 @@ async def test_panel_without_fully_is_left_alone(hass, setup, monkeypatch):
     assert await coord.async_kiosk_apply() == {}
     monkeypatch.setattr(kiosk, "bundled_wall_version", lambda _dir: "2.0.59")
     assert await coord.async_kiosk_version_refresh() == []
-    assert not any(v for k, v in calls.items() if k != "order")
+    # Only the panel's own Fully entities count: the heating loop may switch the test
+    # boiler (switch.boiler) on meanwhile, which once made this test flaky.
+    touched = [
+        c for k, v in calls.items() if k != "order" for c in v
+        if P in str(c.data.get("entity_id", "")) or c.data.get("device_id") == device_id
+    ]
+    assert not touched
 
 
 async def test_wall_screen_report_is_kept_per_panel(hass, setup, monkeypatch):
