@@ -49,6 +49,9 @@ DEFAULT_MAX_TEMP = 30.0
 DEFAULT_TRUE_RADIANT = True
 DEFAULT_AUTO_SCHEDULE = False
 DEFAULT_AWAY_DELAY_MINUTES = 20
+# A window or door must stay open this long before the heating stops, so someone
+# walking out (or airing a room for a moment) doesn't switch it off.
+DEFAULT_WINDOW_OPEN_DELAY_MINUTES = 3.0
 DEFAULT_LEAF_ENABLED = True
 DEFAULT_SAFETY_TEMP_ENABLED = True
 DEFAULT_SAFETY_MIN_TEMP = 7.0

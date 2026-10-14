@@ -565,12 +565,21 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         state = self.hass.states.get(entity_id)
         return state is not None and state.state in (STATE_ON, "heat", "heating")
 
-    def _any_window_open(self, sensors: list[str]) -> bool:
+    def _any_window_open(self, sensors: list[str], *, delayed: bool = True) -> bool:
+        """A window or door that has stayed open for the set delay (Settings → Windows & Doors).
+
+        Timed from the sensor's own last change in HA, so a door opened for a moment never stops the
+        heating and nothing has to be remembered across a restart. The 30-second tick picks up the
+        moment the delay runs out. delayed=False: open at all (a brief opening still spoils a
+        radiator-coast measurement).
+        """
+        delay = timedelta(minutes=float(self.config.window_open_delay_minutes)) if delayed else timedelta(0)
+        now = dt_util.utcnow()
         for entity_id in sensors:
             state = self.hass.states.get(entity_id)
             if state is None:
                 continue
-            if state.state in (STATE_OPEN, STATE_ON, "on", "open"):
+            if state.state in (STATE_OPEN, STATE_ON, "on", "open") and now - state.last_changed >= delay:
                 return True
         return False
 
@@ -1073,7 +1082,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             boiler_on=heating,
             house_calling=self._house_calling or self._safety_active,
             current_temp=self._house_temp(),
-            disturbed=disturbed or self._any_window_open(self.config.window_sensors),
+            disturbed=disturbed or self._any_window_open(self.config.window_sensors, delayed=False),
             # A boiler that isn't heating has no coast to learn.
             learn=self.intel.state.heat_check.fault_since is None,
             now=self._now(),

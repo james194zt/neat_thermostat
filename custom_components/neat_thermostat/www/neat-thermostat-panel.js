@@ -1,7 +1,7 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.47
+ * @version 0.6.48
  */
 const NAV = [
   { id: "overview", label: "Overview" },
@@ -45,7 +45,7 @@ const MONTHS = [
   "December",
 ];
 
-const PANEL_VERSION = "0.6.47";
+const PANEL_VERSION = "0.6.48";
 // New-room defaults (match RoomConfig / DEFAULT_TARGET_TEMP / DEFAULT_ECO_TEMP).
 const ROOM_TEMP_DEFAULTS = { follow_house: true, house_offset: 0, hold_ends: "house_change", target_temp: 20, eco_temp: 16 };
 const HEAT_ORANGE = "#F57C00";
@@ -3436,9 +3436,10 @@ class NeatThermostatPanel extends HTMLElement {
           ${row("Away delay", "How long everyone must be gone before Away (Eco) starts.", num("awayDelay", cfg.away_delay_minutes ?? 20, "min", 'min="0" max="180" step="5"'))}
         </div>
         <div class="card">
-          ${head(ICONS.window, "", "Windows & doors", "While any of these is open, the house stops calling for heat.", count("window_sensors"))}
+          ${head(ICONS.window, "", "Windows & Doors", "When one of these stays open, the house stops calling for heat until it's shut.", count("window_sensors"))}
           <div class="set-list" data-settings-list="window_sensors">${this._renderSettingsList("window_sensors")}</div>
           <div class="entity-picker-host set-add" data-settings-picker="window_sensors"></div>
+          ${row("Pause heating after", "How long a window or door must stay open first, so walking through a door doesn't stop the heating. Rooms' own sensors use it too. 0 = straight away.", stepper("windowDelay", cfg.window_open_delay_minutes ?? 3, "min", 0, 30, 1))}
         </div>
       </div>
       <div class="ov-grid">
@@ -3901,6 +3902,7 @@ class NeatThermostatPanel extends HTMLElement {
             sensor_stale_minutes: Math.min(720, Math.max(15, Math.round(Number(this.shadowRoot.getElementById("sensorStale").value) || 60))),
             fast_sensor_reporting: this.shadowRoot.getElementById("fastReporting").checked,
             window_sensors: devices.window_sensors || [],
+            window_open_delay_minutes: Math.min(30, Math.max(0, Math.round(Number(this.shadowRoot.getElementById("windowDelay")?.value ?? 3)))),
             presence_entities: devices.presence_entities || [],
             // Presence picker now holds everyone; clear the old single-person field.
             person_entity: "",

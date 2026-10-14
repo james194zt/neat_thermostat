@@ -11,6 +11,7 @@ from .const import (
     DEFAULT_ADAPTIVE_COMFORT,
     DEFAULT_AUTO_SCHEDULE,
     DEFAULT_AWAY_DELAY_MINUTES,
+    DEFAULT_WINDOW_OPEN_DELAY_MINUTES,
     DEFAULT_AWAY_TEMP,
     DEFAULT_BOOST_TEMP,
     DEFAULT_COLD_TOLERANCE,
@@ -190,6 +191,8 @@ class NeatConfig:
     temperature_sensor: str
     window_sensors: list[str] = field(default_factory=list)
     rooms: list[RoomConfig] = field(default_factory=list)
+    # How long a window or door must stay open before it stops the heat (0 = at once).
+    window_open_delay_minutes: float = DEFAULT_WINDOW_OPEN_DELAY_MINUTES
     eco_temp: float = DEFAULT_ECO_TEMP
     boost_temp: float = DEFAULT_BOOST_TEMP
     away_temp: float = DEFAULT_AWAY_TEMP
@@ -235,6 +238,7 @@ class NeatConfig:
             "heater": self.heater,
             "temperature_sensor": self.temperature_sensor,
             "window_sensors": self.window_sensors,
+            "window_open_delay_minutes": self.window_open_delay_minutes,
             "rooms": [r.to_dict() for r in self.rooms],
             "eco_temp": self.eco_temp,
             "boost_temp": self.boost_temp,
@@ -289,6 +293,9 @@ class NeatConfig:
             heater=str(data.get("heater") or ""),
             temperature_sensor=str(data.get("temperature_sensor") or ""),
             window_sensors=list(data.get("window_sensors") or []),
+            window_open_delay_minutes=min(
+                30.0, max(0.0, float(data.get("window_open_delay_minutes", DEFAULT_WINDOW_OPEN_DELAY_MINUTES)))
+            ),
             rooms=[RoomConfig.from_dict(r) for r in rooms_raw],
             eco_temp=float(data.get("eco_temp", DEFAULT_ECO_TEMP)),
             boost_temp=float(data.get("boost_temp", DEFAULT_BOOST_TEMP)),
