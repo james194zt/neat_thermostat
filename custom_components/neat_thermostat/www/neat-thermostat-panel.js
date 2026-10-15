@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.53
+ * @version 0.6.54
  */
-const PANEL_VERSION = "0.6.53";
+const PANEL_VERSION = "0.6.54";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -1113,12 +1113,13 @@ function temperatureSensorFilter(stateObj) {
   return uom === "°C" || uom === "°F" || uom === "K" || uom === "celsius" || uom === "fahrenheit";
 }
 
-/** kWh meters with statistics (a boiler's own counter, or the gas supply's import). */
+/** Meters with statistics: kWh (a boiler's own counter, a smart meter's gas import) or gas volume (m³, ft³, CCF). */
 function energySensorFilter(stateObj) {
   if (!stateObj) return false;
-  if (stateObj.attributes?.device_class === "energy") return true;
+  const dc = stateObj.attributes?.device_class;
+  if (dc === "energy" || dc === "gas") return true;
   const uom = stateObj.attributes?.unit_of_measurement;
-  return uom === "kWh" || uom === "Wh" || uom === "MWh";
+  return ["kWh", "Wh", "MWh", "m³", "ft³", "CCF", "MCF"].includes(uom);
 }
 
 function humiditySensorFilter(stateObj) {

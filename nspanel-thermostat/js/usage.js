@@ -1,4 +1,4 @@
-/* Usage page: the last 24 hours of heating, kWh and Leaf, one swipe left of the dial.
+/* Usage page: the last 24 hours of heating, gas/energy and Leaf, one swipe left of the dial.
 
    The page sits to the dial's right: a finger moving right-to-left brings it in, left-to-right
    (or the back arrow) returns. Never from the left edge: that swipe opens Fully's menu. It always comes back to the dial on its own after a minute,
@@ -35,11 +35,18 @@ function fmtDuration(minutes) {
   return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
 }
 
-function fmtKwh(value) {
+// A meter in kWh or gas volume (m³, ft³, CCF): small volumes need more decimals.
+function fmtAmount(value, unit = "kWh") {
   const n = Number(value);
-  if (!Number.isFinite(n)) return "--";
-  return n >= 100 ? n.toFixed(0) : n.toFixed(1);
+  if (value == null || !Number.isFinite(n)) return "--";
+  if (n >= 100) return n.toFixed(0);
+  if (unit !== "kWh" && n < 10) return n.toFixed(2);
+  return n.toFixed(1);
 }
+
+// The chart's smallest full scale, about 0.5 kWh of gas in each unit, so a quiet
+// night doesn't fill the chart with tall bars.
+const CHART_FLOOR = { kWh: 0.5, "m³": 0.05, "ft³": 1.6, CCF: 0.016, MCF: 0.0016 };
 
 function svgEl(name, attrs, parent) {
   const node = document.createElementNS("http://www.w3.org/2000/svg", name);
@@ -224,16 +231,18 @@ export class UsagePage {
     const energy = d.energy;
     el("usageGasTile")?.classList.toggle("hidden", !energy);
     if (energy) {
-      el("usageKwh").textContent = fmtKwh(energy.today_kwh);
-      const gas = /gas/i.test(`${energy.entity_id} ${energy.name}`);
+      const unit = energy.unit || "kWh";
+      el("usageKwh").textContent = fmtAmount(energy.today, unit);
+      el("usageUnit").textContent = unit;
+      const gas = energy.kind === "volume" || /gas/i.test(`${energy.entity_id} ${energy.name}`);
       el("usageKwhLabel").textContent = gas ? "Gas today" : "Energy today";
-      const y = energy.yesterday_kwh;
+      const y = energy.yesterday;
       if (y == null) {
         el("usageKwhSub").textContent = "";
       } else {
-        const delta = Number(energy.today_kwh) - Number(y);
+        const delta = Number(energy.today) - Number(y);
         el("usageKwhSub").textContent =
-          Math.abs(delta) < 0.05 ? "Same as yesterday" : `${delta < 0 ? "▼" : "▲"} ${fmtKwh(Math.abs(delta))} vs yesterday`;
+          Math.abs(delta) < (CHART_FLOOR[unit] || 0.5) / 10 ? "Same as yesterday" : `${delta < 0 ? "▼" : "▲"} ${fmtAmount(Math.abs(delta), unit)} vs yesterday`;
       }
     }
 
@@ -328,6 +337,7 @@ export class UsagePage {
     svgEl("line", { x1: padL, x2: W - padR, y1: bottom, y2: bottom, class: "u-base" }, svg);
 
     if (!d) return;
+    const chips = [];
     const runs = d.runs || [];
     const energy = d.energy;
 
@@ -340,13 +350,14 @@ export class UsagePage {
     }
 
     if (energy) {
-      // kWh per hour.
+      // Used per hour.
       const hourly = (energy.hourly || []).filter((h) => h.m + 60 > 0);
-      const max = Math.max(0.5, ...hourly.map((h) => Number(h.kwh) || 0));
+      const unit = energy.unit || "kWh";
+      const max = Math.max(CHART_FLOOR[unit] ?? 0.5, ...hourly.map((h) => Number(h.v) || 0));
       const slot = (60 / span) * plotW;
       const gap = Math.max(1.5, slot * 0.18);
       for (const h of hourly) {
-        const v = Number(h.kwh) || 0;
+        const v = Number(h.v) || 0;
         if (v <= 0) continue;
         const x0 = x(h.m) + gap / 2;
         const x1 = x(h.m + 60) - gap / 2;
@@ -364,12 +375,11 @@ export class UsagePage {
         );
       }
       // Name the busiest hour on top of its bar.
-      const busiest = hourly.reduce((a, h) => ((Number(h.kwh) || 0) > (Number(a?.kwh) || 0) ? h : a), null);
-      if (busiest && Number(busiest.kwh) > 0) {
+      const busiest = hourly.reduce((a, h) => ((Number(h.v) || 0) > (Number(a?.v) || 0) ? h : a), null);
+      if (busiest && Number(busiest.v) > 0) {
         const cx = (x(busiest.m) + x(busiest.m + 60)) / 2;
-        const ty = bottom - Math.max(2, (Number(busiest.kwh) / max) * plotH * 0.92) - 0.8 * vmin;
-        const note = svgEl("text", { x: Math.min(W - padR - font, Math.max(padL + font, cx)), y: ty, class: "u-note", "text-anchor": "middle", "font-size": font }, svg);
-        note.textContent = fmtKwh(busiest.kwh);
+        const ty = bottom - Math.max(2, (Number(busiest.v) / max) * plotH * 0.92) - 0.8 * vmin;
+        chips.push({ x: Math.min(W - padR - font, Math.max(padL + font, cx)), y: ty, text: fmtAmount(busiest.v, unit), anchor: "middle", cls: "u-note" });
       }
     } else {
       // No meter: the runs themselves are the chart.
@@ -393,8 +403,24 @@ export class UsagePage {
       path += ` H${x(span)}`;
       svgEl("path", { d: path, class: "u-target" }, svg);
       const last = sp[sp.length - 1];
-      const tag = svgEl("text", { x: W - padR, y: y(last.t) - 0.9 * vmin, class: "u-target-text", "text-anchor": "end", "font-size": font }, svg);
-      tag.textContent = `${Number(last.t).toFixed(1).replace(/\.0$/, "")}°`;
+      chips.push({ x: W - padR, y: y(last.t) - 0.9 * vmin, text: `${Number(last.t).toFixed(1).replace(/\.0$/, "")}°`, anchor: "end", cls: "u-target-text" });
+    }
+
+    // Value labels on a dark backing, after the lines, so a line never runs through them.
+    for (const chip of chips) {
+      const text = svgEl("text", { x: chip.x, y: chip.y, class: chip.cls, "text-anchor": chip.anchor, "font-size": font }, svg);
+      text.textContent = chip.text;
+      let box = null;
+      try {
+        box = text.getBBox();
+      } catch {
+        // Not laid out (hidden): no backing.
+      }
+      if (box && box.width) {
+        const pad = 0.6 * vmin;
+        const back = svgEl("rect", { x: box.x - pad, y: box.y - pad / 2, width: box.width + pad * 2, height: box.height + pad, rx: (box.height + pad) / 2, class: "u-chip" });
+        svg.insertBefore(back, text);
+      }
     }
 
     // Axis labels last, so nothing draws over them.
@@ -410,7 +436,7 @@ export class UsagePage {
     const legend = el("usageLegend");
     if (legend) {
       legend.innerHTML = [
-        energy ? `<span class="lg lg-gas">kWh</span>` : "",
+        energy ? `<span class="lg lg-gas">${energy.unit || "kWh"}</span>` : "",
         `<span class="lg lg-run">Boiler on</span>`,
         sp.length ? `<span class="lg lg-target">Target</span>` : "",
       ].join("");

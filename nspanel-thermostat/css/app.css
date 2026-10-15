@@ -1095,8 +1095,13 @@ button {
   font-weight: 700;
 }
 
+.u-chip {
+  fill: #23272d;
+  opacity: 0.92;
+}
+
 .u-note {
-  fill: var(--text-muted);
+  fill: var(--text);
   font-weight: 600;
 }
 

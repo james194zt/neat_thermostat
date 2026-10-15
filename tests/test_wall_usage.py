@@ -68,7 +68,8 @@ def test_empty_history():
     assert out["runs"] == [] and out["setpoints"] == [] and out["prev_on_minutes"] == 0
 
 
-async def test_energy_from_recorder_statistics(recorder_mock, hass):
+async def _import_meter(hass, entity_id, unit_class, unit, per_hour):
+    """+per_hour every hour for the last 40 hours, as a lifetime counter."""
     from homeassistant.components.recorder.models import StatisticData, StatisticMeanType, StatisticMetaData
     from homeassistant.components.recorder.statistics import async_import_statistics
     from homeassistant.util import dt as dt_util
@@ -76,40 +77,70 @@ async def test_energy_from_recorder_statistics(recorder_mock, hass):
         async_wait_recording_done,
     )
 
-    from custom_components.neat_thermostat.energy_meter import async_energy_usage
-
     await hass.config.async_set_time_zone("Europe/London")
     now = dt_util.utcnow()
     hour = now.replace(minute=0, second=0, microsecond=0)
-    # A lifetime gas meter in Wh (converted to kWh), +1 kWh every hour for 40 hours.
     rows = []
     total = 500_000.0
     for i in range(40, 0, -1):
-        total += 1000.0
+        total += per_hour
         rows.append(StatisticData(start=hour - timedelta(hours=i), state=total, sum=total))
     meta = StatisticMetaData(
         mean_type=StatisticMeanType.NONE,
         has_sum=True,
-        name="Gas import",
+        name="Gas",
         source="recorder",
-        statistic_id="sensor.gas_import",
-        unit_class="energy",
-        unit_of_measurement="Wh",
+        statistic_id=entity_id,
+        unit_class=unit_class,
+        unit_of_measurement=unit,
     )
-    hass.states.async_set("sensor.gas_import", "540000", {"friendly_name": "Gas import", "unit_of_measurement": "Wh"})
+    hass.states.async_set(entity_id, str(total), {"friendly_name": "Gas meter", "unit_of_measurement": unit})
     async_import_statistics(hass, meta, rows)
     await async_wait_recording_done(hass)
+    day_start = dt_util.start_of_local_day(dt_util.as_local(now))
+    return int((hour - day_start).total_seconds() // 3600)
 
+
+def _check_hourly(out, per_hour):
+    full = [h for h in out["hourly"] if h["m"] < 1440 - 60]
+    assert full and all(h["v"] == pytest.approx(per_hour) for h in full)
+    assert all(-60 < h["m"] <= 1440 for h in out["hourly"])
+    assert out["last_24h"] == pytest.approx(sum(h["v"] for h in out["hourly"] if h["m"] >= 0))
+
+
+async def test_energy_meter_in_wh_shown_in_kwh(recorder_mock, hass):
+    from custom_components.neat_thermostat.energy_meter import async_energy_usage
+
+    hours_today = await _import_meter(hass, "sensor.gas_import", "energy", "Wh", 1000.0)
     out = await async_energy_usage(hass, "sensor.gas_import")
     assert out is not None
-    assert out["entity_id"] == "sensor.gas_import" and out["name"] == "Gas import"
-    full = [h for h in out["hourly"] if h["m"] < 1440 - 60]
-    assert full and all(h["kwh"] == pytest.approx(1.0) for h in full)
-    assert all(-60 < h["m"] <= 1440 for h in out["hourly"])
-    day_start = dt_util.start_of_local_day(dt_util.as_local(now))
-    hours_today = int((hour - day_start).total_seconds() // 3600)
-    assert out["today_kwh"] == pytest.approx(hours_today)
-    assert out["last_24h_kwh"] == pytest.approx(sum(h["kwh"] for h in out["hourly"] if h["m"] >= 0))
+    assert out["entity_id"] == "sensor.gas_import" and out["name"] == "Gas meter"
+    assert out["unit"] == "kWh" and out["kind"] == "energy"
+    _check_hourly(out, 1.0)
+    assert out["today"] == pytest.approx(hours_today)
+
+
+async def test_gas_meter_in_litres_shown_in_m3(recorder_mock, hass):
+    from custom_components.neat_thermostat.energy_meter import async_energy_usage
+
+    # 250 L an hour = 0.25 m³.
+    hours_today = await _import_meter(hass, "sensor.gas_volume", "volume", "L", 250.0)
+    out = await async_energy_usage(hass, "sensor.gas_volume")
+    assert out["unit"] == "m³" and out["kind"] == "volume"
+    _check_hourly(out, 0.25)
+    assert out["today"] == pytest.approx(hours_today * 0.25)
+
+
+def test_display_units():
+    from custom_components.neat_thermostat.energy_meter import display_unit
+
+    assert display_unit("energy", "MJ") == ("kWh", {"energy": "kWh"})
+    assert display_unit("volume", "m³") == ("m³", {"volume": "m³"})
+    assert display_unit("volume", "ft³") == ("ft³", {"volume": "ft³"})
+    assert display_unit("volume", "CCF") == ("CCF", {"volume": "CCF"})
+    assert display_unit("volume", "gal") == ("m³", {"volume": "m³"})
+    assert display_unit("temperature", "°C") is None
+    assert display_unit(None, None) is None
 
 
 async def test_energy_none_without_sensor_or_recorder(hass):

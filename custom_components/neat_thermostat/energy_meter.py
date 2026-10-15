@@ -1,9 +1,10 @@
-"""kWh used by the heating, read from a meter's statistics in Home Assistant.
+"""Gas or energy used by the heating, read from a meter's statistics in Home Assistant.
 
-Any kWh sensor HA keeps statistics for works (a boiler's own counter, or a smart
-meter's gas import): a lifetime total or one that resets daily. The recorder's
-"change" handles both, and it includes the last few minutes (5-minute statistics),
-so "today" is current.
+Any meter HA keeps statistics for works: a boiler's own kWh counter, a smart meter's
+gas import in kWh, or a gas meter in m³ (or ft³ / CCF). Energy is shown in kWh; gas
+volume stays in what the meter measures (litres become m³). A lifetime total or one
+that resets daily both work: the recorder's "change" handles both, and it includes
+the last few minutes (5-minute statistics), so "today" is current.
 """
 
 from __future__ import annotations
@@ -17,32 +18,48 @@ from homeassistant.util import dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
 
-UNITS = {"energy": "kWh"}
+# Volume units shown as they are; any other volume (L, gal…) is shown in m³.
+KEEP_VOLUME_UNITS = {"m³", "ft³", "CCF", "MCF"}
 
 
-def _change(hass: HomeAssistant, entity_id: str, start: datetime, end: datetime | None) -> float | None:
+def display_unit(unit_class: str | None, unit: str | None) -> tuple[str, dict[str, str]] | None:
+    """(unit to show, recorder `units` conversion) for a meter, or None if it isn't one."""
+    if unit_class == "energy":
+        return "kWh", {"energy": "kWh"}
+    if unit_class == "volume":
+        shown = unit if unit in KEEP_VOLUME_UNITS else "m³"
+        return shown, {"volume": shown}
+    return None
+
+
+def _change(hass, entity_id, start, end, units) -> float | None:
     from homeassistant.components.recorder.statistics import statistic_during_period
 
-    result = statistic_during_period(hass, start, end, entity_id, {"change"}, UNITS)
-    value = result.get("change")
+    value = statistic_during_period(hass, start, end, entity_id, {"change"}, units).get("change")
     return None if value is None else max(0.0, float(value))
 
 
 def _read(hass: HomeAssistant, entity_id: str, now: datetime, hours: int) -> dict[str, Any] | None:
-    from homeassistant.components.recorder.statistics import statistics_during_period
+    from homeassistant.components.recorder.statistics import get_metadata, statistics_during_period
+
+    meta = get_metadata(hass, statistic_ids={entity_id}).get(entity_id)
+    if meta is None:
+        return None  # no statistics for this sensor (no state_class, or not recorded)
+    shown = display_unit(meta[1].get("unit_class"), meta[1].get("unit_of_measurement"))
+    if shown is None:
+        return None
+    unit, units = shown
 
     since = now - timedelta(hours=hours)
     day_start = dt_util.start_of_local_day(dt_util.as_local(now))
-    today = _change(hass, entity_id, day_start, None)
-    if today is None:
-        return None  # no statistics for this sensor (no state_class, or not recorded)
+    today = _change(hass, entity_id, day_start, None, units)
     # Yesterday up to the same time of day, for "vs yesterday".
-    yesterday = _change(hass, entity_id, day_start - timedelta(days=1), now - timedelta(days=1))
+    yesterday = _change(hass, entity_id, day_start - timedelta(days=1), now - timedelta(days=1), units)
 
     hour_start = now.replace(minute=0, second=0, microsecond=0)
     first = since.replace(minute=0, second=0, microsecond=0)
     rows = statistics_during_period(
-        hass, first, hour_start, {entity_id}, "hour", UNITS, {"change"}
+        hass, first, hour_start, {entity_id}, "hour", units, {"change"}
     ).get(entity_id, [])
     hourly: list[dict[str, float]] = []
     for row in rows:
@@ -51,24 +68,24 @@ def _read(hass: HomeAssistant, entity_id: str, now: datetime, hours: int) -> dic
         if start is None or change is None:
             continue
         at = datetime.fromtimestamp(float(start), tz=dt_util.UTC)
-        hourly.append(
-            {"m": round((at - since).total_seconds() / 60.0, 1), "kwh": round(max(0.0, float(change)), 3)}
-        )
+        hourly.append({"m": round((at - since).total_seconds() / 60.0, 1), "v": round(max(0.0, float(change)), 3)})
     # The hour in progress isn't an hourly statistic yet.
-    current = _change(hass, entity_id, hour_start, None)
+    current = _change(hass, entity_id, hour_start, None, units)
     if current is not None:
-        hourly.append({"m": round((hour_start - since).total_seconds() / 60.0, 1), "kwh": round(current, 3)})
+        hourly.append({"m": round((hour_start - since).total_seconds() / 60.0, 1), "v": round(current, 3)})
 
     return {
-        "today_kwh": round(today, 2),
-        "yesterday_kwh": None if yesterday is None else round(yesterday, 2),
+        "unit": unit,
+        "kind": "volume" if units.get("volume") else "energy",
+        "today": None if today is None else round(today, 3),
+        "yesterday": None if yesterday is None else round(yesterday, 3),
         "hourly": hourly,
-        "last_24h_kwh": round(sum(h["kwh"] for h in hourly if h["m"] >= 0), 2),
+        "last_24h": round(sum(h["v"] for h in hourly if h["m"] >= 0), 3),
     }
 
 
 async def async_energy_usage(hass: HomeAssistant, entity_id: str, hours: int = 24) -> dict[str, Any] | None:
-    """kWh today, yesterday by now, and per hour over the window; None if unknown."""
+    """Used today, yesterday by now, and per hour over the window; None if unknown."""
     if not entity_id or "recorder" not in hass.config.components:
         return None
     from homeassistant.components.recorder import get_instance
