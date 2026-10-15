@@ -1,7 +1,7 @@
-/* Usage page: the last 24 hours of heating, kWh and Leaf, one swipe right of the dial.
+/* Usage page: the last 24 hours of heating, kWh and Leaf, one swipe left of the dial.
 
-   The page sits to the dial's left: a finger moving right brings it in, moving left (or
-   the back arrow) returns. It always comes back to the dial on its own after a minute,
+   The page sits to the dial's right: a finger moving right-to-left brings it in, left-to-right
+   (or the back arrow) returns. Never from the left edge: that swipe opens Fully's menu. It always comes back to the dial on its own after a minute,
    and when the screen sleeps or wakes, so nobody walks up to a report. */
 
 const RETURN_AFTER_MS = 60000;
@@ -10,6 +10,8 @@ const REFRESH_MS = 60000;
 const COMMIT_SHARE = 0.25;
 const COMMIT_SPEED = 0.5; // px per ms
 const SLOP_PX = 12;
+// Fully Kiosk opens its menu on a swipe from the left edge; leave those alone.
+const LEFT_EDGE_PX = 28;
 
 // Two-tone icons on white badges: cartoon-bright on the coloured tiles.
 const ICONS = {
@@ -125,8 +127,8 @@ export class UsagePage {
     const t = animate ? "transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)" : "none";
     this.page.style.transition = t;
     this.dialPage.style.transition = t;
-    this.page.style.transform = `translate3d(${((p - 1) * w).toFixed(1)}px,0,0)`;
-    this.dialPage.style.transform = p > 0 ? `translate3d(${(p * w).toFixed(1)}px,0,0)` : "";
+    this.page.style.transform = `translate3d(${((1 - p) * w).toFixed(1)}px,0,0)`;
+    this.dialPage.style.transform = p > 0 ? `translate3d(${(-p * w).toFixed(1)}px,0,0)` : "";
   }
 
   armReturn() {
@@ -145,6 +147,7 @@ export class UsagePage {
     this.gesture = null;
     if (ev.pointerType === "mouse" && ev.button !== 0) return;
     if (this.dialPage.hidden) return;
+    if (ev.clientX < LEFT_EDGE_PX) return;
     if (!this.open && !this.swipeAllowed(ev)) return;
     this.gesture = { x: ev.clientX, y: ev.clientY, t: performance.now(), id: ev.pointerId, locked: false, dx: 0 };
   }
@@ -156,9 +159,9 @@ export class UsagePage {
     const dy = ev.clientY - g.y;
     if (!g.locked) {
       if (Math.abs(dx) < SLOP_PX && Math.abs(dy) < SLOP_PX) return;
-      // Sideways, and the way that leads somewhere: right from the dial, left from usage.
+      // Sideways, and the way that leads somewhere: leftwards from the dial, rightwards from usage.
       const sideways = Math.abs(dx) > Math.abs(dy) * 1.5;
-      const towards = this.open ? dx < 0 : dx > 0;
+      const towards = this.open ? dx > 0 : dx < 0;
       if (!sideways || !towards) {
         this.gesture = null;
         return;
@@ -169,7 +172,7 @@ export class UsagePage {
     }
     g.dx = dx;
     const w = window.innerWidth || 1;
-    const p = this.open ? 1 + Math.min(0, dx) / w : Math.max(0, dx) / w;
+    const p = this.open ? 1 - Math.max(0, dx) / w : Math.max(0, -dx) / w;
     this.setOffset(Math.min(1, Math.max(0, p)), false);
   }
 

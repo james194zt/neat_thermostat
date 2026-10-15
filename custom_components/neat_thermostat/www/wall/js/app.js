@@ -73,7 +73,7 @@ const ui = {
   pinError: document.getElementById("pinError"),
 };
 
-// Swipe right from the dial for the last 24 hours. Not from the dial's arc (that drag sets
+// Swipe right-to-left from the dial for the last 24 hours. Not from the dial's arc (that drag sets
 // the temperature) or a room strip that scrolls sideways, nor through an overlay.
 const usage = new UsagePage({
   dialPage: ui.app,

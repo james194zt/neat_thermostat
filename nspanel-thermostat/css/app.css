@@ -830,7 +830,7 @@ button {
   }
 }
 
-/* —— Page dots: which page you're on (usage | dial), in the header's spare middle —— */
+/* —— Page dots: which page you're on (dial | usage), in the header's spare middle —— */
 .app,
 .usage {
   touch-action: pan-y; /* sideways drags come to us as page swipes */
@@ -889,7 +889,7 @@ button {
     radial-gradient(80% 60% at 100% 0%, rgba(30, 111, 224, 0.16), transparent 70%),
     radial-gradient(70% 60% at 0% 100%, rgba(67, 182, 73, 0.12), transparent 70%),
     linear-gradient(180deg, var(--bg-hi), var(--bg));
-  transform: translate3d(-100%, 0, 0);
+  transform: translate3d(100%, 0, 0);
 }
 
 .usage[hidden] {

@@ -24,8 +24,8 @@
     <div class="app" id="app" hidden>
       <header class="top">
         <div class="page-dots" aria-hidden="true">
-          <button type="button" class="page-dot" data-go="usage" tabindex="-1"></button>
           <button type="button" class="page-dot on" data-go="dial" tabindex="-1"></button>
+          <button type="button" class="page-dot" data-go="usage" tabindex="-1"></button>
         </div>
         <button class="top-back hidden" id="backToHome" type="button" aria-label="Back to the house">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/></svg>
@@ -117,12 +117,12 @@
       <div class="sr-only" id="statusRow"></div>
     </div>
 
-    <!-- Usage: swipe right from the dial (it sits to the dial's left). js/usage.js -->
+    <!-- Usage: swipe right-to-left from the dial (it sits to the dial's right). js/usage.js -->
     <section class="usage" id="usagePage" hidden aria-label="Heating usage">
       <header class="top usage-top">
         <div class="page-dots" aria-hidden="true">
-          <button type="button" class="page-dot on" data-go="usage" tabindex="-1"></button>
           <button type="button" class="page-dot" data-go="dial" tabindex="-1"></button>
+          <button type="button" class="page-dot on" data-go="usage" tabindex="-1"></button>
         </div>
         <button class="top-back" id="usageBack" type="button" aria-label="Back to the thermostat">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/></svg>
