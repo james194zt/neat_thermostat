@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.55
+ * @version 0.6.56
  */
-const PANEL_VERSION = "0.6.55";
+const PANEL_VERSION = "0.6.56";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -834,10 +834,13 @@ table.data tbody tr.room-row.selected {
 }
 .nest-time-axis {
   grid-column: 2;
-  display: flex; justify-content: space-between;
-  padding: 10px 0 4px; font-size: 11px; color: var(--secondary-text-color);
+  position: relative; height: 14px; margin: 10px 0 4px;
+  font-size: 11px; color: var(--secondary-text-color);
   font-weight: 500;
 }
+.nest-time-axis span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+/* Noon sits between 11a and 1p: too tight on a phone. */
+@media (max-width: 600px) { .nest-time-axis span:nth-child(7) { display: none; } }
 .nest-schedule-actions {
   display: flex; justify-content: space-between; align-items: center;
   padding: 8px 12px 4px; gap: 8px; flex-wrap: wrap;
@@ -845,16 +848,10 @@ table.data tbody tr.room-row.selected {
 .nest-schedule-actions .group { display: flex; gap: 4px; }
 .nest-add-row {
   display: flex; gap: 10px; flex-wrap: wrap; align-items: end;
-  padding: 8px 12px 12px; border-top: 1px solid var(--divider-color);
+  padding: 8px 12px 12px;
 }
-.nest-status-dots {
-  display: inline-flex; gap: 6px; align-items: center; margin-left: auto;
-}
-.nest-status-dots i {
-  width: 8px; height: 8px; border-radius: 50%; display: inline-block;
-}
-.nest-status-dots .heat { background: var(--nt-heat); }
-.nest-status-dots .idle { background: #9aa0a6; }
+.nest-edit-note { margin: 0; padding: 10px 12px 0; border-top: 1px solid var(--divider-color); font-size: 13px; color: var(--secondary-text-color); }
+.nest-edit-note.editing { color: var(--primary-text-color); font-weight: 600; }
 .intel-chip {
   display: inline-flex; align-items: center; gap: 8px;
   margin: 0 0 14px; padding: 8px 14px; border-radius: 999px;
@@ -2109,8 +2106,9 @@ class NeatThermostatPanel extends HTMLElement {
   }
 
   _timeAxisLabels() {
-    const hours = ["1a", "3a", "5a", "7a", "9a", "11a", "noon", "1p", "3p", "5p", "7p", "9p", "11p"];
-    return hours.map((h) => `<span>${t(`schedule.axis.${h}`)}</span>`).join("");
+    // Each label at its real time, on the same 0–24 h scale as the dots.
+    const hours = [["1a", 1], ["3a", 3], ["5a", 5], ["7a", 7], ["9a", 9], ["11a", 11], ["noon", 12], ["1p", 13], ["3p", 15], ["5p", 17], ["7p", 19], ["9p", 21], ["11p", 23]];
+    return hours.map(([key, h]) => `<span style="left:${((h / 24) * 100).toFixed(2)}%">${t(`schedule.axis.${key}`)}</span>`).join("");
   }
 
   _renderSchedule() {
@@ -2118,6 +2116,11 @@ class NeatThermostatPanel extends HTMLElement {
     const enabled = this._cfg().schedule_enabled !== false;
     const eco = this._cfg().eco_temp ?? 16;
     const sel = this._selectedPoint;
+    // The form below shows the selected block (and edits it), or a new block.
+    const selBlock = sel ? (schedule[sel.day] || [])[sel.index] || null : null;
+    const form = selBlock
+      ? { day: sel.day, start: selBlock.start, end: selBlock.end, temp: selBlock.temperature }
+      : { day: this._selectedDay, start: "06:30", end: "08:30", temp: this._mainTarget() ?? 20 };
 
     const rows = DAYS.map((day) => {
       const blocks = schedule[day] || [];
@@ -2150,9 +2153,6 @@ class NeatThermostatPanel extends HTMLElement {
               <option value="false" ${!enabled ? "selected" : ""}>${t("common.off")}</option>
             </select>
           </label>
-          <div class="nest-status-dots" title="${this._escape(t("schedule.dots_tip"))}">
-            <i class="heat"></i><i class="idle"></i>
-          </div>
         </div>
         <div class="nest-schedule-grid">
           ${rows}
@@ -2169,13 +2169,16 @@ class NeatThermostatPanel extends HTMLElement {
             <button type="button" class="linkish" id="schedAdd">${t("schedule.add")}</button>
           </div>
         </div>
+        <p class="nest-edit-note${selBlock ? " editing" : ""}">${selBlock
+          ? t("schedule.editing", { day: DAY_SHORT[sel.day], start: this._escape(selBlock.start), end: this._escape(selBlock.end) })
+          : t("schedule.new_block")}</p>
         <div class="nest-add-row">
           <label class="field">${t("schedule.day")}
-            <select id="addDay">${DAYS.map((d) => `<option value="${d}" ${this._selectedDay === d ? "selected" : ""}>${DAY_SHORT[d]}</option>`).join("")}</select>
+            <select id="addDay">${DAYS.map((d) => `<option value="${d}" ${form.day === d ? "selected" : ""}>${DAY_SHORT[d]}</option>`).join("")}</select>
           </label>
-          <label class="field">${t("schedule.start")}<input id="addStart" type="time" value="06:30" /></label>
-          <label class="field">${t("schedule.end")}<input id="addEnd" type="time" value="08:30" /></label>
-          <label class="field">${t("schedule.temp")}<input id="addTemp" type="number" step="0.5" value="${this._escape(this._mainTarget() ?? 20)}" /></label>
+          <label class="field">${t("schedule.start")}<input id="addStart" type="time" value="${this._escape(form.start)}" /></label>
+          <label class="field">${t("schedule.end")}<input id="addEnd" type="time" value="${this._escape(form.end)}" /></label>
+          <label class="field">${t("schedule.temp")}<input id="addTemp" type="number" step="0.5" value="${this._escape(form.temp)}" /></label>
           <button type="button" class="primary" id="saveSchedule">${t("schedule.save")}</button>
         </div>
         <p class="muted" style="margin:0 12px 8px">${t("schedule.help", { eco: this._escape(eco) })}</p>
@@ -3995,7 +3998,46 @@ class NeatThermostatPanel extends HTMLElement {
       this._flash = t("schedule.removed");
       this._render();
     });
+    // With a block selected, the form edits it: day, times and temperature apply as they change.
+    const editSelectedBlock = () => {
+      const sel = this._selectedPoint;
+      if (!sel) return;
+      const day = this.shadowRoot.getElementById("addDay")?.value || sel.day;
+      const start = this.shadowRoot.getElementById("addStart")?.value;
+      const end = this.shadowRoot.getElementById("addEnd")?.value;
+      const temperature = Number(this.shadowRoot.getElementById("addTemp")?.value);
+      if (!start || !end || !Number.isFinite(temperature)) return;
+      let index = -1;
+      this._mutateSchedule((schedule) => {
+        const from = [...(schedule[sel.day] || [])];
+        const [block] = from.splice(sel.index, 1);
+        if (!block) return;
+        schedule[sel.day] = from;
+        const edited = { ...block, start, end, temperature };
+        const to = day === sel.day ? from : [...(schedule[day] || [])];
+        to.push(edited);
+        to.sort((a, b) => parseHHMM(a.start) - parseHHMM(b.start));
+        schedule[day] = to;
+        index = to.indexOf(edited);
+      });
+      if (index < 0) return;
+      this._selectedDay = day;
+      this._selectedPoint = { day, index };
+      this._flash = t("schedule.updated");
+      this._render();
+    };
+    for (const id of ["addDay", "addStart", "addEnd", "addTemp"]) {
+      this.shadowRoot.getElementById(id)?.addEventListener("change", editSelectedBlock);
+    }
+
     this.shadowRoot.getElementById("schedAdd")?.addEventListener("click", () => {
+      if (this._selectedPoint) {
+        // The form is showing a block: switch it to a new one first.
+        this._selectedPoint = null;
+        this._flash = t("schedule.add_hint");
+        this._render();
+        return;
+      }
       const day = this.shadowRoot.getElementById("addDay")?.value || this._selectedDay;
       const start = this.shadowRoot.getElementById("addStart")?.value || "06:30";
       const end = this.shadowRoot.getElementById("addEnd")?.value || "08:30";
