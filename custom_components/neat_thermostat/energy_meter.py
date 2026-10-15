@@ -39,13 +39,19 @@ def _change(hass, entity_id, start, end, units) -> float | None:
     return None if value is None else max(0.0, float(value))
 
 
-def _read(hass: HomeAssistant, entity_id: str, now: datetime, hours: int) -> dict[str, Any] | None:
-    from homeassistant.components.recorder.statistics import get_metadata, statistics_during_period
+def _meter_units(hass: HomeAssistant, entity_id: str) -> tuple[str, dict[str, str]] | None:
+    from homeassistant.components.recorder.statistics import get_metadata
 
     meta = get_metadata(hass, statistic_ids={entity_id}).get(entity_id)
     if meta is None:
         return None  # no statistics for this sensor (no state_class, or not recorded)
-    shown = display_unit(meta[1].get("unit_class"), meta[1].get("unit_of_measurement"))
+    return display_unit(meta[1].get("unit_class"), meta[1].get("unit_of_measurement"))
+
+
+def _read(hass: HomeAssistant, entity_id: str, now: datetime, hours: int) -> dict[str, Any] | None:
+    from homeassistant.components.recorder.statistics import statistics_during_period
+
+    shown = _meter_units(hass, entity_id)
     if shown is None:
         return None
     unit, units = shown
@@ -84,16 +90,49 @@ def _read(hass: HomeAssistant, entity_id: str, now: datetime, hours: int) -> dic
     }
 
 
-async def async_energy_usage(hass: HomeAssistant, entity_id: str, hours: int = 24) -> dict[str, Any] | None:
-    """Used today, yesterday by now, and per hour over the window; None if unknown."""
+def _read_days(hass: HomeAssistant, entity_id: str, now: datetime, days: int) -> dict[str, Any] | None:
+    """Per local day: the total and 24 hourly amounts (DST's extra hour adds to its hour)."""
+    from homeassistant.components.recorder.statistics import statistics_during_period
+
+    shown = _meter_units(hass, entity_id)
+    if shown is None:
+        return None
+    unit, units = shown
+    first_day = dt_util.start_of_local_day(dt_util.as_local(now)) - timedelta(days=days - 1)
+    hour_start = now.replace(minute=0, second=0, microsecond=0)
+    rows = statistics_during_period(
+        hass, first_day, hour_start, {entity_id}, "hour", units, {"change"}
+    ).get(entity_id, [])
+    by_day: dict[str, list[float]] = {}
+
+    def add(at_utc: datetime, value: float) -> None:
+        local = dt_util.as_local(at_utc)
+        by_day.setdefault(local.date().isoformat(), [0.0] * 24)[local.hour] += max(0.0, value)
+
+    for row in rows:
+        if row.get("start") is not None and row.get("change") is not None:
+            add(datetime.fromtimestamp(float(row["start"]), tz=dt_util.UTC), float(row["change"]))
+    # The hour in progress isn't an hourly statistic yet.
+    current = _change(hass, entity_id, hour_start, None, units)
+    if current:
+        add(hour_start, current)
+    return {
+        "unit": unit,
+        "kind": "volume" if units.get("volume") else "energy",
+        "days": {
+            day: {"total": round(sum(hours), 3), "hours": [round(v, 3) for v in hours]}
+            for day, hours in by_day.items()
+        },
+    }
+
+
+async def _run(hass: HomeAssistant, entity_id: str, func, *args) -> dict[str, Any] | None:
     if not entity_id or "recorder" not in hass.config.components:
         return None
     from homeassistant.components.recorder import get_instance
 
     try:
-        data = await get_instance(hass).async_add_executor_job(
-            _read, hass, entity_id, dt_util.utcnow(), hours
-        )
+        data = await get_instance(hass).async_add_executor_job(func, hass, entity_id, dt_util.utcnow(), *args)
     except Exception:  # noqa: BLE001 - a usage page must never break on a meter
         _LOGGER.debug("Neat: couldn't read statistics for %s", entity_id, exc_info=True)
         return None
@@ -103,3 +142,13 @@ async def async_energy_usage(hass: HomeAssistant, entity_id: str, hours: int = 2
     data["entity_id"] = entity_id
     data["name"] = (state.attributes.get("friendly_name") if state else None) or entity_id
     return data
+
+
+async def async_energy_days(hass: HomeAssistant, entity_id: str, days: int = 31) -> dict[str, Any] | None:
+    """The meter per local day (total + hourly) for the Energy page; None if unknown."""
+    return await _run(hass, entity_id, _read_days, days)
+
+
+async def async_energy_usage(hass: HomeAssistant, entity_id: str, hours: int = 24) -> dict[str, Any] | None:
+    """Used today, yesterday by now, and per hour over the window; None if unknown."""
+    return await _run(hass, entity_id, _read, hours)

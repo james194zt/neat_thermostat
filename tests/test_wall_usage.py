@@ -148,3 +148,21 @@ async def test_energy_none_without_sensor_or_recorder(hass):
 
     assert await async_energy_usage(hass, "") is None
     assert await async_energy_usage(hass, "sensor.gas_import") is None  # recorder not loaded
+
+
+async def test_meter_per_day_and_hour_for_energy_page(recorder_mock, hass):
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.neat_thermostat.energy_meter import async_energy_days
+
+    hours_today = await _import_meter(hass, "sensor.gas_volume", "volume", "L", 250.0)
+    out = await async_energy_days(hass, "sensor.gas_volume", days=3)
+    assert out["unit"] == "m³" and out["entity_id"] == "sensor.gas_volume"
+    days = out["days"]
+    today = dt_util.as_local(dt_util.utcnow()).date().isoformat()
+    if hours_today:
+        assert days[today]["total"] == pytest.approx(hours_today * 0.25)
+        assert days[today]["hours"][:hours_today] == [pytest.approx(0.25)] * hours_today
+    assert all(len(d["hours"]) == 24 for d in days.values())
+    assert all(d["total"] == pytest.approx(sum(d["hours"])) for d in days.values())
+    assert len(days) <= 3

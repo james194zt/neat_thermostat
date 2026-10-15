@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.54
+ * @version 0.6.55
  */
-const PANEL_VERSION = "0.6.54";
+const PANEL_VERSION = "0.6.55";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -921,6 +921,46 @@ table.data tbody tr.room-row.selected {
 .eh-seg { position: absolute; top: 0; bottom: 0; min-width: 3px; background: var(--nt-heat); border-radius: 3px; }
 .eh-day-total { text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .eh-day-total.none { color: var(--secondary-text-color); font-weight: 500; }
+.eh-day-gas { margin-top: 2px; font-size: 12px; font-weight: 600; color: #1E88E5; white-space: nowrap; }
+/* Gas per hour: a thin blue lane under the boiler runs. */
+.eh-gas { position: absolute; left: 0; right: 0; top: 50px; height: 16px; display: flex; align-items: flex-end; gap: 1px; }
+.eh-gas span { flex: 1; min-width: 0; border-radius: 2px 2px 0 0; background: linear-gradient(180deg, #6FD0FF, #1E6FE0); }
+.eh-has-meter .eh-timeline { height: 68px; }
+.eh-legend em { display: inline-block; width: 12px; height: 12px; border-radius: 3px; background: linear-gradient(180deg, #6FD0FF, #1E6FE0); margin-right: 6px; vertical-align: middle; }
+/* Cards across the top, like the wall panel's usage page. */
+.eh-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.eh-tiles-note { margin: 6px 2px 14px; font-size: 12px; color: var(--secondary-text-color); }
+.eh-tile {
+  position: relative; overflow: hidden; display: flex; align-items: center; gap: 14px;
+  padding: 16px; border-radius: var(--nt-radius); color: #fff;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.25);
+}
+.eh-tile::after {
+  content: ""; position: absolute; right: -30%; top: -45%; width: 75%; height: 100%;
+  border-radius: 50%; background: rgba(255,255,255,0.12); pointer-events: none;
+}
+.eh-tile.heat { background: linear-gradient(145deg, #ffb238 0%, #ff7a1a 45%, #e8461e 100%); }
+.eh-tile.gas { background: linear-gradient(145deg, #4fc3ff 0%, #2a8cf0 50%, #1a4fc4 100%); }
+.eh-tile.leaf { background: linear-gradient(145deg, #8fdc5a 0%, #43b649 50%, #1f8a3b 100%); }
+.eh-badge {
+  flex-shrink: 0; width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center;
+  background: #fff; box-shadow: 0 3px 8px rgba(0,0,0,0.2);
+}
+.eh-badge svg { width: 32px; height: 32px; }
+.eh-tile-text { min-width: 0; }
+.eh-tile-value { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; white-space: nowrap; }
+.eh-tile-value small { margin-left: 4px; font-size: 15px; font-weight: 600; opacity: 0.9; letter-spacing: 0; }
+.eh-tile-label { margin-top: 2px; font-size: 14px; font-weight: 600; }
+.eh-tile-sub { font-size: 12px; opacity: 0.9; }
+@media (max-width: 600px) {
+  .eh-tiles { gap: 8px; }
+  .eh-tile { padding: 10px 14px; gap: 12px; }
+  .eh-badge { width: 38px; height: 38px; }
+  .eh-badge svg { width: 26px; height: 26px; }
+  .eh-tile-value { font-size: 22px; }
+  .eh-tile-value small { font-size: 13px; }
+  .eh-tile-label { font-size: 13px; }
+}
 @media (max-width: 720px) {
   .eh-grid-row { grid-template-columns: 58px minmax(0, 1fr) 48px; gap: 8px; }
   .eh-day-label { font-size: 12px; }
@@ -1068,6 +1108,22 @@ function dialSvg({ fill, now, color }) {
       stroke-linecap="round" stroke-dasharray="${pct.toFixed(1)} 100"/>` : ""}
     ${nowDot}
   </svg>`;
+}
+
+// Two-tone badges for the Energy cards, the same set as the wall panel's usage page.
+const TILE_ICONS = {
+  heat: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#FF7A1A" d="M12 1.8c.6 3.4-1.7 5.3-3.4 7.3C7.1 10.9 5.6 12.8 5.6 15.6a6.4 6.4 0 0 0 12.8 0c0-2.8-1.4-4.9-2.8-6.5-.3 1.7-1.2 2.9-2.5 3.4.7-4-.3-8.1-1.1-10.7z"/><path fill="#FFC53D" d="M12 11.2c.3 1.8-.9 2.8-1.8 3.8-.7.8-1.3 1.6-1.3 2.8a3.1 3.1 0 0 0 6.2 0c0-1.5-.8-2.6-1.6-3.4-.2.8-.6 1.3-1.2 1.6.3-1.8-.1-3.6-.3-4.8z"/></svg>`,
+  gas: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#7FD3FF" d="M12 1.6c2.6 3.3 6.2 7.4 6.2 12.2a6.2 6.2 0 0 1-12.4 0c0-2.6 1.1-4.7 2.5-6.6.3 1.6 1.1 2.7 2.2 3.2-.6-3.3.4-6.3 1.5-8.8z"/><path fill="#1E6FE0" d="M12 9.4c1.4 1.9 3.1 3.9 3.1 6.3a3.1 3.1 0 0 1-6.2 0c0-1.4.6-2.5 1.4-3.5.2.8.6 1.4 1.1 1.7-.2-1.7.1-3.1.6-4.5z"/></svg>`,
+  leaf: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#43B649" d="M19.4 3c-4 .2-7.6 2-10 4.9-2.6 3-3.8 6.6-3.6 10.3 3.5-.1 6.7-1.6 9.1-4.1 2.6-2.8 4-6.5 4.5-11.1z"/><path fill="none" stroke="#1B7A2A" stroke-width="1.7" stroke-linecap="round" d="M4.2 21c2.8-4.5 6.2-8.3 10.6-11.2"/></svg>`,
+};
+
+/** A meter amount: kWh to 1 dp; gas volume (m³, ft³…) to 2 dp while small. */
+function formatMeter(value, unit = "kWh") {
+  const n = Number(value);
+  if (value == null || !Number.isFinite(n)) return "—";
+  if (n >= 100) return n.toFixed(0);
+  if (unit !== "kWh" && n < 10) return n.toFixed(2);
+  return n.toFixed(1);
 }
 
 function leafSvg() {
@@ -1882,14 +1938,39 @@ class NeatThermostatPanel extends HTMLElement {
       })
       .join("");
     const mins = this._ehHeatMinutes(day);
+    // Gas (or energy) per hour under the boiler runs, on one scale for the whole page.
+    const meter = this._energy?.meter;
+    const used = meter?.days?.[day.date];
+    let lane = "";
+    let usedTotal = "";
+    if (meter) {
+      const unit = meter.unit || "kWh";
+      const max = this._ehMeterMax || 1;
+      const bars = (used?.hours || new Array(24).fill(0))
+        .map((v, h) => {
+          // Square-root scale: one big hour mustn't flatten the rest of the day.
+          const pct = v > 0 ? Math.max(10, Math.sqrt(v / max) * 100) : 0;
+          const tip = t("energy.meter_hour", { time: `${String(h).padStart(2, "0")}:00`, amount: formatMeter(v, unit), unit });
+          return `<span style="height:${pct.toFixed(1)}%" title="${this._escape(tip)}"></span>`;
+        })
+        .join("");
+      lane = `<div class="eh-gas">${bars}</div>`;
+      usedTotal = used && used.total > 0
+        ? `<div class="eh-day-gas" title="${this._escape(t("energy.meter_day"))}">${formatMeter(used.total, unit)} ${this._escape(unit)}</div>`
+        : "";
+    }
     return `
       <div class="eh-day eh-grid-row">
         <div class="eh-day-label">${this._escape(parts.label)}${day.leaf ? `<span title="${this._escape(t("energy.leaf_earned"))}">${leafSvg()}</span>` : ""}</div>
         <div class="eh-timeline">
           ${points}
           <div class="eh-track">${segs}</div>
+          ${lane}
         </div>
-        <div class="eh-day-total${mins > 0 ? "" : " none"}" title="${this._escape(t("energy.running_time"))}">${this._ehDuration(mins)}</div>
+        <div class="eh-day-total${mins > 0 ? "" : " none"}">
+          <div title="${this._escape(t("energy.running_time"))}">${this._ehDuration(mins)}</div>
+          ${usedTotal}
+        </div>
       </div>`;
   }
 
@@ -1951,6 +2032,10 @@ class NeatThermostatPanel extends HTMLElement {
           <button type="button" class="secondary" id="stopSeasonal" title="${this._escape(t("seasonal.stop.tip"))}">${t("seasonal.stop")}</button>
         </div>`
       : "";
+    const meter = this._energy?.meter || null;
+    const meterUnit = meter?.unit || "kWh";
+    const meterDays = Object.values(meter?.days || {});
+    this._ehMeterMax = Math.max(0, ...meterDays.flatMap((d) => d.hours || []));
     let lastMonth = null;
     const rows = hist
       .map((day) => {
@@ -1968,17 +2053,47 @@ class NeatThermostatPanel extends HTMLElement {
     const axis = [
       ["energy.axis.midnight", 0, ""], ["energy.axis.6am", 25, "half"], ["energy.axis.noon", 50, ""], ["energy.axis.6pm", 75, "half"], ["energy.axis.midnight", 100, ""],
     ].map(([key, at, cls]) => `<span class="${cls}" style="left:${at}%">${t(key)}</span>`).join("");
+    // Cards across the top, like the wall panel's usage page.
+    const days = hist.length || 1;
+    const gasTotal = meterDays.reduce((sum, d) => sum + (Number(d.total) || 0), 0);
+    const isGas = meter && (meter.kind === "volume" || /gas/i.test(`${meter.entity_id} ${meter.name}`));
+    const streak = Number(this._live().leaf?.days_streak) || 0;
+    const tile = (cls, icon, value, label, sub) => `
+      <div class="eh-tile ${cls}">
+        <span class="eh-badge">${icon}</span>
+        <div class="eh-tile-text">
+          <div class="eh-tile-value">${value}</div>
+          <div class="eh-tile-label">${label}</div>
+          <div class="eh-tile-sub">${sub}</div>
+        </div>
+      </div>`;
+    const tiles = hist.length
+      ? `<div class="eh-tiles">
+          ${tile("heat", TILE_ICONS.heat, this._ehDuration(totalMins), t("energy.card.boiler"), t("energy.card.avg_day", { value: this._ehDuration(totalMins / days) }))}
+          ${meter
+            ? tile(
+                "gas",
+                TILE_ICONS.gas,
+                `${formatMeter(gasTotal, meterUnit)}<small>${this._escape(meterUnit)}</small>`,
+                isGas ? t("energy.card.gas") : t("energy.card.energy"),
+                t("energy.card.avg_day", { value: `${formatMeter(gasTotal / days, meterUnit)} ${this._escape(meterUnit)}` })
+              )
+            : ""}
+          ${tile("leaf", TILE_ICONS.leaf, `${leafDays}<small>/ ${days}</small>`, t("energy.card.leaf"), streak ? t("energy.card.streak", { count: streak }) : t("energy.card.no_streak"))}
+        </div>
+        <p class="eh-tiles-note">${t("energy.card.period", { days })}</p>`
+      : "";
+    const meterLegend = meter
+      ? `<span><em></em>${t("energy.legend.meter", { unit: this._escape(meterUnit) })}</span>`
+      : "";
     return `
       ${this._pageHeader(t("energy.title"), t("energy.lead"))}
       ${banner}
-      <div class="card">
+      ${tiles}
+      <div class="card${meter ? " eh-has-meter" : ""}">
         ${rows
           ? `<div class="eh-head">
-              <div>
-                <div class="eh-total-label">${t("energy.total_label", { days: hist.length })}</div>
-                <div class="eh-total-value">${this._ehDuration(totalMins)}${leafDays ? ` <span class="muted" style="font-size:13px">· ${tn("energy.leaf_days", leafDays)}</span>` : ""}</div>
-              </div>
-              <div class="eh-legend"><span><i></i>${t("energy.legend.heating")}</span><span><b></b>${t("energy.legend.setpoint")}</span><span>${leafSvg()}${t("energy.legend.leaf_day")}</span></div>
+              <div class="eh-legend"><span><i></i>${t("energy.legend.heating")}</span>${meterLegend}<span><b></b>${t("energy.legend.setpoint")}</span><span>${leafSvg()}${t("energy.legend.leaf_day")}</span></div>
             </div>
             <div class="eh-axis-row eh-grid-row"><span></span><div class="eh-axis">${axis}</div><span></span></div>
             ${rows}`

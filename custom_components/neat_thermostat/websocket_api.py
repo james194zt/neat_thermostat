@@ -10,7 +10,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 
-from . import kiosk, panel_helper
+from . import energy_meter, kiosk, panel_helper
 from .const import DOMAIN, HEATER_DOMAINS
 from .models import RoomConfig, WallPanelConfig, default_schedule
 
@@ -454,6 +454,8 @@ async def ws_get_energy_history(
         msg["id"],
         {
             "history": coordinator.energy_history(days=days),
+            # Gas/energy per day and hour from the heating meter (Settings), if one is set.
+            "meter": await energy_meter.async_energy_days(hass, coordinator.config.energy_sensor, days),
             "seasonal_savings": coordinator.data.get("seasonal_savings")
             if coordinator.data
             else {},
