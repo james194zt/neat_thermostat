@@ -25,28 +25,45 @@ def day_key(now: datetime) -> str:
     return DAYS[now.weekday()]
 
 
+def running_block(
+    schedule: dict[str, list[dict[str, Any]]],
+    now: datetime | None = None,
+) -> tuple[str, ScheduleBlock] | None:
+    """(day it belongs to, block) in charge at `now`, if any.
+
+    - A block that crosses midnight (end before start) runs on into the next
+      morning: Monday 22:00–06:30 covers Monday night and Tuesday until 06:30.
+    - When blocks overlap, the one that started last is in charge, so a short
+      block inside a longer one takes over and the longer one carries on after.
+      Same start: the first listed wins. Start == end: an empty block.
+    """
+    now = now or datetime.now()
+    current = _minutes(now.time())
+    yesterday = DAYS[(now.weekday() - 1) % 7]
+    best: tuple[int, str, ScheduleBlock] | None = None
+    for day, offset in ((day_key(now), 0), (yesterday, 24 * 60)):
+        for raw in schedule.get(day) or []:
+            block = ScheduleBlock.from_dict(raw)
+            if not block.enabled:
+                continue
+            start = _minutes(_parse_hhmm(block.start))
+            end = _minutes(_parse_hhmm(block.end))
+            if start == end:
+                continue
+            length = (end - start) % (24 * 60)
+            since = current + offset - start  # minutes since this block started
+            if 0 <= since < length and (best is None or since < best[0]):
+                best = (since, day, block)
+    return (best[1], best[2]) if best else None
+
+
 def active_block(
     schedule: dict[str, list[dict[str, Any]]],
     now: datetime | None = None,
 ) -> ScheduleBlock | None:
-    """Return the schedule block active at `now`, if any."""
-    now = now or datetime.now()
-    blocks = schedule.get(day_key(now)) or []
-    current = _minutes(now.time())
-    for raw in blocks:
-        block = ScheduleBlock.from_dict(raw)
-        if not block.enabled:
-            continue
-        start = _minutes(_parse_hhmm(block.start))
-        end = _minutes(_parse_hhmm(block.end))
-        if start <= end:
-            if start <= current < end:
-                return block
-        else:
-            # Overnight wrap
-            if current >= start or current < end:
-                return block
-    return None
+    """Return the schedule block active at `now`, if any (see running_block)."""
+    found = running_block(schedule, now)
+    return found[1] if found else None
 
 
 def scheduled_temperature(

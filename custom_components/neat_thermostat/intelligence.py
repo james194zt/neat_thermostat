@@ -20,7 +20,7 @@ from .const import (
     SEASONAL_STEP_DAYS,
 )
 from .models import ScheduleBlock
-from .schedule import _minutes, _parse_hhmm, day_key
+from .schedule import _minutes, _parse_hhmm, day_key, running_block
 from .sensor_health import SensorHealth
 
 _LOGGER = logging.getLogger(__name__)
@@ -1111,20 +1111,12 @@ def schedule_block_key(day: str, start: str) -> str:
 def active_block_key(
     schedule: dict[str, list[dict[str, Any]]], now: datetime | None = None
 ) -> str | None:
-    """Key of the schedule block running at ``now`` (same rules as schedule.active_block)."""
-    now = now or clock()
-    day = day_key(now)
-    current = _minutes(now.time())
-    for raw in schedule.get(day) or []:
-        block = ScheduleBlock.from_dict(raw)
-        if not block.enabled:
-            continue
-        start = _minutes(_parse_hhmm(block.start))
-        end = _minutes(_parse_hhmm(block.end))
-        inside = start <= current < end if start <= end else (current >= start or current < end)
-        if inside:
-            return schedule_block_key(day, block.start)
-    return None
+    """Key of the schedule block running at ``now`` (schedule.running_block's rules)."""
+    found = running_block(schedule, now or clock())
+    if found is None:
+        return None
+    day, block = found
+    return schedule_block_key(day, block.start)
 
 
 def _enabled_block_keys(schedule: dict[str, list[dict[str, Any]]]) -> list[str]:

@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.56
+ * @version 0.6.57
  */
-const PANEL_VERSION = "0.6.56";
+const PANEL_VERSION = "0.6.57";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -850,6 +850,8 @@ table.data tbody tr.room-row.selected {
   display: flex; gap: 10px; flex-wrap: wrap; align-items: end;
   padding: 8px 12px 12px;
 }
+.nest-overlaps { margin: 0 12px 8px; padding: 8px 12px; border-radius: 10px; font-size: 13px; color: var(--primary-text-color); background: color-mix(in srgb, var(--nt-amber) 14%, transparent); border: 1px solid color-mix(in srgb, var(--nt-amber) 35%, transparent); }
+.nest-overlaps p { margin: 2px 0; }
 .nest-edit-note { margin: 0; padding: 10px 12px 0; border-top: 1px solid var(--divider-color); font-size: 13px; color: var(--secondary-text-color); }
 .nest-edit-note.editing { color: var(--primary-text-color); font-weight: 600; }
 .intel-chip {
@@ -2105,6 +2107,41 @@ class NeatThermostatPanel extends HTMLElement {
     return Math.max(1, Math.min(99, (mins / (24 * 60)) * 100));
   }
 
+  /**
+   * Blocks that overlap, per day, in words. The backend's rule: the block that started
+   * last is in charge while both run; one that ends before it starts runs past midnight.
+   */
+  _scheduleOverlaps(schedule) {
+    const span = (b, shift = 0) => {
+      const s = parseHHMM(b.start);
+      let e = parseHHMM(b.end);
+      if (e <= s) e += 24 * 60;
+      return { s: s + shift, e: e + shift, b };
+    };
+    const lines = [];
+    DAYS.forEach((day, i) => {
+      const prev = DAYS[(i + 6) % 7];
+      const own = (schedule[day] || []).filter((b) => b.enabled !== false && b.start !== b.end).map((b) => span(b));
+      // Last night's overnight block, still running this morning.
+      const carried = (schedule[prev] || [])
+        .filter((b) => b.enabled !== false && parseHHMM(b.end) < parseHHMM(b.start))
+        .map((b) => span(b, -24 * 60));
+      const all = [...carried, ...own].sort((a, b) => a.s - b.s);
+      for (let x = 0; x < all.length; x++) {
+        for (let y = x + 1; y < all.length; y++) {
+          const [a, b] = [all[x], all[y]];
+          if (b.s >= a.e || !own.includes(b)) continue;
+          lines.push(t("schedule.overlap", {
+            day: DAY_SHORT[day],
+            later: `${this._escape(b.b.start)}–${this._escape(b.b.end)}`,
+            earlier: `${carried.includes(a) ? `${DAY_SHORT[prev]} ` : ""}${this._escape(a.b.start)}–${this._escape(a.b.end)}`,
+          }));
+        }
+      }
+    });
+    return lines;
+  }
+
   _timeAxisLabels() {
     // Each label at its real time, on the same 0–24 h scale as the dots.
     const hours = [["1a", 1], ["3a", 3], ["5a", 5], ["7a", 7], ["9a", 9], ["11a", 11], ["noon", 12], ["1p", 13], ["3p", 15], ["5p", 17], ["7p", 19], ["9p", 21], ["11p", 23]];
@@ -2121,6 +2158,7 @@ class NeatThermostatPanel extends HTMLElement {
     const form = selBlock
       ? { day: sel.day, start: selBlock.start, end: selBlock.end, temp: selBlock.temperature }
       : { day: this._selectedDay, start: "06:30", end: "08:30", temp: this._mainTarget() ?? 20 };
+    const overlaps = this._scheduleOverlaps(schedule);
 
     const rows = DAYS.map((day) => {
       const blocks = schedule[day] || [];
@@ -2169,8 +2207,16 @@ class NeatThermostatPanel extends HTMLElement {
             <button type="button" class="linkish" id="schedAdd">${t("schedule.add")}</button>
           </div>
         </div>
+        ${overlaps.length ? `<div class="nest-overlaps">${overlaps.map((l) => `<p>${l}</p>`).join("")}</div>` : ""}
         <p class="nest-edit-note${selBlock ? " editing" : ""}">${selBlock
-          ? t("schedule.editing", { day: DAY_SHORT[sel.day], start: this._escape(selBlock.start), end: this._escape(selBlock.end) })
+          ? t("schedule.editing", {
+            day: DAY_SHORT[sel.day],
+            start: this._escape(selBlock.start),
+            end: this._escape(selBlock.end),
+            overnight: parseHHMM(selBlock.end) < parseHHMM(selBlock.start)
+              ? ` ${t("schedule.overnight", { day: DAY_SHORT[DAYS[(DAYS.indexOf(sel.day) + 1) % 7]] })}`
+              : "",
+          })
           : t("schedule.new_block")}</p>
         <div class="nest-add-row">
           <label class="field">${t("schedule.day")}
