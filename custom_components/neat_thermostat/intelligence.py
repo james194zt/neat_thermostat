@@ -1339,3 +1339,85 @@ def energy_history_payload(
             }
         )
     return {"days": out_days}
+
+
+def _heat_runs(energy: EnergyHistoryState, now: datetime, since: datetime) -> list[tuple[datetime, datetime]]:
+    """Boiler runs overlapping [since, now], joined back up where midnight split them."""
+    raw: list[tuple[datetime, datetime]] = []
+    day = since.date()
+    while day <= now.date():
+        for item in energy.heat_intervals_by_day.get(day.isoformat()) or []:
+            try:
+                start = datetime.fromisoformat(item["start_ts"])
+                end = datetime.fromisoformat(item["end_ts"]) if item.get("end_ts") else now
+            except (KeyError, TypeError, ValueError):
+                continue
+            raw.append((start, end))
+        day += timedelta(days=1)
+    if energy.open_heat_start:
+        try:
+            raw.append((datetime.fromisoformat(energy.open_heat_start), now))
+        except ValueError:
+            pass
+    raw.sort()
+    runs: list[tuple[datetime, datetime]] = []
+    for start, end in raw:
+        if end <= since or start >= now:
+            continue
+        start, end = max(start, since), min(end, now)
+        # Midnight splits end at 23:59:59 and restart at 00:00:00.
+        if runs and (start - runs[-1][1]).total_seconds() <= 2:
+            runs[-1] = (runs[-1][0], max(end, runs[-1][1]))
+        else:
+            runs.append((start, end))
+    return runs
+
+
+def wall_usage_payload(
+    energy: EnergyHistoryState,
+    *,
+    now: datetime | None = None,
+    hours: int = 24,
+) -> dict[str, Any]:
+    """The wall panel's usage page: boiler runs and targets over the last day.
+
+    Times are minutes from the start of the window (now − hours), so the panel
+    never has to parse dates or know the server's time zone.
+    """
+    now = now or clock()
+    since = now - timedelta(hours=hours)
+    window_min = hours * 60.0
+
+    def mins(at: datetime) -> float:
+        return round((at - since).total_seconds() / 60.0, 1)
+
+    runs = _heat_runs(energy, now, since)
+    prev = _heat_runs(energy, since, since - timedelta(hours=hours))
+
+    events: list[tuple[datetime, float]] = []
+    day = (since - timedelta(days=1)).date()
+    while day <= now.date():
+        for item in energy.setpoint_events_by_day.get(day.isoformat()) or []:
+            try:
+                events.append((datetime.fromisoformat(item["ts"]), float(item["temperature"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+        day += timedelta(days=1)
+    events.sort()
+    setpoints: list[dict[str, float]] = []
+    before = [temp for at, temp in events if at <= since]
+    if before:
+        setpoints.append({"m": 0.0, "t": before[-1]})
+    for at, temp in events:
+        if since < at <= now:
+            setpoints.append({"m": mins(at), "t": temp})
+
+    return {
+        "window_minutes": window_min,
+        "runs": [{"s": mins(s), "e": mins(e)} for s, e in runs],
+        "run_count": len(runs),
+        "on_minutes": round(sum((e - s).total_seconds() for s, e in runs) / 60.0, 1),
+        "prev_on_minutes": round(sum((e - s).total_seconds() for s, e in prev) / 60.0, 1),
+        "heating_now": energy.open_heat_start is not None,
+        "setpoints": setpoints,
+    }

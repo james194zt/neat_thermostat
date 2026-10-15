@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.51
+ * @version 0.6.52
  */
-const PANEL_VERSION = "0.6.51";
+const PANEL_VERSION = "0.6.52";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -1111,6 +1111,14 @@ function temperatureSensorFilter(stateObj) {
   if (stateObj.attributes?.device_class === "temperature") return true;
   const uom = stateObj.attributes?.unit_of_measurement;
   return uom === "°C" || uom === "°F" || uom === "K" || uom === "celsius" || uom === "fahrenheit";
+}
+
+/** kWh meters with statistics (a boiler's own counter, or the gas supply's import). */
+function energySensorFilter(stateObj) {
+  if (!stateObj) return false;
+  if (stateObj.attributes?.device_class === "energy") return true;
+  const uom = stateObj.attributes?.unit_of_measurement;
+  return uom === "kWh" || uom === "Wh" || uom === "MWh";
 }
 
 function humiditySensorFilter(stateObj) {
@@ -3309,6 +3317,7 @@ class NeatThermostatPanel extends HTMLElement {
     single("temperature_sensor", { domains: ["sensor"], filter: temperatureSensorFilter });
     single("backup_temperature_sensor", { domains: ["sensor"], filter: temperatureSensorFilter });
     single("outdoor_temp_sensor", { domains: ["sensor"], filter: temperatureSensorFilter });
+    single("energy_sensor", { domains: ["sensor"], filter: energySensorFilter });
     list("presence_entities", { domains: ["person", "device_tracker"], placeholder: t("settings.presence.add") });
     list("window_sensors", { domains: ["binary_sensor"], placeholder: t("settings.windows.add") });
   }
@@ -3327,6 +3336,7 @@ class NeatThermostatPanel extends HTMLElement {
       temperature_sensor: cfg.temperature_sensor || "",
       backup_temperature_sensor: cfg.backup_temperature_sensor || "",
       outdoor_temp_sensor: cfg.outdoor_temp_sensor || "",
+      energy_sensor: cfg.energy_sensor || "",
       window_sensors: [...(cfg.window_sensors || [])],
       presence_entities: presence,
     };
@@ -3438,6 +3448,7 @@ class NeatThermostatPanel extends HTMLElement {
           ${field(t("settings.house_sensor"), "temperature_sensor", t("settings.house_sensor.desc"))}
           ${field(t("settings.backup_sensor"), "backup_temperature_sensor", t("settings.backup_sensor.desc"))}
           ${field(t("settings.outdoor_sensor"), "outdoor_temp_sensor", t("settings.outdoor_sensor.desc"))}
+          ${field(t("settings.energy_sensor"), "energy_sensor", t("settings.energy_sensor.desc"))}
         </div>
         ${this._sensorStatusBanner()}
         ${row(t("settings.stale"), t("settings.stale.desc"), stepper("sensorStale", cfg.sensor_stale_minutes ?? 60, t("unit.min"), 15, 720, 15))}
@@ -3916,6 +3927,7 @@ class NeatThermostatPanel extends HTMLElement {
             temperature_sensor: devices.temperature_sensor,
             outdoor_temp_sensor: devices.outdoor_temp_sensor || "",
             backup_temperature_sensor: devices.backup_temperature_sensor || "",
+            energy_sensor: devices.energy_sensor || "",
             sensor_stale_minutes: Math.min(720, Math.max(15, Math.round(Number(this.shadowRoot.getElementById("sensorStale").value) || 60))),
             fast_sensor_reporting: this.shadowRoot.getElementById("fastReporting").checked,
             window_sensors: devices.window_sensors || [],

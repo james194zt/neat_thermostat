@@ -830,6 +830,441 @@ button {
   }
 }
 
+/* —— Page dots: which page you're on (usage | dial), in the header's spare middle —— */
+.app,
+.usage {
+  touch-action: pan-y; /* sideways drags come to us as page swipes */
+  will-change: transform;
+}
+
+.top {
+  position: relative;
+}
+
+.page-dots {
+  position: absolute;
+  left: 50%;
+  top: 0.6vmin;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 0.4vmin;
+  z-index: 1;
+}
+
+.page-dot {
+  width: 5vmin;
+  height: 5vmin;
+  display: grid;
+  place-items: center;
+}
+
+.page-dot::before {
+  content: "";
+  width: 1.7vmin;
+  height: 1.7vmin;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.28);
+  transition: background 0.2s ease, width 0.2s ease;
+}
+
+.page-dot.on::before {
+  width: 3.8vmin;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+/* —— Usage page —— */
+.usage {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas: "top" "tiles" "chart" "week";
+  row-gap: 2vmin;
+  padding: 3vmin 3.2vmin 3.2vmin;
+  overflow: hidden;
+  background:
+    radial-gradient(80% 60% at 100% 0%, rgba(30, 111, 224, 0.16), transparent 70%),
+    radial-gradient(70% 60% at 0% 100%, rgba(67, 182, 73, 0.12), transparent 70%),
+    linear-gradient(180deg, var(--bg-hi), var(--bg));
+  transform: translate3d(-100%, 0, 0);
+}
+
+.usage[hidden] {
+  display: none;
+}
+
+.usage-top {
+  grid-area: top;
+}
+
+.usage-live {
+  padding: 1.2vmin 2.4vmin;
+  border-radius: 999px;
+  font-size: 3vmin;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #ff9f1c, #f4511e);
+  box-shadow: 0 0 2.4vmin rgba(255, 120, 30, 0.45);
+}
+
+.usage-tiles {
+  grid-area: tiles;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 1.6vmin;
+}
+
+.u-tile {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 2vmin 2vmin 1.8vmin;
+  border-radius: 3.2vmin;
+  color: #fff;
+  overflow: hidden;
+  box-shadow: 0 1vmin 2.6vmin rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+/* A soft highlight, like a sticker. */
+.u-tile::after {
+  content: "";
+  position: absolute;
+  right: -30%;
+  top: -40%;
+  width: 80%;
+  height: 90%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+}
+
+.u-heat {
+  background: linear-gradient(145deg, #ffb238 0%, #ff7a1a 45%, #e8461e 100%);
+}
+
+.u-gas {
+  background: linear-gradient(145deg, #4fc3ff 0%, #2a8cf0 50%, #1a4fc4 100%);
+}
+
+.u-leaf {
+  background: linear-gradient(145deg, #8fdc5a 0%, #43b649 50%, #1f8a3b 100%);
+}
+
+.u-badge {
+  width: 8.4vmin;
+  height: 8.4vmin;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0.6vmin 1.4vmin rgba(0, 0, 0, 0.22);
+}
+
+.u-badge svg {
+  width: 6vmin;
+  height: 6vmin;
+}
+
+.u-value {
+  margin-top: 1.4vmin;
+  font-size: 7.2vmin;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0.3vmin 1vmin rgba(0, 0, 0, 0.18);
+}
+
+.u-value small {
+  margin-left: 0.6vmin;
+  font-size: 3.4vmin;
+  font-weight: 600;
+  letter-spacing: 0;
+  opacity: 0.9;
+}
+
+.u-label {
+  margin-top: 0.8vmin;
+  font-size: 3vmin;
+  font-weight: 600;
+}
+
+.u-sub {
+  margin-top: 0.3vmin;
+  font-size: 2.5vmin;
+  font-weight: 500;
+  opacity: 0.88;
+  line-height: 1.25;
+}
+
+.usage-chart {
+  grid-area: chart;
+  position: relative;
+  min-height: 0;
+  border-radius: 3.2vmin;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+
+.usage-chart svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  font-family: inherit;
+}
+
+.usage-legend {
+  position: absolute;
+  left: 2vmin;
+  top: 1vmin;
+  display: flex;
+  gap: 2vmin;
+  font-size: 2.5vmin;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.lg {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.8vmin;
+}
+
+.lg::before {
+  content: "";
+  width: 2.2vmin;
+  height: 2.2vmin;
+  border-radius: 0.6vmin;
+}
+
+.lg-gas::before {
+  background: linear-gradient(180deg, #6fd0ff, #1e6fe0);
+}
+
+.lg-run::before {
+  background: #ff8a1a;
+  border-radius: 999px;
+  height: 1.3vmin;
+}
+
+.lg-target::before {
+  height: 0;
+  border-top: 0.5vmin solid #fff;
+  border-radius: 0;
+}
+
+.u-grid {
+  stroke: rgba(255, 255, 255, 0.07);
+  stroke-width: 1;
+}
+
+.u-base {
+  stroke: rgba(255, 255, 255, 0.16);
+  stroke-width: 1;
+}
+
+.u-run {
+  fill: #ff8a1a;
+  filter: drop-shadow(0 0 3px rgba(255, 120, 30, 0.8));
+}
+
+.u-run-tall {
+  fill: #ff8a1a;
+  opacity: 0.85;
+}
+
+.u-target {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+  opacity: 0.75;
+}
+
+.u-target-text {
+  fill: #fff;
+  font-weight: 700;
+}
+
+.u-note {
+  fill: var(--text-muted);
+  font-weight: 600;
+}
+
+.u-axis {
+  fill: var(--text-muted);
+  font-weight: 600;
+}
+
+.u-now {
+  fill: var(--text);
+}
+
+.usage-week {
+  grid-area: week;
+  display: flex;
+  align-items: center;
+  gap: 2vmin;
+  padding: 1.4vmin 2.4vmin;
+  border-radius: 3.2vmin;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.week-days {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.6vmin;
+}
+
+.week-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4vmin;
+}
+
+.day-dot {
+  position: relative;
+  width: 7.2vmin;
+  height: 7.2vmin;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.day-dot > svg:not(.day-ring) {
+  width: 4.4vmin;
+  height: 4.4vmin;
+}
+
+.week-day.earned .day-dot {
+  color: #fff;
+  background: linear-gradient(145deg, #8fdc5a, #2e9e40);
+  box-shadow: 0 0 1.6vmin rgba(67, 182, 73, 0.55);
+}
+
+.week-day.today .day-dot {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+
+.week-day.today.earned .day-dot {
+  box-shadow: 0 0 0 0.5vmin rgba(255, 255, 255, 0.75), 0 0 1.6vmin rgba(67, 182, 73, 0.55);
+}
+
+.day-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.day-ring circle {
+  fill: none;
+  stroke: #6fd34a;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.day-letter {
+  font-size: 2.4vmin;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.week-day.today .day-letter {
+  color: var(--text);
+}
+
+.week-streak {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 13vmin;
+}
+
+.streak-num {
+  font-size: 8vmin;
+  font-weight: 700;
+  line-height: 1;
+  background: linear-gradient(180deg, #b5f07e, #43b649);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.streak-label {
+  font-size: 2.4vmin;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Tall: more room for everything; tiles stay side by side. */
+@media (max-aspect-ratio: 4/5) {
+  .usage {
+    row-gap: 3vmin;
+    padding-bottom: 4vmin;
+  }
+
+  .u-tile {
+    padding: 3vmin 2.6vmin;
+  }
+
+  .u-value {
+    font-size: 8.4vmin;
+  }
+}
+
+/* Landscape: tiles in a column on the left, chart and week on the right. */
+@media (min-aspect-ratio: 5/4) {
+  .usage {
+    grid-template-columns: 50vmin minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "top top"
+      "tiles chart"
+      "tiles week";
+    column-gap: 2.4vmin;
+  }
+
+  .usage-tiles {
+    grid-auto-flow: row;
+    grid-auto-rows: minmax(0, 1fr);
+  }
+
+  .u-tile {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    column-gap: 2.4vmin;
+    align-items: center;
+    align-content: center;
+  }
+
+  .u-badge {
+    grid-row: 1 / 4;
+  }
+
+  .u-value {
+    margin-top: 0;
+  }
+}
+
 /* —— Overlays / screensaver —— */
 .overlay {
   position: fixed;

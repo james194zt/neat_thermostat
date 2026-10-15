@@ -454,6 +454,8 @@
   "settings.devices.sub": "The relay Neat switches and the sensors it heats to.",
   "settings.devices.title": "Heating Devices",
   "settings.eco.desc": "Energy-saving setpoint.",
+  "settings.energy_sensor": "Heating energy",
+  "settings.energy_sensor.desc": "Optional — a kWh meter for the boiler or the gas supply (e.g. a smart meter's gas import). The wall panel's usage page shows kWh from it.",
   "settings.fast_reporting": "Faster sensor updates",
   "settings.fast_reporting.desc": "Asks Zigbee (ZHA) house sensors to report every 0.1°C or 5 min instead of 0.5°C or 15 min, so Neat sees the house sooner and overshoots less. Uses a little more battery.",
   "settings.heater": "Boiler relay",

@@ -50,9 +50,10 @@ from .intelligence import (
     update_coast_watch,
     update_heat_check,
     update_warmup_from_cycle,
+    wall_usage_payload,
 )
 from .control import boiler_cycle_guard, house_calls_for_heat, next_schedule_change, room_calls_for_heat
-from . import kiosk, panel_helper, zigbee_reporting
+from . import energy_meter, kiosk, panel_helper, zigbee_reporting
 from .sensor_health import (
     NO_HEARTBEAT_STALE_MINUTES,
     OFFSET_FRESH_MINUTES,
@@ -314,6 +315,24 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             days=days,
         )
 
+    async def async_wall_usage(self) -> dict[str, Any]:
+        """The wall panel's usage page: last 24 h of boiler runs, kWh and Leaf."""
+        usage = wall_usage_payload(self.intel.state.energy)
+        leaf = dict(self._leaf)
+        week = leaf.get("week_days") or []
+        usage["leaf"] = {
+            "enabled": self.config.leaf_enabled,
+            "active": bool(leaf.get("active")),
+            "minutes_today": week[-1]["minutes"] if week else 0.0,
+            "goal_minutes": intelligence.LEAF_DAY_MEANINGFUL_MINUTES,
+            "days_streak": leaf.get("days_streak", 0),
+            "hours_week": leaf.get("hours_week", 0.0),
+            "hours_total": leaf.get("hours_total", 0.0),
+            "week_days": week,
+        }
+        usage["energy"] = await energy_meter.async_energy_usage(self.hass, self.config.energy_sensor)
+        usage["energy_sensor"] = self.config.energy_sensor
+        return usage
     def _snapshot(self) -> dict[str, Any]:
         return {
             "config": self.config.to_dict(),

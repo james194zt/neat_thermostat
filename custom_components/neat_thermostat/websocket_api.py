@@ -39,6 +39,7 @@ def async_register_ws_handlers(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_delete_wall_panel)
     websocket_api.async_register_command(hass, ws_get_wall_panel_config)
     websocket_api.async_register_command(hass, ws_get_energy_history)
+    websocket_api.async_register_command(hass, ws_get_wall_usage)
     websocket_api.async_register_command(hass, ws_verify_wall_pin)
     websocket_api.async_register_command(hass, ws_stop_seasonal_savings)
     websocket_api.async_register_command(hass, ws_reset_warmup)
@@ -187,6 +188,7 @@ async def ws_helper_config(
         vol.Optional("backup_temperature_sensor"): cv.string,
         vol.Optional("sensor_stale_minutes"): vol.All(vol.Coerce(int), vol.Range(min=15, max=720)),
         vol.Optional("fast_sensor_reporting"): cv.boolean,
+        vol.Optional("energy_sensor"): cv.string,
     }
 )
 @websocket_api.async_response
@@ -234,6 +236,7 @@ async def ws_update_settings(
             "backup_temperature_sensor",
             "sensor_stale_minutes",
             "fast_sensor_reporting",
+            "energy_sensor",
         )
         if k in msg
     }
@@ -456,6 +459,24 @@ async def ws_get_energy_history(
             else {},
         },
     )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "neat_thermostat/get_wall_usage",
+        vol.Optional("entry_id"): cv.string,
+    }
+)
+@websocket_api.async_response
+async def ws_get_wall_usage(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """The wall panel's usage page: last 24 h of heating, kWh and Leaf."""
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
+        return
+    connection.send_result(msg["id"], await coordinator.async_wall_usage())
 
 
 @websocket_api.websocket_command(

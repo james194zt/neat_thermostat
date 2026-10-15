@@ -232,6 +232,8 @@ class NeatConfig:
     sensor_stale_minutes: int = DEFAULT_SENSOR_STALE_MINUTES
     # Ask Zigbee (ZHA) house sensors to report every 0.1 °C / 5 min.
     fast_sensor_reporting: bool = False
+    # Optional kWh meter for the heating (boiler or gas supply), for the usage page.
+    energy_sensor: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -275,6 +277,7 @@ class NeatConfig:
             "backup_temperature_sensor": self.backup_temperature_sensor,
             "sensor_stale_minutes": self.sensor_stale_minutes,
             "fast_sensor_reporting": self.fast_sensor_reporting,
+            "energy_sensor": self.energy_sensor,
         }
 
     @classmethod
@@ -350,4 +353,5 @@ class NeatConfig:
                 720, max(15, int(data.get("sensor_stale_minutes", DEFAULT_SENSOR_STALE_MINUTES)))
             ),
             fast_sensor_reporting=bool(data.get("fast_sensor_reporting", False)),
+            energy_sensor=str(data.get("energy_sensor") or ""),
         )

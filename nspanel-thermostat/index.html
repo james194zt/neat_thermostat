@@ -23,6 +23,10 @@
   <body class="booting">
     <div class="app" id="app" hidden>
       <header class="top">
+        <div class="page-dots" aria-hidden="true">
+          <button type="button" class="page-dot" data-go="usage" tabindex="-1"></button>
+          <button type="button" class="page-dot on" data-go="dial" tabindex="-1"></button>
+        </div>
         <button class="top-back hidden" id="backToHome" type="button" aria-label="Back to the house">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/></svg>
         </button>
@@ -112,6 +116,60 @@
       </div>
       <div class="sr-only" id="statusRow"></div>
     </div>
+
+    <!-- Usage: swipe right from the dial (it sits to the dial's left). js/usage.js -->
+    <section class="usage" id="usagePage" hidden aria-label="Heating usage">
+      <header class="top usage-top">
+        <div class="page-dots" aria-hidden="true">
+          <button type="button" class="page-dot on" data-go="usage" tabindex="-1"></button>
+          <button type="button" class="page-dot" data-go="dial" tabindex="-1"></button>
+        </div>
+        <button class="top-back" id="usageBack" type="button" aria-label="Back to the thermostat">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <div class="top-title">
+          <span class="top-name">Usage</span>
+          <span class="top-status">Last 24 hours</span>
+        </div>
+        <div class="top-side">
+          <span class="usage-live hidden" id="usageLive">Heating now</span>
+        </div>
+      </header>
+
+      <div class="usage-tiles" id="usageTiles">
+        <div class="u-tile u-heat">
+          <span class="u-badge" id="usageHeatIcon"></span>
+          <span class="u-value" id="usageOn">--</span>
+          <span class="u-label">Boiler on</span>
+          <span class="u-sub" id="usageRuns"></span>
+        </div>
+        <div class="u-tile u-gas" id="usageGasTile">
+          <span class="u-badge" id="usageGasIcon"></span>
+          <span class="u-value"><span id="usageKwh">--</span><small>kWh</small></span>
+          <span class="u-label" id="usageKwhLabel">Gas today</span>
+          <span class="u-sub" id="usageKwhSub"></span>
+        </div>
+        <div class="u-tile u-leaf" id="usageLeafTile">
+          <span class="u-badge" id="usageLeafIcon"></span>
+          <span class="u-value" id="usageLeafToday">--</span>
+          <span class="u-label">Leaf today</span>
+          <span class="u-sub" id="usageLeafSub"></span>
+        </div>
+      </div>
+
+      <div class="usage-chart" id="usageChart">
+        <svg id="usageChartSvg" aria-hidden="true"></svg>
+        <div class="usage-legend" id="usageLegend"></div>
+      </div>
+
+      <div class="usage-week" id="usageWeek">
+        <div class="week-days" id="usageWeekDays"></div>
+        <div class="week-streak">
+          <span class="streak-num" id="usageStreak">0</span>
+          <span class="streak-label" id="usageStreakLabel">day streak</span>
+        </div>
+      </div>
+    </section>
 
     <div class="overlay hidden" id="errorOverlay">
       <div class="error-card">

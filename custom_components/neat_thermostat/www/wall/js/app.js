@@ -12,6 +12,7 @@ import {
 } from "./config.js";
 import { listDevices, slugifyDeviceId } from "./device-registry.js";
 import { readWeatherSnapshot } from "./weather.js";
+import { UsagePage } from "./usage.js";
 
 const ui = {
   app: document.getElementById("app"),
@@ -72,6 +73,18 @@ const ui = {
   pinError: document.getElementById("pinError"),
 };
 
+// Swipe right from the dial for the last 24 hours. Not from the dial's arc (that drag sets
+// the temperature) or a room strip that scrolls sideways, nor through an overlay.
+const usage = new UsagePage({
+  dialPage: ui.app,
+  getClient: () => client,
+  swipeAllowed: (ev) => {
+    const target = ev.target instanceof Element ? ev.target : null;
+    if (!target) return false;
+    if (target.closest("#dialHit, .room-strip--many, .overlay, .screensaver")) return false;
+    return !document.querySelector(".overlay:not(.hidden)");
+  },
+});
 let config = await loadConfig();
 let client = null;
 let screenSaver = null;
@@ -886,6 +899,7 @@ function showApp() {
 }
 
 function showError(message) {
+  usage.resetToDial();
   ui.errorMessage.textContent = message;
   ui.errorOverlay.classList.remove("hidden");
   ui.deviceOverlay?.classList.add("hidden");
@@ -1159,6 +1173,7 @@ async function connect() {
       useHardwareSleep: Boolean(config.display?.panelEntity),
       onShow: () => {
         panelUnlocked = false;
+        usage.resetToDial();
       },
     });
 
@@ -1179,10 +1194,15 @@ function checkConnectionOnWake() {
   client?.checkAlive?.();
 }
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) checkConnectionOnWake();
+  if (document.hidden) usage.resetToDial();
+  else checkConnectionOnWake();
 });
 window.addEventListener("online", checkConnectionOnWake);
-window.__neatScreenOn = checkConnectionOnWake; // Fully's screenOn (display-power.js)
+// Fully's screenOn (display-power.js): the screen was off, so start from the dial.
+window.__neatScreenOn = () => {
+  usage.resetToDial();
+  checkConnectionOnWake();
+};
 
 ui.retrySetup.addEventListener("click", openSetupPage);
 ui.openSetupFromPicker?.addEventListener("click", openSetupPage);
