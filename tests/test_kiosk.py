@@ -265,6 +265,64 @@ async def test_stay_awake_is_sent_to_fully(hass):
     assert sent["preventSleepWhileScreenOff"] is True
 
 
+def _with_fully_settings(hass, device_id, settings):
+    """What HA's Fully integration keeps: coordinator.data["settings"] from getSettings."""
+    from types import SimpleNamespace
+
+    device = dr.async_get(hass).async_get(device_id)
+    entry = hass.config_entries.async_get_entry(next(iter(device.config_entries)))
+    entry.runtime_data = SimpleNamespace(data={"deviceID": "abc123", "settings": settings})
+
+
+async def test_fully_settings_are_read_back_and_only_differences_written(hass):
+    device_id = _make_device(hass)
+    hass.states.async_set(f"sensor.{P}_current_page", GOOD_PAGE)
+    _with_fully_settings(hass, device_id, {
+        # As Fully reports them: bools, and numbers as strings.
+        "motionDetectionProximity": True, "websiteIntegration": False,
+        "motionThresholdProximity": "60", "kioskExitGesture": "0", "kioskMode": True, "kioskPin": "1234",
+    })
+    calls = _mocks(hass)
+    panel = _panel(device_id)
+    defaults = {"proximity_motion": True, "js_interface": True, "proximity_threshold": 60, "exit_gesture": 1}
+    status = kiosk.panel_status(hass, panel, defaults)
+    assert status["settings"]["proximity_motion"]["ok"] is True
+    assert status["settings"]["proximity_threshold"]["ok"] is True
+    assert status["settings"]["js_interface"] == {**status["settings"]["js_interface"], "actual": False, "ok": False}
+    assert status["settings"]["exit_gesture"]["actual"] == 0 and status["settings"]["exit_gesture"]["ok"] is False
+    assert status["kiosk_mode"] is True and not status["in_sync"]
+    assert kiosk.read_current(hass, device_id)["exit_gesture"] == 0
+    # Not forced: only what differs goes out.
+    await kiosk.async_apply(hass, panel, defaults)
+    sent = {c.data["key"]: c.data["value"] for c in calls["set_config"]}
+    assert sent == {"websiteIntegration": True, "kioskExitGesture": 1}
+
+
+async def test_menu_pin_follows_the_wall_pin_and_is_never_echoed(hass):
+    device_id = _make_device(hass)
+    hass.states.async_set(f"sensor.{P}_current_page", GOOD_PAGE)
+    _with_fully_settings(hass, device_id, {"kioskPin": "1234", "kioskMode": False})
+    calls = _mocks(hass)
+    panel = _panel(device_id)
+    # No wall PIN: Fully keeps its own.
+    status = kiosk.panel_status(hass, panel, {})
+    assert "menu_pin" not in status["settings"] and status["kiosk_mode"] is False
+    # Wall PIN set and different: it's sent; the status says only that it differs.
+    status = kiosk.panel_status(hass, panel, {}, pin="4321")
+    assert status["settings"]["menu_pin"] == {"target": None, "actual": None, "ok": False, "entity_id": None}
+    assert "1234" not in str(status) and "4321" not in str(status)
+    await kiosk.async_apply(hass, panel, {}, pin="4321")
+    assert [(c.data["key"], c.data["value"]) for c in calls["set_config"]] == [("kioskPin", "4321")]
+    # Same PIN: nothing to do.
+    _with_fully_settings(hass, device_id, {"kioskPin": "4321"})
+    assert kiosk.panel_status(hass, panel, {}, pin="4321")["settings"]["menu_pin"]["ok"] is True
+
+
+def test_exit_gesture_is_one_of_fullys_choices():
+    assert kiosk.clean_settings({"exit_gesture": 9}) == {"exit_gesture": 3}
+    assert kiosk.clean_settings({"exit_gesture": "1"}) == {"exit_gesture": 1}
+
+
 def test_bundled_wall_version_reads_the_shipped_app():
     from custom_components.neat_thermostat.panel import WWW_DIR
 

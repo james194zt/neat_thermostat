@@ -257,8 +257,10 @@ async def ws_update_settings(
             connection.send_error(msg["id"], "invalid", "wall_pin must be 4 digits")
             return
         updates["wall_pin"] = pin
+    pin_changed = "wall_pin" in updates and updates["wall_pin"] != str(coordinator.config.wall_pin or "").strip()
     config = await coordinator.async_save_config(updates)
-    synced = await coordinator.async_kiosk_apply() if "kiosk_defaults" in updates else {}
+    # Fully's menu PIN follows the wall PIN.
+    synced = await coordinator.async_kiosk_apply() if "kiosk_defaults" in updates or pin_changed else {}
     connection.send_result(msg["id"], {"config": config.to_dict(), "kiosk_synced": synced})
 
 
@@ -640,7 +642,7 @@ async def ws_kiosk_reload(
     if panel is None or not panel.linked_kiosk_device:
         connection.send_error(msg["id"], "not_found", "That wall panel isn't linked to a Fully Kiosk device")
         return
-    status = kiosk.panel_status(hass, panel, coordinator.config.kiosk_defaults)
+    status = kiosk.panel_status(hass, panel, coordinator.config.kiosk_defaults, pin=coordinator._kiosk_pin)  # noqa: SLF001
     if not status.get("online") or not status.get("expected_url"):
         connection.send_error(msg["id"], "offline", "The panel is offline")
         return

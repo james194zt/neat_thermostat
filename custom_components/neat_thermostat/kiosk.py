@@ -33,9 +33,12 @@ KIOSK_SETTINGS: dict[str, tuple[str, tuple[float, float] | None]] = {
     "proximity_threshold": ("config", (0, 100)),
     "js_interface": ("config", None),
     "stay_awake": ("config", None),
+    # How Fully's menu (and the PIN dialog) opens; see EXIT_GESTURES.
+    "exit_gesture": ("config", (0, 3)),
 }
-# Settings with no HA entity: written with fully_kiosk.set_config, never read back, so
-# they're only sent on an explicit sync/save or when the panel comes back online.
+# Settings with no HA entity: written with fully_kiosk.set_config and read back from the
+# settings HA's Fully integration fetches with every update. If they can't be read they're
+# only sent on an explicit sync/save or when the panel comes back online.
 FULLY_CONFIG_KEYS = {
     "proximity_motion": "motionDetectionProximity",  # "Enable Proximity Motion Detection"
     "proximity_threshold": "motionThresholdProximity",  # 0–100 %
@@ -46,7 +49,17 @@ FULLY_CONFIG_KEYS = {
     # Wi-Fi) stays up with the screen off and wakes straight to live data. The screen
     # still turns off, so the backlight isn't on all day.
     "stay_awake": "preventSleepWhileScreenOff",
+    # "Kiosk Exit Gesture". 0 = swipe from the left edge (Fully's default; on the
+    # NSPanel it fights the wall app's page swipes), 1 = double-tap top-left then
+    # bottom-right, 2 = fast 5 taps, 3 = fast 7 taps (newer Fully; number unconfirmed).
+    "exit_gesture": "kioskExitGesture",
 }
+EXIT_GESTURES = (0, 1, 2, 3)
+# Fully's "Kiosk Mode PIN"; Neat sends the wall panel PIN (one PIN for everything).
+FULLY_PIN_KEY = "kioskPin"
+# "Enable Kiosk Mode" can only be switched on the panel itself (Fully refuses it
+# from Remote Admin); once on, the kiosk_lock switch locks/unlocks it remotely.
+FULLY_KIOSK_MODE_KEY = "kioskMode"
 # Other entities we need from the same device.
 _CURRENT_PAGE = ("sensor", "current_page")
 _CLEAR_CACHE = ("button", "clear_browser_cache")
@@ -76,6 +89,53 @@ def clean_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
 def effective_settings(defaults: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
     """House defaults with the panel's overrides on top."""
     return {**clean_settings(defaults), **clean_settings(overrides)}
+
+
+def fully_settings(hass: HomeAssistant, device_id: str) -> dict[str, Any] | None:
+    """All of Fully's settings for a device, as HA's Fully integration last fetched them.
+
+    Its coordinator calls Fully's getSettings with every update and keeps the result
+    under data["settings"]. None if the device or its data isn't there.
+    """
+    from homeassistant.helpers import device_registry as dr
+
+    device = dr.async_get(hass).async_get(device_id)
+    if device is None:
+        return None
+    for entry_id in device.config_entries:
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry is None or entry.domain != FULLY_DOMAIN:
+            continue
+        coordinator = getattr(entry, "runtime_data", None)
+        data = getattr(coordinator, "data", None)
+        settings = data.get("settings") if isinstance(data, dict) else None
+        if isinstance(settings, dict):
+            return settings
+    return None
+
+
+def _config_value(settings: dict[str, Any] | None, key: str) -> Any:
+    """One of our FULLY_CONFIG_KEYS settings as Fully reports it, in our terms."""
+    if not settings:
+        return None
+    raw = settings.get(FULLY_CONFIG_KEYS[key])
+    if raw is None or raw == "":
+        return None
+    _domain, bounds = KIOSK_SETTINGS[key]
+    if bounds is None:
+        return raw if isinstance(raw, bool) else str(raw).lower() == "true"
+    try:
+        return round(float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def kiosk_mode(settings: dict[str, Any] | None) -> bool | None:
+    """Fully's "Enable Kiosk Mode", or None if unknown."""
+    if not settings or settings.get(FULLY_KIOSK_MODE_KEY) is None:
+        return None
+    raw = settings[FULLY_KIOSK_MODE_KEY]
+    return raw if isinstance(raw, bool) else str(raw).lower() == "true"
 
 
 def device_entities(hass: HomeAssistant, device_id: str) -> dict[str, str]:
@@ -157,16 +217,22 @@ def _read(hass: HomeAssistant, entity_id: str | None, domain: str) -> Any:
 def read_current(hass: HomeAssistant, device_id: str) -> dict[str, Any]:
     """The device's current values for every setting HA can read (for "Import from panel")."""
     entities = device_entities(hass, device_id)
+    settings = fully_settings(hass, device_id)
     out = {}
     for key, (domain, _bounds) in KIOSK_SETTINGS.items():
-        value = _read(hass, entities.get(key), domain)
+        if key in FULLY_CONFIG_KEYS:
+            value = _config_value(settings, key)
+        else:
+            value = _read(hass, entities.get(key), domain)
         if value is not None:
             out[key] = value
     return out
 
 
-def panel_status(hass: HomeAssistant, panel: Any, defaults: dict[str, Any]) -> dict[str, Any]:
-    """Target vs actual for one wall panel."""
+def panel_status(
+    hass: HomeAssistant, panel: Any, defaults: dict[str, Any], *, pin: str = ""
+) -> dict[str, Any]:
+    """Target vs actual for one wall panel. pin: the wall PIN to keep Fully's menu PIN at."""
     device_id = getattr(panel, "linked_kiosk_device", None)
     if device_id is None:
         device_id = getattr(panel, "kiosk_device", "") or ""
@@ -178,10 +244,14 @@ def panel_status(hass: HomeAssistant, panel: Any, defaults: dict[str, Any]) -> d
     online = page_state is not None and page_state.state != "unavailable"
     current_page = page_state.state if online else ""
     target = effective_settings(defaults, getattr(panel, "kiosk_overrides", {}) or {})
+    fully = fully_settings(hass, device_id) if online else None
     settings = {}
     for key, value in target.items():
         domain, bounds = KIOSK_SETTINGS[key]
-        actual = _read(hass, entities.get(key), domain)
+        if key in FULLY_CONFIG_KEYS:
+            actual = _config_value(fully, key)
+        else:
+            actual = _read(hass, entities.get(key), domain)
         if actual is None:
             ok = None  # can't read it (e.g. brightness while the screen is off)
         elif bounds is None:
@@ -189,6 +259,15 @@ def panel_status(hass: HomeAssistant, panel: Any, defaults: dict[str, Any]) -> d
         else:
             ok = abs(actual - value) <= (_TOLERANCE if "brightness" in key else 0)
         settings[key] = {"target": value, "actual": actual, "ok": ok, "entity_id": entities.get(key)}
+    if pin:
+        # Never echoed back: only whether the panel's PIN matches.
+        reported = (fully or {}).get(FULLY_PIN_KEY)
+        settings["menu_pin"] = {
+            "target": None,
+            "actual": None,
+            "ok": None if reported is None else str(reported) == pin,
+            "entity_id": None,
+        }
     url = panel_url(hass, panel.id, current_page)
     on_app = page_ok(current_page, panel.id) if online else None
     in_sync = bool(online and on_app and all(s["ok"] is not False for s in settings.values()))
@@ -201,24 +280,33 @@ def panel_status(hass: HomeAssistant, panel: Any, defaults: dict[str, Any]) -> d
         "page_ok": on_app,
         "settings": settings,
         "in_sync": in_sync,
+        "kiosk_mode": kiosk_mode(fully),
     }
 
 
 async def async_apply(
-    hass: HomeAssistant, panel: Any, defaults: dict[str, Any], *, force: bool = False
+    hass: HomeAssistant, panel: Any, defaults: dict[str, Any], *, force: bool = False, pin: str = ""
 ) -> list[str]:
     """Write whatever differs to the panel. Returns what changed (human readable).
 
     force (an explicit sync / save) also rewrites Fully's start URL, which HA can't read
     back: the panel may show the right page while still booting into an old one."""
-    status = panel_status(hass, panel, defaults)
+    status = panel_status(hass, panel, defaults, pin=pin)
     if not status.get("linked") or not status.get("online"):
         return []
     device_id = status["device_id"]
     changes: list[str] = []
     for key, info in status["settings"].items():
+        if key == "menu_pin":
+            if info["ok"] is False or (info["ok"] is None and force):
+                await hass.services.async_call(
+                    FULLY_DOMAIN, "set_config", {"device_id": device_id, "key": FULLY_PIN_KEY, "value": pin}, blocking=True
+                )
+                changes.append("menu PIN")
+            continue
         if key in FULLY_CONFIG_KEYS:
-            if force:
+            # Readable: write only when it differs. Unreadable: only on an explicit sync.
+            if info["ok"] is False or (info["ok"] is None and force):
                 await hass.services.async_call(
                     FULLY_DOMAIN,
                     "set_config",

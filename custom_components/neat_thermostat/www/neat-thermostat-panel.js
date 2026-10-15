@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.57
+ * @version 0.6.58
  */
-const PANEL_VERSION = "0.6.57";
+const PANEL_VERSION = "0.6.58";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -1022,16 +1022,20 @@ const KIOSK_FIELDS = [
   { key: "screen_off_timer", kind: "sec" },
   { key: "kiosk_lock", kind: "bool" },
   { key: "motion_detection", kind: "bool" },
-  { key: "proximity_motion", kind: "bool", writeOnly: true },
-  { key: "js_interface", kind: "bool", writeOnly: true },
-  { key: "proximity_threshold", kind: "pct100", writeOnly: true },
-  { key: "stay_awake", kind: "bool", writeOnly: true },
+  { key: "proximity_motion", kind: "bool" },
+  { key: "js_interface", kind: "bool" },
+  { key: "proximity_threshold", kind: "pct100" },
+  { key: "stay_awake", kind: "bool" },
+  // Fully's "Kiosk Exit Gesture" (kiosk.py EXIT_GESTURES); double-tap corners first: the
+  // default swipe from the left fights the wall app's page swipe.
+  { key: "exit_gesture", kind: "choice", options: [1, 0, 2, 3] },
 ].map((f) => ({ ...f, label: t(`kiosk.field.${f.key}`), desc: t(`kiosk.field.${f.key}.desc`) }));
 
 /** Fully stores brightness 0–255; people think in %. */
 function kioskDisplay(field, raw) {
   if (raw == null) return "";
   if (field.kind === "bool") return raw ? t("common.on") : t("common.off");
+  if (field.kind === "choice") return field.options.includes(Number(raw)) ? t(`kiosk.${field.key}.${raw}`) : String(raw);
   if (field.kind === "pct") return `${Math.round(Number(raw) / 2.55)}%`;
   if (field.kind === "pct100") return `${Math.round(Number(raw))}%`;
   return Number(raw) === 0 ? t("common.never") : t("common.seconds_short", { value: raw });
@@ -2508,7 +2512,8 @@ class NeatThermostatPanel extends HTMLElement {
               <div class="wp-card-meta">${t("wall.card.controls", { name: `<strong>${this._escape(primaryName)}</strong>` })}${notNeat ? ` <span class="set-state warn">${t("wall.card.not_neat")}</span>` : ""}${p.temperature_lock ? ` <span class="set-state">${t("wall.card.locked")}</span>` : ""}</div>
               <div class="wp-card-meta">${this._reportedScreenHtml(p)}</div>
               ${p.model === "nspanel_pro" || this._helperState(p.id)?.paired ? `<div class="wp-card-meta">${this._helperLineHtml(p.id)}</div>` : ""}
-              ${p.kiosk_enabled === false ? "" : `<div class="wp-card-meta kiosk-line">${t("wall.card.kiosk")} <span data-kiosk-pill="${this._escape(p.id)}">${this._kioskPillHtml(p.id)}</span></div>`}
+              ${p.kiosk_enabled === false ? "" : `<div class="wp-card-meta kiosk-line">${t("wall.card.kiosk")} <span data-kiosk-pill="${this._escape(p.id)}">${this._kioskPillHtml(p.id)}</span></div>
+              <div class="wp-card-meta" data-kiosk-mode="${this._escape(p.id)}">${this._kioskModeHtml(p.id)}</div>`}
             </div>
             <button class="secondary compact edit-panel" type="button" data-id="${this._escape(p.id)}">${t("common.edit")}</button>
           </div>`;
@@ -2753,6 +2758,7 @@ class NeatThermostatPanel extends HTMLElement {
   _kioskDriftText(s) {
     const out = [];
     if (s.page_ok === false) out.push(t("kiosk.drift.page", { page: s.current_page || t("kiosk.drift.another_page") }));
+    if (s.settings?.menu_pin?.ok === false) out.push(t("kiosk.drift.pin"));
     for (const f of KIOSK_FIELDS) {
       const it = s.settings?.[f.key];
       if (it && it.ok === false) out.push(t("kiosk.drift.setting", { label: f.label, actual: kioskDisplay(f, it.actual), target: kioskDisplay(f, it.target) }));
@@ -2765,6 +2771,19 @@ class NeatThermostatPanel extends HTMLElement {
       const html = this._kioskPillHtml(el.dataset.kioskPill);
       if (el.innerHTML !== html) el.innerHTML = html;
     });
+    this.shadowRoot.querySelectorAll("[data-kiosk-mode]").forEach((el) => {
+      const html = this._kioskModeHtml(el.dataset.kioskMode);
+      if (el.innerHTML !== html) el.innerHTML = html;
+    });
+  }
+
+  /** "Kiosk Mode: On/Off", read from the panel. Fully only lets it be switched on at the panel. */
+  _kioskModeHtml(panelId) {
+    const s = this._kiosk?.panels?.[panelId];
+    if (!s?.linked || !s.online || s.kiosk_mode == null) return "";
+    return s.kiosk_mode
+      ? t("wall.card.kiosk_mode", { state: `<span class="set-state good">${t("common.on")}</span>` })
+      : `${t("wall.card.kiosk_mode", { state: `<span class="set-state">${t("common.off")}</span>` })} <span class="muted">${t("wall.card.kiosk_mode.off_hint")}</span>`;
   }
 
   /** One setting's input. Blank = not managed (house) / use the house default (panel). */
@@ -2776,6 +2795,13 @@ class NeatThermostatPanel extends HTMLElement {
           <option value="" ${v === "" ? "selected" : ""}>${this._escape(placeholder)}</option>
           <option value="on" ${v === "on" ? "selected" : ""}>${t("common.on")}</option>
           <option value="off" ${v === "off" ? "selected" : ""}>${t("common.off")}</option>
+        </select>`;
+    }
+    if (field.kind === "choice") {
+      const v = value == null ? "" : String(value);
+      return `<select id="${id}" class="kiosk-select">
+          <option value="" ${v === "" ? "selected" : ""}>${this._escape(placeholder)}</option>
+          ${field.options.map((o) => `<option value="${o}" ${v === String(o) ? "selected" : ""}>${t(`kiosk.${field.key}.${o}`)}</option>`).join("")}
         </select>`;
     }
     const shown = value == null ? "" : field.kind === "pct" ? Math.round(Number(value) / 2.55) : value;
@@ -2791,6 +2817,7 @@ class NeatThermostatPanel extends HTMLElement {
       const el = this.shadowRoot.getElementById(`${idPrefix}${f.key}`);
       if (!el || el.value === "") continue;
       if (f.kind === "bool") out[f.key] = el.value === "on";
+      else if (f.kind === "choice") out[f.key] = Number(el.value);
       else if (f.kind === "pct") out[f.key] = Math.round(Math.min(100, Math.max(0, Number(el.value))) * 2.55);
       else if (f.kind === "pct100") out[f.key] = Math.round(Math.min(100, Math.max(0, Number(el.value))));
       else out[f.key] = Math.max(0, Math.round(Number(el.value)));
@@ -2846,7 +2873,7 @@ class NeatThermostatPanel extends HTMLElement {
         for (const f of KIOSK_FIELDS) {
           const el = this.shadowRoot.getElementById(`kd_${f.key}`);
           if (!el || settings[f.key] == null) continue;
-          el.value = f.kind === "bool" ? (settings[f.key] ? "on" : "off") : f.kind === "pct" ? Math.round(settings[f.key] / 2.55) : settings[f.key];
+          el.value = f.kind === "bool" ? (settings[f.key] ? "on" : "off") : f.kind === "pct" ? Math.round(settings[f.key] / 2.55) : String(settings[f.key]);
           n++;
         }
         const missed = KIOSK_FIELDS.filter((f) => !f.writeOnly && settings[f.key] == null).map((f) => f.label.toLowerCase());

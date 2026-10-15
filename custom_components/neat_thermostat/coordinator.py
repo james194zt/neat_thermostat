@@ -1702,13 +1702,18 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     # ---- Fully Kiosk wall panels ----
+    @property
+    def _kiosk_pin(self) -> str:
+        """Fully's menu PIN follows the wall PIN; blank leaves Fully's own PIN alone."""
+        return str(self.config.wall_pin or "").strip()
+
     def kiosk_status(self) -> dict[str, Any]:
         return {
             "devices": kiosk.fully_devices(self.hass),
             "defaults": self.config.kiosk_defaults,
             "auto_sync": self.config.kiosk_auto_sync,
             "panels": {
-                p.id: kiosk.panel_status(self.hass, p, self.config.kiosk_defaults) for p in self.config.wall_panels
+                p.id: kiosk.panel_status(self.hass, p, self.config.kiosk_defaults, pin=self._kiosk_pin) for p in self.config.wall_panels
             },
         }
 
@@ -1721,7 +1726,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not panel.linked_kiosk_device:
                 continue
             try:
-                out[panel.id] = await kiosk.async_apply(self.hass, panel, self.config.kiosk_defaults, force=force)
+                out[panel.id] = await kiosk.async_apply(
+                    self.hass, panel, self.config.kiosk_defaults, force=force, pin=self._kiosk_pin
+                )
             except Exception as err:  # noqa: BLE001 - one bad panel mustn't stop the rest
                 _LOGGER.warning("Neat: couldn't sync wall panel %s: %s", panel.id, err)
                 out[panel.id] = [f"error: {err}"]
@@ -1769,14 +1776,14 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             panel = self.get_wall_panel(panel_id)
             if panel is None or not panel.linked_kiosk_device or not self.config.kiosk_auto_sync:
                 return
-            status = kiosk.panel_status(self.hass, panel, self.config.kiosk_defaults)
+            status = kiosk.panel_status(self.hass, panel, self.config.kiosk_defaults, pin=self._kiosk_pin)
             if not status.get("online"):
                 return
             if status.get("in_sync") and not force:
                 self._kiosk_attempts[panel_id] = 0
                 return
             await self.async_kiosk_apply(panel_id, force=force)
-            after = kiosk.panel_status(self.hass, panel, self.config.kiosk_defaults)
+            after = kiosk.panel_status(self.hass, panel, self.config.kiosk_defaults, pin=self._kiosk_pin)
             self._kiosk_attempts[panel_id] = 0 if after.get("in_sync") else attempts + 1
 
         self._kiosk_timers[panel_id] = async_call_later(self.hass, wait, _run)
@@ -1806,7 +1813,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for panel in self.config.wall_panels:
             if not panel.linked_kiosk_device or done.get(panel.id) == version:
                 continue
-            status = kiosk.panel_status(self.hass, panel, self.config.kiosk_defaults)
+            status = kiosk.panel_status(self.hass, panel, self.config.kiosk_defaults, pin=self._kiosk_pin)
             if not status.get("online") or not status.get("expected_url"):
                 continue  # asleep/offline: retried when it's back
             try:
