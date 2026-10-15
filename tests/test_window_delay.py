@@ -11,6 +11,9 @@ from tests.test_schedule_ha import setup  # noqa: E402,F401
 
 DOOR = "binary_sensor.back_door"
 ROOM_WINDOW = "binary_sensor.lounge_window"
+# Inside the default 06:30–08:30 comfort block (Monday, BST): the house calls for heat
+# at 18 °C. Without this the tests failed whenever they ran in an Eco period (15 Oct).
+COMFORT_TIME = "2026-09-28T06:00:00+00:00"
 
 
 async def _configure(coord, delay=None):
@@ -29,6 +32,7 @@ async def test_default_delay_is_three_minutes(hass, setup):
 
 async def test_house_door_open_briefly_keeps_heating(hass, setup, freezer):
     coord, _calls = setup
+    freezer.move_to(COMFORT_TIME)
     hass.states.async_set(DOOR, "off")
     await _configure(coord, delay=3)
     assert coord.main_needs_heat()  # 18 °C house, calling
@@ -55,6 +59,7 @@ async def test_zero_delay_pauses_straight_away(hass, setup):
 
 async def test_room_window_uses_the_same_delay(hass, setup, freezer):
     coord, _calls = setup
+    freezer.move_to(COMFORT_TIME)
     hass.states.async_set(ROOM_WINDOW, "off")
     await _configure(coord, delay=3)
     room = coord.config.rooms[0]
