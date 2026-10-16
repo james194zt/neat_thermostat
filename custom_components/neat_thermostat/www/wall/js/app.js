@@ -547,7 +547,7 @@ function statusText(state, { heating, current, target }) {
   if (state.state === "off") return "Heating is off";
   const holdUntil = boilerHoldUntil(state);
   if (holdUntil) {
-    return a.boiler_on ? `Boiler off at ${holdUntil} (minimum run)` : `Boiler on at ${holdUntil} (minimum off)`;
+    return a.boiler_on ? `Boiler off at ${holdUntil} (minimum run)` : `Boiler on at ${holdUntil}`;
   }
   if (primary.summer_mode_state) return "Summer mode";
   if (a.window_open || primary.window_open) return "Window open — paused";

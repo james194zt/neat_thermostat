@@ -3,7 +3,7 @@
  * Loaded automatically by the integration; pick "Neat Thermostat" in the card list.
  * Everything comes from the Neat climate entities, so it updates live with no polling.
  */
-const NEAT_CARD_VERSION = "0.6.61";
+const NEAT_CARD_VERSION = "0.6.62";
 
 const NC_STYLES = `
 :host { display: block; }
@@ -455,7 +455,7 @@ class NeatThermostatCard extends HTMLElement {
     const finishing = Boolean(holdUntil) && heating && !a.boiler_demand;
     let status = "Holding temperature";
     if (off) status = "Heating is off";
-    else if (holdUntil) status = heating ? `Boiler off at ${holdUntil} (minimum run time)` : `Boiler on at ${holdUntil} (minimum off time)`;
+    else if (holdUntil) status = heating ? `Boiler off at ${holdUntil} (minimum run time)` : `Boiler on at ${holdUntil}`;
     else if (a.summer_mode) status = "Summer mode — heating paused";
     else if (a.window_open) status = "Window open — heating paused";
     else if (a.preheating) status = `Preheating for ${a.preheat_for || "the schedule"}`;
