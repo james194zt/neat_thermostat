@@ -29,6 +29,25 @@ async def test_overnight_turn_down_still_preheats(hass, setup, freezer):
     assert data["boiler_on"] is True
 
 
+async def test_turn_down_during_preheat_stops_it(hass, setup, freezer):
+    """16 Oct: turned down mid-preheat, and seconds later preheat put it back up."""
+    coord, _ = setup
+    await coord.async_save_config({"true_radiant": True})
+    freezer.move_to(f"{MONDAY} 05:30:00+01:00")
+    assert (await _tick(hass, coord))["preheat"]["preheating"] is True
+
+    coord.set_main_temperature(17.0)
+    await hass.async_block_till_done()
+    data = await _tick(hass, coord)
+    assert data["main"]["effective_target"] == 17.0
+    assert data["boiler_on"] is False
+    freezer.move_to(f"{MONDAY} 06:00:00+01:00")
+    assert (await _tick(hass, coord))["main"]["effective_target"] == 17.0
+    # The block itself still starts as scheduled.
+    freezer.move_to(f"{MONDAY} 06:31:00+01:00")
+    assert (await _tick(hass, coord))["main"]["effective_target"] == 20.0
+
+
 async def test_overnight_turn_up_is_kept(hass, setup, freezer):
     coord, _ = setup
     await coord.async_save_config({"true_radiant": True})

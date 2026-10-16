@@ -693,9 +693,19 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             self._preheat = status
             preheating = bool(status and status.get("preheating"))
-            if hold is not None and not (preheating and float(status["temperature"]) > hold):
+            during_this_preheat = bool(
+                preheating
+                and self._manual_hold
+                and status.get("block_key") is not None
+                and self._manual_hold.get("preheat_block") == status.get("block_key")
+            )
+            if hold is not None and (
+                during_this_preheat
+                or not (preheating and float(status["temperature"]) > hold)
+            ):
                 # A manual setting between blocks lasts until the next block,
                 # but turning down overnight mustn't cancel the morning warm-up.
+                # Turning down while that warm-up is already running does stop it.
                 self._house_comfort = True
                 return hold, False
             if preheating:
@@ -1370,6 +1380,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self.config.schedule_enabled:
             # A dial change holds until the next schedule change.
             self._manual_hold = self._new_hold(temperature)
+            if (self._preheat or {}).get("preheating"):
+                # Set during a preheat: it beats that preheat (see _compute_main_target).
+                self._manual_hold["preheat_block"] = self._preheat.get("block_key")
         self._house_changed()
         self._persist_control()
         record_manual_adjustment(self.intel.state, temperature)
