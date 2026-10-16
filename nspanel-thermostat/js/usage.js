@@ -302,7 +302,21 @@ export class UsagePage {
     const font = Math.max(10, 2.5 * vmin);
     const padL = 1.5 * vmin;
     const padR = 1.5 * vmin;
-    const padT = 3.2 * vmin;
+    // The legend sits over the chart's top-left corner: start the plot below it, with
+    // room for the value label above the tallest bar (it used to land on "Target").
+    const legend = el("usageLegend");
+    const sp = d?.setpoints || [];
+    if (legend) {
+      legend.innerHTML = d
+        ? [
+            d.energy ? `<span class="lg lg-gas">${d.energy.unit || "kWh"}</span>` : "",
+            `<span class="lg lg-run">Boiler on</span>`,
+            sp.length ? `<span class="lg lg-target">Target</span>` : "",
+          ].join("")
+        : "";
+    }
+    const legendBottom = legend && legend.offsetHeight ? legend.offsetTop + legend.offsetHeight : 3.2 * vmin;
+    const padT = legendBottom + font * 1.3 + 0.6 * vmin;
     const axisH = font * 1.7;
     const stripH = Math.max(6, 2.2 * vmin);
     const plotW = W - padL - padR;
@@ -390,7 +404,6 @@ export class UsagePage {
     }
 
     // Target: a step line in its own band at the top of the plot.
-    const sp = d.setpoints || [];
     if (sp.length) {
       const temps = sp.map((s) => Number(s.t));
       const lo = Math.min(...temps) - 1;
@@ -431,14 +444,5 @@ export class UsagePage {
     }
     const nowLabel = svgEl("text", { x: W - padR, y: ay, class: "u-axis u-now", "text-anchor": "end", "font-size": font }, svg);
     nowLabel.textContent = "Now";
-
-    const legend = el("usageLegend");
-    if (legend) {
-      legend.innerHTML = [
-        energy ? `<span class="lg lg-gas">${energy.unit || "kWh"}</span>` : "",
-        `<span class="lg lg-run">Boiler on</span>`,
-        sp.length ? `<span class="lg lg-target">Target</span>` : "",
-      ].join("");
-    }
   }
 }
