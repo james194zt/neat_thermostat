@@ -1,7 +1,7 @@
 /* Usage page: the last 24 hours of heating, gas/energy and Leaf, one swipe left of the dial.
 
    The page sits to the dial's right: a finger moving right-to-left brings it in, left-to-right
-   (or the back arrow) returns. Never from the left edge: that swipe opens Fully's menu. It always comes back to the dial on its own after a minute,
+   (or tapping the first page dot) returns. Never from the left edge: that swipe opens Fully's menu. It always comes back to the dial on its own after a minute,
    and when the screen sleeps or wakes, so nobody walks up to a report. */
 
 const RETURN_AFTER_MS = 60000;
@@ -78,7 +78,6 @@ export class UsagePage {
     el("usageGasIcon").innerHTML = ICONS.gas;
     el("usageLeafIcon").innerHTML = ICONS.leaf;
 
-    el("usageBack")?.addEventListener("click", () => this.show(false));
     for (const dot of document.querySelectorAll(".page-dot")) {
       dot.addEventListener("click", () => this.show(dot.dataset.go === "usage"));
     }
