@@ -141,6 +141,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._manual_hold: dict[str, Any] | None = None
         # Relay released for a hand test until this time (UTC); Neat leaves it alone.
         self._released_until: datetime | None = None
+        # Last on/off change of the relay Neat has seen: {"on", "since" (UTC ISO)}.
+        # HA restarts the relay's last_changed at start-up; the anti-short-cycle
+        # timer must not start again from there.
+        self._relay_seen: dict[str, Any] | None = None
         # A different sensor source seen but not yet confirmed (debounce blips,
         # e.g. "unavailable" for seconds while HA starts): (source, since UTC).
         self._sensor_pending: tuple[str, datetime] | None = None
@@ -180,6 +184,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._released_until = dt_util.parse_datetime(str(saved.get("released_until") or ""))
         # Mid-run after a restart: keep heating to the cut-off, not the cut-in.
         self._house_calling = bool(saved.get("house_calling"))
+        relay = saved.get("relay")
+        if isinstance(relay, dict) and dt_util.parse_datetime(str(relay.get("since") or "")):
+            self._relay_seen = {"on": bool(relay.get("on")), "since": relay["since"]}
         for room_id, room in (saved.get("rooms") or {}).items():
             st = self._room_states.get(room_id)
             if st is None or not isinstance(room, dict):
@@ -198,6 +205,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.intel.state.control = {
             "released_until": self._released_until.isoformat() if self._released_until else None,
             "house_calling": self._house_calling,
+            "relay": self._relay_seen,
             "main": {
                 "hvac_mode": self._main_hvac_mode,
                 "preset": self._main_preset,
@@ -1010,10 +1018,12 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         state = self.hass.states.get(self.config.heater) if self.config.heater else None
         if state is None or state.state in ("unknown", "unavailable"):
             return demand, 0.0
-        seconds = (dt_util.utcnow() - state.last_changed).total_seconds()
+        is_on = self._is_on(self.config.heater)
+        since = self._relay_since(is_on, state.last_changed)
+        seconds = (dt_util.utcnow() - since).total_seconds()
         command, wait = boiler_cycle_guard(
             demand,
-            self._is_on(self.config.heater),
+            is_on,
             seconds,
             min_on_seconds=self.config.min_on_minutes * 60.0,
             min_off_seconds=self.config.min_off_minutes * 60.0,
@@ -1025,6 +1035,24 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 wait,
             )
         return command, wait
+
+    def _relay_since(self, is_on: bool, last_changed: datetime) -> datetime:
+        """When the relay really went on/off, across HA restarts.
+
+        At start-up the relay goes unavailable → on/off and HA stamps a new
+        last_changed, so a boiler that had run for 10 minutes would look fresh and
+        be held on for the whole minimum run time again. The saved change wins
+        while the relay is still in that state.
+        """
+        seen = self._relay_seen
+        if seen is not None and seen["on"] == is_on:
+            saved = dt_util.parse_datetime(seen["since"])
+            if saved is not None and saved < last_changed:
+                return saved
+            return last_changed
+        self._relay_seen = {"on": is_on, "since": last_changed.isoformat()}
+        self._persist_control()
+        return last_changed
 
     def _track_heat_cycle(self, want_heat: bool) -> None:
         now = self._now()
@@ -1351,6 +1379,12 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.data["boiler_demand"] = demand
         self.data["boiler_cycle_wait_seconds"] = round(cycle_wait)
+        # The boiler is held against the demand (min on/off time) until then.
+        self.data["boiler_hold_until"] = (
+            (dt_util.utcnow() + timedelta(seconds=cycle_wait)).isoformat()
+            if cycle_wait > 0 and heater_available and not released
+            else None
+        )
         self.data["heater_available"] = heater_available
         self.data["main"]["effective_target"] = target
         self.data["main"]["schedule_active"] = _sched
@@ -1704,7 +1738,14 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._state_unsub()
 
         @callback
-        def _on_state(_event: Any) -> None:
+        def _on_state(event: Any) -> None:
+            new = event.data.get("new_state")
+            if (
+                new is not None
+                and event.data.get("entity_id") == self.config.heater
+                and new.state not in ("unknown", "unavailable")
+            ):
+                self._relay_since(self._is_on(self.config.heater), new.last_changed)
             self.hass.async_create_task(self.async_request_refresh())
 
         self._watched = entities

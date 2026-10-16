@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.60
+ * @version 0.6.61
  */
-const PANEL_VERSION = "0.6.60";
+const PANEL_VERSION = "0.6.61";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -1619,13 +1619,17 @@ class NeatThermostatPanel extends HTMLElement {
     const preset = state?.attributes?.preset_mode ?? (focus ? "none" : (live.main || {}).preset ?? "none");
     const presets = focus ? ["eco", "boost"] : ["eco", "boost", "away"];
     const preheat = focus ? {} : live.preheat || {};
-    let caption = off ? t("hero.caption.off") : heating ? t("hero.caption.heating_to") : t("hero.caption.set_to");
+    // Minimum on/off time: the boiler is held against what Neat wants until then.
+    const holdUntil = focus || off || !live.boiler_hold_until ? "" : this._ehClock(live.boiler_hold_until);
+    const finishing = Boolean(holdUntil) && heating && !live.boiler_demand;
+    let caption = off ? t("hero.caption.off") : heating && !finishing ? t("hero.caption.heating_to") : t("hero.caption.set_to");
     if (preheat.preheating) caption = t("hero.caption.preheating_to");
     let headline = t("hero.headline.holding");
     const trv = focus ? this._entityState(focus.trv_entity) : null;
     if (focus && focus.trv_entity && (!trv || trv.state === "unavailable" || trv.state === "unknown")) {
       headline = t("hero.headline.trv_offline");
     } else if (off) headline = focus ? t("hero.headline.radiator_off") : t("hero.headline.heating_off");
+    else if (holdUntil) headline = t(heating ? "hero.headline.boiler_off_at" : "hero.headline.boiler_on_at", { time: holdUntil });
     else if (heating) headline = focus ? t("hero.headline.warming_room") : t("hero.headline.warming_house");
     else if (currentNum != null && targetNum != null && currentNum >= Number(targetNum)) headline = t("hero.headline.up_to_temp");
 

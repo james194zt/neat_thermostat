@@ -149,6 +149,8 @@ class NeatHomeClimate(CoordinatorEntity[NeatThermostatCoordinator], ClimateEntit
             "boiler_cycle_wait_seconds": self.coordinator.data.get(
                 "boiler_cycle_wait_seconds"
             ),
+            # Minimum on/off time: the boiler stays as it is (against the demand) until then.
+            "boiler_hold_until": self.coordinator.data.get("boiler_hold_until"),
             "warmup_c_per_hour": self.coordinator.intel.state.warmup.c_per_hour,
             "radiator_coast_c": self.coordinator.intel.state.warmup.coast_c,
             # main / backup / none: which house sensor Neat is heating from.

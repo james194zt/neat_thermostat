@@ -3,7 +3,7 @@
  * Loaded automatically by the integration; pick "Neat Thermostat" in the card list.
  * Everything comes from the Neat climate entities, so it updates live with no polling.
  */
-const NEAT_CARD_VERSION = "0.6.12";
+const NEAT_CARD_VERSION = "0.6.61";
 
 const NC_STYLES = `
 :host { display: block; }
@@ -135,6 +135,11 @@ function ncFmt(v) {
   if (v == null || Number.isNaN(Number(v))) return null;
   const n = Math.round(Number(v) * 10) / 10;
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+function ncClock(ts) {
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function ncEsc(s) {
@@ -445,8 +450,12 @@ class NeatThermostatCard extends HTMLElement {
     card.classList.toggle("off", off);
     root.querySelector(".nc-name").textContent = this._config.name || "Home";
 
+    // Minimum on/off time: the boiler is held against what Neat wants until then.
+    const holdUntil = !off && a.boiler_hold_until ? ncClock(a.boiler_hold_until) : "";
+    const finishing = Boolean(holdUntil) && heating && !a.boiler_demand;
     let status = "Holding temperature";
     if (off) status = "Heating is off";
+    else if (holdUntil) status = heating ? `Boiler off at ${holdUntil} (minimum run time)` : `Boiler on at ${holdUntil} (minimum off time)`;
     else if (a.summer_mode) status = "Summer mode — heating paused";
     else if (a.window_open) status = "Window open — heating paused";
     else if (a.preheating) status = `Preheating for ${a.preheat_for || "the schedule"}`;
@@ -476,7 +485,7 @@ class NeatThermostatCard extends HTMLElement {
     place(root.querySelector(".now-dot"), pos(a.current_temperature));
     place(root.querySelector(".knob"), pos(target));
 
-    root.querySelector(".nc-caption").textContent = off ? "Off" : a.preheating ? "Preheating to" : heating ? "Heating to" : "Set to";
+    root.querySelector(".nc-caption").textContent = off ? "Off" : a.preheating ? "Preheating to" : heating && !finishing ? "Heating to" : "Set to";
     const t = root.querySelector(".nc-target");
     const shown = ncFmt(target);
     t.innerHTML = shown == null ? "—" : `${ncEsc(shown)}<sup>°C</sup>`;

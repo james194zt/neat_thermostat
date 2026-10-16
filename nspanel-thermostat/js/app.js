@@ -491,13 +491,15 @@ function applyTheme(state) {
   const [c0, c1] = DIAL_COLOURS[ringState] || DIAL_COLOURS.idle;
   ui.dialG0?.setAttribute("stop-color", c0);
   ui.dialG1?.setAttribute("stop-color", c1);
+  // Boiler only kept on for its minimum run time: it isn't heating to the target.
+  const finishing = Boolean(boilerHoldUntil(state)) && heating && !state?.attributes?.boiler_demand;
   if (ui.dialCaption) {
     ui.dialCaption.textContent =
       mode === "off"
         ? ""
         : state?.attributes?.preheating
           ? "Preheating to"
-          : heating
+          : heating && !finishing
             ? "Heating to"
             : preset === "eco"
               ? "Eco"
@@ -524,6 +526,14 @@ function applyTheme(state) {
   );
 }
 
+/** House view only: the boiler is held on/off (minimum on/off time) until this clock time. */
+function boilerHoldUntil(state) {
+  const until = state?.attributes?.boiler_hold_until;
+  if (!until || state?.state === "off" || !isPrimaryView()) return "";
+  const d = new Date(until);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 /** One line under the name: what the heating is doing, in words. */
 function statusText(state, { heating, current, target }) {
   const a = state?.attributes || {};
@@ -535,6 +545,10 @@ function statusText(state, { heating, current, target }) {
     return "Radiator valve offline";
   }
   if (state.state === "off") return "Heating is off";
+  const holdUntil = boilerHoldUntil(state);
+  if (holdUntil) {
+    return a.boiler_on ? `Boiler off at ${holdUntil} (minimum run)` : `Boiler on at ${holdUntil} (minimum off)`;
+  }
   if (primary.summer_mode_state) return "Summer mode";
   if (a.window_open || primary.window_open) return "Window open — paused";
   if (a.preheating) return `Warming up for ${a.preheat_for || "the schedule"}`;
