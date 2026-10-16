@@ -133,7 +133,7 @@
   "hero.caption.preheating_to": "Preheating to",
   "hero.caption.set_to": "Set to",
   "hero.eta": "{eta} to go",
-  "hero.headline.boiler_off_at": "Boiler off at {time} (minimum run time)",
+  "hero.headline.boiler_off_at": "Boiler off at {time}",
   "hero.headline.boiler_on_at": "Boiler on at {time}",
   "hero.headline.heating_off": "Heating is off",
   "hero.headline.holding": "Holding temperature",
