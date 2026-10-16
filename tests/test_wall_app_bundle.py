@@ -29,5 +29,24 @@ def test_bundle_files_match_source():
     assert not stale, f"Out of date, run scripts/sync_wall_app.py: {stale}"
 
 
+def test_every_imported_module_is_versioned():
+    """cache-boot.js maps each imported module to ?v=<version>, or browsers keep old copies."""
+    import re
+
+    js = sync.SRC / "js"
+    imported = set()
+    for entry in ("app.js", "setup.js"):
+        todo = [entry]
+        while todo:
+            text = (js / todo.pop()).read_text(encoding="utf-8")
+            for name in re.findall(r'from\s+"\./([^"]+\.js)"', text):
+                if name not in imported:
+                    imported.add(name)
+                    todo.append(name)
+    boot = (js / "cache-boot.js").read_text(encoding="utf-8")
+    listed = set(re.findall(r'"([\w-]+\.js)"', boot.split("IMPORTED_MODULES = [", 1)[1].split("]", 1)[0]))
+    assert imported and listed == imported
+
+
 def test_no_local_panel_config_shipped():
     assert not (sync.DEST / "config.json").exists()

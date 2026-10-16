@@ -65,8 +65,37 @@
     document.body.appendChild(script);
   }
 
+  // Every module app.js / setup.js import, directly or not. Only the entry module gets
+  // ?v= in its URL; without this map a browser keeps its cached copy of the others
+  // (HA sends no cache headers), e.g. an old usage.js after an update.
+  // tests/test_wall_app_bundle.py checks this list against the imports.
+  const IMPORTED_MODULES = [
+    "config.js",
+    "device-registry.js",
+    "display-power.js",
+    "ha-client.js",
+    "ha-embedded.js",
+    "screensaver.js",
+    "usage.js",
+    "weather.js",
+  ];
+
+  function injectImportMap(version) {
+    const imports = {};
+    for (const name of IMPORTED_MODULES) {
+      const url = new URL(`js/${name}`, window.location.href);
+      url.search = "";
+      imports[url.href] = `${url.href}?v=${encodeURIComponent(version)}`;
+    }
+    const map = document.createElement("script");
+    map.type = "importmap";
+    map.textContent = JSON.stringify({ imports });
+    document.head.appendChild(map);
+  }
+
   function loadAssets(version) {
     const assets = ASSETS[page] || ASSETS.app;
+    injectImportMap(version); // before the first module script
     for (const href of assets.css) {
       injectStylesheet(`${href}?v=${encodeURIComponent(version)}`);
     }
