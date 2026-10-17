@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.67
+ * @version 0.6.68
  */
-const PANEL_VERSION = "0.6.67";
+const PANEL_VERSION = "0.6.68";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -71,6 +71,16 @@ const DAY_SHORT = Object.fromEntries(DAYS.map((d) => [d, t(`day_short.${d}`)]));
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].map((m) => t(`month.${m}`));
 // New-room defaults (match RoomConfig / DEFAULT_TARGET_TEMP / DEFAULT_ECO_TEMP).
 const ROOM_TEMP_DEFAULTS = { follow_house: true, house_offset: 0, hold_ends: "house_change", target_temp: 20, eco_temp: 16 };
+// TRV Configuration: the HA domains a device setting can be, with the service + field
+// that sets it (switch and button have their own services).
+const TRV_CONFIG_DOMAINS = {
+  number: ["set_value", "value"],
+  select: ["select_option", "option"],
+  switch: null,
+  text: ["set_value", "value"],
+  time: ["set_value", "time"],
+  button: null,
+};
 const HEAT_ORANGE = "#F57C00";
 const HEAT_ORANGE_SOFT = "#FF9800";
 // The integration ships a copy of the wall app (scripts/sync_wall_app.py);
@@ -378,6 +388,8 @@ button.primary svg, button.secondary svg { vertical-align: -4px; margin: 0 6px 0
 .set-field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
 .set-field-pair > .set-row-desc { grid-column: 1 / -1; }
 .dlg-section [hidden] { display: none; }
+.trv-cfg > .set-row-desc:first-child:not(:last-child) { margin: 0 0 14px; }
+.trv-cfg select, .trv-cfg input[type="text"], .trv-cfg input[type="password"] { max-width: 180px; }
 .dlg-foot { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--divider-color); }
 input[readonly] { opacity: 0.7; cursor: default; }
 @keyframes dlg-fade { from { opacity: 0; } }
@@ -2374,6 +2386,10 @@ class NeatThermostatPanel extends HTMLElement {
             </div>
             <div class="set-row-control"><label class="switch"><input type="checkbox" id="roomCallsForHeat" ${this._roomDraft.calls_for_heat !== false ? "checked" : ""} /><span></span></label></div>
           </div>
+        </div>
+        <div class="dlg-section">
+          <div class="dlg-section-title">${t("room_dlg.section.trv_config")}</div>
+          <div class="trv-cfg" data-trv-config>${this._renderTrvConfig()}</div>
         </div>`,
       foot: `
         ${editing ? `<button class="danger" id="deleteRoom" type="button">${t("common.delete")}</button>` : ""}
@@ -2477,7 +2493,9 @@ class NeatThermostatPanel extends HTMLElement {
       if (!picker) continue;
       picker.value = this._roomDraft[key] || undefined;
       picker.addEventListener("value-changed", (ev) => {
+        const changed = (this._roomDraft[key] || "") !== (ev.detail?.value || "");
         this._roomDraft[key] = ev.detail?.value || "";
+        if (key === "trv" && changed) this._refreshTrvConfig();
       });
     }
 
@@ -2494,6 +2512,125 @@ class NeatThermostatPanel extends HTMLElement {
   _readRoomPickerValues() {
     // Pickers write into the draft as they change.
     return this._roomDraft;
+  }
+
+  /**
+   * The TRV's own settings: every entity on the TRV's device that HA files under
+   * "Configuration" (what ZHA, Zigbee2MQTT, Z-Wave JS… show on the device page).
+   * Nothing is model-specific — the control follows the entity's domain and attributes.
+   */
+  _trvConfigEntities(trvId) {
+    const entities = this._hass?.entities;
+    const dev = trvId && entities?.[trvId]?.device_id;
+    if (!dev) return [];
+    const order = Object.keys(TRV_CONFIG_DOMAINS);
+    return Object.entries(entities)
+      .filter(([id, ent]) => ent.device_id === dev && id !== trvId && !ent.hidden
+        && ent.entity_category === "config" && order.includes(id.split(".")[0]) && this._hass.states[id])
+      .map(([id]) => ({ id, domain: id.split(".")[0], name: this._trvConfigName(id, dev) }))
+      .sort((a, b) => (a.domain === "button") - (b.domain === "button") || a.name.localeCompare(b.name));
+  }
+
+  /** "Kitchen Radiator Child lock" → "Child lock" (HA puts the device name in front). */
+  _trvConfigName(id, deviceId) {
+    const dev = this._hass?.devices?.[deviceId];
+    const devName = dev?.name_by_user || dev?.name || "";
+    let name = this._entityState(id)?.attributes?.friendly_name || id;
+    if (devName && name.startsWith(`${devName} `)) name = name.slice(devName.length + 1);
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  }
+
+  _renderTrvConfig() {
+    const trvId = this._roomDraft.trv;
+    if (!trvId) return `<div class="set-row-desc">${t("room_dlg.trv_config.pick")}</div>`;
+    const items = this._trvConfigEntities(trvId);
+    if (!items.length) return `<div class="set-row-desc">${t("room_dlg.trv_config.none")}</div>`;
+    const rows = items.map(({ id, domain, name }) => {
+      const st = this._entityState(id);
+      const a = st.attributes || {};
+      const off = st.state === "unavailable" ? "disabled" : "";
+      const known = st.state !== "unknown" && st.state !== "unavailable";
+      const value = known ? st.state : "";
+      const key = `data-trv-cfg="${this._escape(id)}"`;
+      let control;
+      if (domain === "number") {
+        const attr = (n) => (a[n] != null ? `${n}="${this._escape(a[n])}"` : "");
+        control = `<div class="num-input"><input type="number" ${key} ${attr("min")} ${attr("max")} ${attr("step")} value="${this._escape(value)}" ${off} />${a.unit_of_measurement ? `<span>${this._escape(a.unit_of_measurement)}</span>` : ""}</div>`;
+      } else if (domain === "select") {
+        const opts = [...(a.options || [])];
+        if (!known) opts.unshift("");
+        control = `<select ${key} ${off}>${opts.map((o) => `<option value="${this._escape(o)}" ${o === value ? "selected" : ""}>${this._escape(o || "—")}</option>`).join("")}</select>`;
+      } else if (domain === "switch") {
+        control = `<label class="switch"><input type="checkbox" ${key} ${value === "on" ? "checked" : ""} ${off} /><span></span></label>`;
+      } else if (domain === "text") {
+        const attr = (n, as) => (a[n] != null ? `${as}="${this._escape(a[n])}"` : "");
+        control = `<input type="${a.mode === "password" ? "password" : "text"}" ${key} ${attr("min", "minlength")} ${attr("max", "maxlength")} value="${this._escape(value)}" ${off} />`;
+      } else if (domain === "time") {
+        control = `<input type="time" step="1" ${key} value="${this._escape(value)}" ${off} />`;
+      } else {
+        control = `<button class="secondary compact" type="button" data-trv-press="${this._escape(id)}" ${off}>${t("room_dlg.trv_config.press")}</button>`;
+      }
+      const note = st.state === "unavailable" ? `<div class="set-row-desc">${t("room_dlg.trv_config.unavailable")}</div>` : "";
+      return `
+        <div class="set-row">
+          <div class="set-row-text"><div class="set-row-name" title="${this._escape(id)}">${this._escape(name)}</div>${note}</div>
+          <div class="set-row-control">${control}</div>
+        </div>`;
+    });
+    return `<div class="set-row-desc">${t("room_dlg.trv_config.desc")}</div>${rows.join("")}`;
+  }
+
+  /** The TRV picker changed: show the new TRV's settings. */
+  _refreshTrvConfig() {
+    const box = this.shadowRoot.querySelector("[data-trv-config]");
+    if (!box) return;
+    box.innerHTML = this._renderTrvConfig();
+    this._bindTrvConfig();
+  }
+
+  /**
+   * Each change goes straight to the TRV's integration (like its HA device page) —
+   * Neat stores none of it; the values are read from HA whenever the dialog opens.
+   */
+  _bindTrvConfig() {
+    const box = this.shadowRoot.querySelector("[data-trv-config]");
+    if (!box) return;
+    const nameOf = (el, id) => el.closest(".set-row")?.querySelector(".set-row-name")?.textContent || id;
+    const send = async (el, domain, service, data) => {
+      const id = el.dataset.trvCfg || el.dataset.trvPress;
+      const name = nameOf(el, id);
+      try {
+        await this._hass.callService(domain, service, data, { entity_id: id });
+        this._showToast(t(domain === "button" ? "room_dlg.trv_config.pressed" : "room_dlg.trv_config.sent", { name }));
+      } catch (e) {
+        this._showToast(t("room_dlg.trv_config.failed", { name, error: e?.message || e }), "err");
+        // Put the control back to what the TRV reports.
+        const st = this._entityState(id);
+        if (st && el.type === "checkbox") el.checked = st.state === "on";
+        else if (st && st.state !== "unknown" && st.state !== "unavailable") el.value = st.state;
+      }
+    };
+    box.querySelectorAll("[data-trv-cfg]").forEach((el) =>
+      el.addEventListener("change", () => {
+        const domain = el.dataset.trvCfg.split(".")[0];
+        if (domain === "switch") return send(el, domain, el.checked ? "turn_on" : "turn_off", {});
+        if (el.value === "") return;
+        const [service, field] = TRV_CONFIG_DOMAINS[domain];
+        if (domain === "number") {
+          // Spinner clicks each fire "change": send once they stop, not one radio message per click.
+          clearTimeout(el._trvSendTimer);
+          el._trvSendTimer = setTimeout(() => {
+            const n = Number(el.value);
+            if (el.value !== "" && Number.isFinite(n)) send(el, domain, service, { [field]: n });
+          }, 800);
+          return;
+        }
+        send(el, domain, service, { [field]: el.value });
+      })
+    );
+    box.querySelectorAll("[data-trv-press]").forEach((btn) =>
+      btn.addEventListener("click", () => send(btn, "button", "press", {}))
+    );
   }
 
   _renderWallPanels() {
@@ -4283,6 +4420,7 @@ class NeatThermostatPanel extends HTMLElement {
       this.shadowRoot.getElementById("roomCallsForHeat")?.addEventListener("change", (ev) => {
         this._roomDraft.calls_for_heat = ev.target.checked;
       });
+      this._bindTrvConfig();
       // Keep the draft current (the dialog can re-render) and swap offset ⇄ own temps.
       ["roomFollowHouse", "roomOffset", "roomComfort", "roomEco", "roomHoldEnds"].forEach((id) => {
         this.shadowRoot.getElementById(id)?.addEventListener("change", () => {
