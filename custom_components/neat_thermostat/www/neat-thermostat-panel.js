@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.70
+ * @version 0.6.71
  */
-const PANEL_VERSION = "0.6.70";
+const PANEL_VERSION = "0.6.71";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -251,6 +251,18 @@ const STYLES = `
 .card-icon.intel { color: var(--nt-accent-hi); background: color-mix(in srgb, var(--nt-accent) 16%, transparent); }
 .card-icon.heat { color: var(--nt-heat-soft); background: color-mix(in srgb, var(--nt-heat) 14%, transparent); }
 .card-icon.warn { color: var(--nt-amber); background: color-mix(in srgb, var(--nt-amber) 14%, transparent); }
+/* A card that opens and closes from its header (closed: header only). */
+.collapse-head { cursor: pointer; user-select: none; border-radius: 12px; }
+.collapse-head:focus-visible { outline: 2px solid var(--nt-accent); outline-offset: 4px; }
+.card.collapsed .collapse-head { margin-bottom: 0; }
+.collapse-chev { flex-shrink: 0; display: grid; place-items: center; color: var(--secondary-text-color); }
+.collapse-chev svg { width: 24px; height: 24px; transition: transform 0.2s ease; }
+.collapse-head[aria-expanded="true"] .collapse-chev svg { transform: rotate(180deg); }
+.collapse-body > .set-row:first-child { border-top: 0; padding-top: 0; }
+.dlg-collapse-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dlg-collapse-head .collapse-chev svg { width: 20px; height: 20px; }
+.dlg-section .dlg-collapse-desc { margin-top: -8px; }
+.dlg-collapse-body:not([hidden]) { display: flex; flex-direction: column; gap: 14px; }
 
 /* —— Settings —— */
 .set-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
@@ -1089,6 +1101,7 @@ function logoSvg() {
 }
 
 const ICONS = {
+  chevron_down: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>`,
   tune: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>`,
   window: `<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M12 3v18M4 12h16"/></g></svg>`,
   sun: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`,
@@ -2971,15 +2984,18 @@ class NeatThermostatPanel extends HTMLElement {
 
   _renderKioskCard() {
     const k = this._kiosk;
+    // Closed until opened (kept while the panel stays open, closed again on a fresh load).
+    const open = !!this._kioskOpen;
     const head = `
-      <div class="card-head">
+      <div class="card-head collapse-head" id="kioskToggle" role="button" tabindex="0" aria-controls="kioskBody" aria-expanded="${open}" title="${this._escape(t(open ? "common.collapse" : "common.expand"))}">
         <span class="card-icon intel">${ICONS.tune}</span>
         <div class="card-head-text"><p class="card-title">${t("kiosk.title")}</p><p class="card-sub">${t("kiosk.sub")}</p></div>
+        <span class="collapse-chev">${ICONS.chevron_down}</span>
       </div>`;
-    if (!k) return `<div class="card" id="kioskCard">${head}<p class="muted" style="margin:0">${t("common.loading")}</p></div>`;
-    if (!k.devices?.length) {
-      return `<div class="card" id="kioskCard">${head}<p class="muted" style="margin:0">${t("kiosk.no_integration")}</p></div>`;
-    }
+    const card = (body) =>
+      `<div class="card${open ? "" : " collapsed"}" id="kioskCard">${head}<div class="collapse-body" id="kioskBody" ${open ? "" : "hidden"}>${body}</div></div>`;
+    if (!k) return card(`<p class="muted" style="margin:0">${t("common.loading")}</p>`);
+    if (!k.devices?.length) return card(`<p class="muted" style="margin:0">${t("kiosk.no_integration")}</p>`);
     const d = k.defaults || {};
     const rows = KIOSK_FIELDS.map(
       (f) => `
@@ -2988,9 +3004,7 @@ class NeatThermostatPanel extends HTMLElement {
           <div class="set-row-control">${this._kioskControl(f, d[f.key], "kd_", t("kiosk.not_managed"))}</div>
         </div>`
     ).join("");
-    return `
-      <div class="card" id="kioskCard">
-        ${head}
+    return card(`
         <div class="set-row">
           <div class="set-row-text"><div class="set-row-name">${t("kiosk.auto_sync")}</div><div class="set-row-desc">${t("kiosk.auto_sync.desc")}</div></div>
           <div class="set-row-control"><label class="switch"><input type="checkbox" id="kioskAutoSync" ${k.auto_sync !== false ? "checked" : ""} /><span></span></label></div>
@@ -3003,11 +3017,35 @@ class NeatThermostatPanel extends HTMLElement {
           <button class="secondary" id="kioskImport" type="button">${t("kiosk.import")}</button>
           <span style="flex:1"></span>
           <button class="primary" id="kioskSaveDefaults" type="button">${t("kiosk.save_sync")}</button>
-        </div>
-      </div>`;
+        </div>`);
+  }
+
+  /** A header that opens and closes its body (click, Enter or Space). */
+  _bindCollapse(headId, bodyId, onChange) {
+    const head = this.shadowRoot.getElementById(headId);
+    if (!head) return;
+    const flip = () => {
+      // Shown/hidden in place, not re-rendered: unsaved edits inside stay.
+      const open = head.getAttribute("aria-expanded") !== "true";
+      head.setAttribute("aria-expanded", String(open));
+      head.title = t(open ? "common.collapse" : "common.expand");
+      head.parentElement?.classList.toggle("collapsed", !open);
+      const body = this.shadowRoot.getElementById(bodyId);
+      if (body) body.hidden = !open;
+      onChange(open);
+    };
+    head.addEventListener("click", flip);
+    head.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      ev.preventDefault();
+      flip();
+    });
   }
 
   _bindKioskCard() {
+    this._bindCollapse("kioskToggle", "kioskBody", (open) => {
+      this._kioskOpen = open;
+    });
     this.shadowRoot.getElementById("kioskImport")?.addEventListener("click", async () => {
       const select = this.shadowRoot.getElementById("kioskImportFrom");
       const name = select?.selectedOptions?.[0]?.textContent || t("kiosk.the_panel");
@@ -3163,18 +3201,25 @@ class NeatThermostatPanel extends HTMLElement {
   _renderKioskDialogSection(d) {
     const k = this._kiosk;
     const on = d.kioskEnabled !== false;
+    // Closed each time the dialog opens; the header opens it (state kept in the draft).
+    const open = !!d.kioskOpen;
+    const section = (body, hasOverrides = true) => `
+      <div class="dlg-section${open ? "" : " collapsed"}">
+        <div class="dlg-section-title collapse-head dlg-collapse-head" id="wpKioskToggle" role="button" tabindex="0" aria-controls="wpKioskSection" aria-expanded="${open}" title="${this._escape(t(open ? "common.collapse" : "common.expand"))}">
+          <span>${t("kiosk.title")}</span><span class="collapse-chev">${ICONS.chevron_down}</span>
+        </div>
+        ${hasOverrides ? `<div class="set-row-desc dlg-collapse-desc">${t("wall_dlg.kiosk.overrides")}</div>` : ""}
+        <div class="dlg-collapse-body" id="wpKioskSection" ${open ? "" : "hidden"}>${body}</div>
+      </div>`;
     const toggle = `
         <div class="set-row">
           <div class="set-row-text"><div class="set-row-name">${t("wall_dlg.kiosk_enabled")}</div><div class="set-row-desc">${t("wall_dlg.kiosk_enabled.desc")}</div></div>
           <div class="set-row-control"><label class="switch"><input type="checkbox" id="wpKioskEnabled" ${on ? "checked" : ""} /><span></span></label></div>
         </div>`;
     if (!k?.devices?.length) {
-      return `
-      <div class="dlg-section">
-        <div class="dlg-section-title">${t("kiosk.title")}</div>
+      return section(`
         ${toggle}
-        <div id="wpKioskBody" ${on ? "" : "hidden"}><div class="set-row-desc">${t("wall_dlg.kiosk.no_integration")}</div></div>
-      </div>`;
+        <div id="wpKioskBody" ${on ? "" : "hidden"}><div class="set-row-desc">${t("wall_dlg.kiosk.no_integration")}</div></div>`, false);
     }
     const defaults = k.defaults || {};
     const rows = KIOSK_FIELDS.map((f) => {
@@ -3186,9 +3231,7 @@ class NeatThermostatPanel extends HTMLElement {
           <div class="set-row-control">${this._kioskControl(f, d.kioskOverrides?.[f.key], "ko_", placeholder)}</div>
         </div>`;
     }).join("");
-    return `
-      <div class="dlg-section">
-        <div class="dlg-section-title">${t("kiosk.title")}</div>
+    return section(`
         ${toggle}
         <div id="wpKioskBody" ${on ? "" : "hidden"}>
         <div class="set-field">
@@ -3199,10 +3242,8 @@ class NeatThermostatPanel extends HTMLElement {
           </select>
           <div class="set-row-desc">${t("wall_dlg.kiosk.device.desc")}</div>
         </div>
-        <div class="set-row-desc">${t("wall_dlg.kiosk.overrides")}</div>
         ${rows}
-        </div>
-      </div>`;
+        </div>`);
   }
 
   /** Open the wall panel dialog: a panel to edit, or nothing to add one. */
@@ -4564,6 +4605,9 @@ class NeatThermostatPanel extends HTMLElement {
         if (section) section.hidden = ev.target.value !== "nspanel_pro";
       });
       this._bindHelperSection();
+      this._bindCollapse("wpKioskToggle", "wpKioskSection", (open) => {
+        this._wallDraft.kioskOpen = open;
+      });
       this.shadowRoot.getElementById("wpKioskEnabled")?.addEventListener("change", (ev) => {
         this._wallDraft.kioskEnabled = ev.target.checked;
         const body = this.shadowRoot.getElementById("wpKioskBody");
