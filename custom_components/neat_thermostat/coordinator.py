@@ -82,6 +82,14 @@ REPORTING_RETRY_SOON = timedelta(minutes=2)
 # Once ZHA is loaded it still polls every mains device in the background; send
 # nothing to the radio until that has had time to finish.
 ZIGBEE_SETTLE = timedelta(minutes=3)
+# A TRV that doesn't answer (asleep, out of range, flat battery) is tried again
+# after 1, 2, 4 … up to 30 min — not every tick: ZHA queues each command for
+# ~30 s+, and on 17 Oct 2026 21 of them were still waiting when HA stopped.
+TRV_RETRY_MIN = timedelta(minutes=1)
+TRV_RETRY_MAX = timedelta(minutes=30)
+# The same command isn't repeated sooner than this even when it went through: a
+# TRV that clamps the setpoint (min/max limit) would otherwise get it every tick.
+TRV_REPEAT_AFTER = timedelta(minutes=10)
 # A "run" longer than this (e.g. HA was down while it ended) teaches nothing.
 MAX_LEARN_RUN_HOURS = 6
 
@@ -158,6 +166,12 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # When Zigbee requests may start (UTC): set once HA is running and ZHA
         # is loaded, plus ZIGBEE_SETTLE; cleared whenever either stops being true.
         self._zigbee_ok_after: datetime | None = None
+        # TRV commands: the one in flight per TRV, back-off after a failure
+        # {"failures", "at"}, and the last batch sent (signature, when). Transient by
+        # design: after a restart every TRV simply gets one fresh try.
+        self._trv_tasks: dict[str, asyncio.Task] = {}
+        self._trv_retry: dict[str, dict[str, Any]] = {}
+        self._trv_last_sent: dict[str, tuple[Any, datetime]] = {}
         # False while the house schedule is in setback (rooms drop to Eco).
         self._house_comfort = True
         self._dirty_intel = False
@@ -1008,33 +1022,67 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Only send commands when the TRV differs: TRVs are in our listener
         # list, so unconditional calls every tick loop back into refreshes
         # and flood battery Zigbee valves.
-        if self.config.summer_mode or window or mode != "heat" or self._room_follows_house_off(room):
-            if trv.state != "off":
-                await self.hass.services.async_call(
-                    "climate",
-                    "set_hvac_mode",
-                    {"entity_id": room.trv_entity, "hvac_mode": "off"},
-                    blocking=False,
-                )
-            return
+        calls: list[tuple[str, dict[str, Any]]] = []
         try:
             trv_target = float(trv.attributes.get("temperature"))
         except (TypeError, ValueError):
             trv_target = None
-        if trv_target is None or abs(trv_target - target) >= 0.05:
-            await self.hass.services.async_call(
-                "climate",
-                "set_temperature",
-                {"entity_id": room.trv_entity, "temperature": target},
-                blocking=False,
-            )
-        if trv.state != "heat":
-            await self.hass.services.async_call(
-                "climate",
-                "set_hvac_mode",
-                {"entity_id": room.trv_entity, "hvac_mode": "heat"},
-                blocking=False,
-            )
+        if self.config.summer_mode or window or mode != "heat" or self._room_follows_house_off(room):
+            if trv.state != "off":
+                calls.append(("set_hvac_mode", {"hvac_mode": "off"}))
+        else:
+            if trv_target is None or abs(trv_target - target) >= 0.05:
+                calls.append(("set_temperature", {"temperature": target}))
+            if trv.state != "heat":
+                calls.append(("set_hvac_mode", {"hvac_mode": "heat"}))
+        # What the TRV reported is part of the signature: turned by hand, it's
+        # put back at once; clamping the same setpoint, it waits TRV_REPEAT_AFTER.
+        self._trv_send(room.trv_entity, calls, (trv.state, trv_target))
+
+    def _trv_send(
+        self, entity_id: str, calls: list[tuple[str, dict[str, Any]]], seen: tuple[Any, ...]
+    ) -> None:
+        """Send TRV commands in the background: one batch per TRV at a time, with back-off."""
+        if not calls or self.hass.is_stopping:
+            return
+        task = self._trv_tasks.get(entity_id)
+        if task is not None and not task.done():
+            return  # the last command is still waiting for the TRV
+        now = dt_util.utcnow()
+        retry = self._trv_retry.get(entity_id)
+        if retry is not None and now < retry["at"]:
+            return
+        signature = (tuple((service, tuple(sorted(data.items()))) for service, data in calls), seen)
+        last = self._trv_last_sent.get(entity_id)
+        if last is not None and last[0] == signature and now - last[1] < TRV_REPEAT_AFTER:
+            return
+        self._trv_last_sent[entity_id] = (signature, now)
+        # A background task: HA cancels it as soon as it starts stopping, so no
+        # command is left queued at the radio while ZHA shuts down.
+        self._trv_tasks[entity_id] = self.hass.async_create_background_task(
+            self._async_trv_commands(entity_id, calls), f"{DOMAIN}_trv_{entity_id}"
+        )
+
+    async def _async_trv_commands(
+        self, entity_id: str, calls: list[tuple[str, dict[str, Any]]]
+    ) -> None:
+        for service, data in calls:
+            try:
+                await self.hass.services.async_call(
+                    "climate", service, {"entity_id": entity_id, **data}, blocking=True
+                )
+            except Exception as err:  # noqa: BLE001 — the TRV failed, not the loop
+                failures = (self._trv_retry.get(entity_id) or {}).get("failures", 0) + 1
+                wait = min(TRV_RETRY_MIN * 2 ** min(failures - 1, 6), TRV_RETRY_MAX)
+                self._trv_retry[entity_id] = {"failures": failures, "at": dt_util.utcnow() + wait}
+                self._trv_last_sent.pop(entity_id, None)  # the retry must go out
+                (_LOGGER.warning if failures == 1 else _LOGGER.debug)(
+                    "Neat: %s didn't take %s (%s) — trying again in %d min",
+                    entity_id, service, err or type(err).__name__, wait.total_seconds() // 60,
+                )
+                return
+        if self._trv_retry.pop(entity_id, None) is not None:
+            _LOGGER.info("Neat: %s is answering again", entity_id)
 
     def _apply_cycle_guard(self, demand: bool) -> tuple[bool, float]:
         """Hold the boiler in its current state until min on/off time has passed."""
@@ -1948,6 +1996,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_unload(self) -> None:
         if self._reporting_task is not None and not self._reporting_task.done():
             self._reporting_task.cancel()
+        for task in self._trv_tasks.values():
+            if not task.done():
+                task.cancel()
+        self._trv_tasks.clear()
         if self._dirty_intel:
             await self.intel.async_save()
         for unsub in self._unsubs:

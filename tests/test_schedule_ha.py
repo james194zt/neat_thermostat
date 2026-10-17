@@ -72,7 +72,7 @@ async def setup(hass, monkeypatch):
 
 async def _tick(hass, coord):
     data = await coord._async_update_data()  # noqa: SLF001
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)  # TRV commands
     return data
 
 
