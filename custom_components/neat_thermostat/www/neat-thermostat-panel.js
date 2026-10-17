@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.66
+ * @version 0.6.67
  */
-const PANEL_VERSION = "0.6.66";
+const PANEL_VERSION = "0.6.67";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like

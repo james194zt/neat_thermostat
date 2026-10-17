@@ -10,6 +10,7 @@ import pytest
 
 pytest.importorskip("pytest_homeassistant_custom_component")
 
+from custom_components.neat_thermostat import coordinator as coordinator_module  # noqa: E402
 from custom_components.neat_thermostat import zigbee_reporting  # noqa: E402
 from custom_components.neat_thermostat.sensor_health import (  # noqa: E402
     SOURCE_BACKUP,
@@ -197,7 +198,14 @@ async def test_learning_pauses_on_the_backup(hass, backed_up, freezer):
 
 
 @pytest.fixture
-def zha(monkeypatch):
+def zha_up(monkeypatch):
+    """ZHA loaded long ago: no start-up wait."""
+    monkeypatch.setattr(zigbee_reporting, "zha_loaded", lambda hass: True)
+    monkeypatch.setattr(coordinator_module, "ZIGBEE_SETTLE", timedelta(0))
+
+
+@pytest.fixture
+def zha(monkeypatch, zha_up):
     calls = []
     fail = {"on": False}
 
@@ -245,7 +253,64 @@ async def test_fast_reporting_on_off_and_retry(hass, backed_up, freezer, zha):
     assert coord.intel.state.fast_reporting == []
 
 
-async def test_zha_still_starting_retries_soon_and_quietly(hass, backed_up, freezer, monkeypatch, caplog):
+async def test_nothing_sent_while_zha_or_ha_starts_or_stops(hass, backed_up, freezer, monkeypatch):
+    """A request during ZHA's start-up (or HA's shutdown) can leave ZHA stuck until a reboot."""
+    from homeassistant.core import CoreState
+
+    coord = backed_up[0]
+    calls = []
+    loaded = {"on": False}
+
+    async def configure(hass, entity_id, *, fast):
+        calls.append(entity_id)
+
+    monkeypatch.setattr(zigbee_reporting, "zha_loaded", lambda hass: loaded["on"])
+    monkeypatch.setattr(zigbee_reporting, "zha_ieee", lambda hass, e: "aa:bb" if e == "sensor.house" else None)
+    monkeypatch.setattr(zigbee_reporting, "async_configure", configure)
+    await coord.async_save_config({"fast_sensor_reporting": True})
+
+    async def tick(minute):
+        await _at(hass, coord, freezer, minute, house=18.0, backup=19.5)
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+    await tick(0)
+    assert calls == []  # ZHA's entry not loaded yet
+    loaded["on"] = True
+    await tick(1)
+    await tick(3)
+    assert calls == []  # loaded, but still polling its devices
+    await tick(4)
+    assert calls == ["sensor.house"]  # 3 min after ZHA loaded
+
+    # HA stopping: nothing new goes out, and the wait starts again afterwards.
+    calls.clear()
+    coord._reporting_next_try.clear()  # noqa: SLF001 — due again
+    hass.set_state(CoreState.stopping)
+    try:
+        await coord._async_sync_sensor_reporting()  # noqa: SLF001
+        await coord._async_apply_reporting({"sensor.house": True})  # noqa: SLF001 — already queued
+        assert calls == []
+        assert coord._zigbee_ok_after is None  # noqa: SLF001
+    finally:
+        hass.set_state(CoreState.running)
+
+
+def test_zha_loaded_means_its_entry_finished_setting_up(hass, monkeypatch):
+    from homeassistant.config_entries import ConfigEntryState
+
+    # (A real "zha" entry would make HA try to load ZHA, which this venv doesn't have.)
+    entry = SimpleNamespace(state=ConfigEntryState.SETUP_IN_PROGRESS)
+    monkeypatch.setattr(
+        hass.config_entries, "async_entries", lambda domain=None, **kw: [entry] if domain == "zha" else []
+    )
+    hass.config.components.add("zha")  # HA adds this before ZHA's entry has even started
+    assert not zigbee_reporting.zha_loaded(hass)
+    entry.state = ConfigEntryState.LOADED
+    assert zigbee_reporting.zha_loaded(hass)
+    hass.config.components.remove("zha")
+
+
+async def test_zha_still_starting_retries_soon_and_quietly(hass, backed_up, freezer, monkeypatch, caplog, zha_up):
     coord = backed_up[0]
     calls = []
     ready = {"on": False}

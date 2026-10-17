@@ -10,7 +10,7 @@ from typing import Any
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_ON, STATE_OPEN
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import CoreState, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.storage import Store
@@ -79,6 +79,9 @@ REPORTING_REFRESH = timedelta(hours=24)
 REPORTING_RETRY = timedelta(minutes=30)
 # ZHA still starting after an HA restart: try again shortly.
 REPORTING_RETRY_SOON = timedelta(minutes=2)
+# Once ZHA is loaded it still polls every mains device in the background; send
+# nothing to the radio until that has had time to finish.
+ZIGBEE_SETTLE = timedelta(minutes=3)
 # A "run" longer than this (e.g. HA was down while it ended) teaches nothing.
 MAX_LEARN_RUN_HOURS = 6
 
@@ -151,6 +154,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Fast-reporting results per sensor, for Settings (rebuilt after a restart).
         self._reporting_status: dict[str, dict[str, Any]] = {}
         self._reporting_next_try: dict[str, datetime] = {}
+        self._reporting_task: asyncio.Task | None = None
+        # When Zigbee requests may start (UTC): set once HA is running and ZHA
+        # is loaded, plus ZIGBEE_SETTLE; cleared whenever either stops being true.
+        self._zigbee_ok_after: datetime | None = None
         # False while the house schedule is in setback (rooms drop to Eco).
         self._house_comfort = True
         self._dirty_intel = False
@@ -510,10 +517,14 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Keep house sensors on the reporting the user chose (declarative, re-applied).
 
         Runs in the background: a sleeping sensor can take 30 s to answer and
-        the control loop mustn't wait for it.
+        the control loop mustn't wait for it. Nothing is sent while HA or ZHA
+        is starting or stopping: ZHA is busiest with the radio then, and a
+        restart sometimes left ZHA stuck until the host was rebooted.
         """
-        task = getattr(self, "_reporting_task", None)
+        task = self._reporting_task
         if task is not None and not task.done():
+            return
+        if not self._zigbee_settled():
             return
         targets: dict[str, bool] = {}
         if self.config.fast_sensor_reporting:
@@ -537,9 +548,21 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._async_apply_reporting(due), f"{DOMAIN}_sensor_reporting"
             )
 
+    def _zigbee_settled(self) -> bool:
+        """HA running, ZHA loaded, and both have been for ZIGBEE_SETTLE."""
+        if self.hass.state is not CoreState.running or not zigbee_reporting.zha_loaded(self.hass):
+            self._zigbee_ok_after = None
+            return False
+        now = dt_util.utcnow()
+        if self._zigbee_ok_after is None:
+            self._zigbee_ok_after = now + ZIGBEE_SETTLE
+        return now >= self._zigbee_ok_after
+
     async def _async_apply_reporting(self, targets: dict[str, bool]) -> None:
         applied = self.intel.state.fast_reporting
         for entity_id, fast in targets.items():
+            if self.hass.is_stopping:
+                break
             now = dt_util.utcnow()
             if zigbee_reporting.zha_ieee(self.hass, entity_id) is None:
                 self._reporting_status[entity_id] = {"supported": False, "fast": fast}
@@ -1923,6 +1946,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     async def async_unload(self) -> None:
+        if self._reporting_task is not None and not self._reporting_task.done():
+            self._reporting_task.cancel()
         if self._dirty_intel:
             await self.intel.async_save()
         for unsub in self._unsubs:
