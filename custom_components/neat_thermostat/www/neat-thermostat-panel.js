@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.68
+ * @version 0.6.69
  */
-const PANEL_VERSION = "0.6.68";
+const PANEL_VERSION = "0.6.69";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -388,7 +388,10 @@ button.primary svg, button.secondary svg { vertical-align: -4px; margin: 0 6px 0
 .set-field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
 .set-field-pair > .set-row-desc { grid-column: 1 / -1; }
 .dlg-section [hidden] { display: none; }
-.trv-cfg > .set-row-desc:first-child:not(:last-child) { margin: 0 0 14px; }
+.trv-cfg > .set-row-desc:first-child:not(:last-child) { margin: 0 0 4px; }
+/* Same space above and below every divider (the dialog default leaves none under a row). */
+.dlg-section .trv-cfg .set-row { padding: 10px 0; }
+.dlg-section .trv-cfg .set-row:last-child { padding-bottom: 0; }
 .trv-cfg select, .trv-cfg input[type="text"], .trv-cfg input[type="password"] { max-width: 180px; }
 .dlg-foot { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--divider-color); }
 input[readonly] { opacity: 0.7; cursor: default; }
