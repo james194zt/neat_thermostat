@@ -33,7 +33,9 @@ async def test_old_default_points_at_neats_house_climate(hass, setup):
     _register(hass)
     payload = await _payload(hass, coord, "climate.neat_home")
     assert payload["primary"]["entity"] == "climate.neat_thermostat_neat_home"
-    assert payload["rooms"] == [{"entity": "climate.hallway_neat_thermostat_neat_lounge", "name": "Lounge"}]
+    assert payload["rooms"] == [
+        {"entity": "climate.hallway_neat_thermostat_neat_lounge", "name": "Lounge", "id": "lounge"}
+    ]
 
 
 async def test_blank_primary_means_neat_house(hass, setup):

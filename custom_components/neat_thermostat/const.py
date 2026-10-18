@@ -100,6 +100,12 @@ PRESET_AWAY = "away"
 # the room is changed again.
 ROOM_HOLD_ENDS = ("house_change", "block_change", "manual")
 
+# Wall panel room settings (the cog): the Room Temperature fields a panel may
+# change, and the TRV device settings it shows — simple ones a finger can set
+# (no option lists, text or times).
+WALL_ROOM_FIELDS = ("follow_house", "house_offset", "target_temp", "eco_temp", "hold_ends")
+WALL_TRV_SETTING_DOMAINS = ("number", "switch", "button")
+
 PANEL_URL_PATH = "neat-thermostat"
 PANEL_TITLE = "Neat Thermostat"
 PANEL_ICON = "mdi:thermostat"

@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 
 from . import energy_meter, kiosk, panel_helper
-from .const import DOMAIN, HEATER_DOMAINS
+from .const import DOMAIN, HEATER_DOMAINS, ROOM_HOLD_ENDS, WALL_ROOM_FIELDS
 from .models import RoomConfig, WallPanelConfig, default_schedule
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,6 +40,8 @@ def async_register_ws_handlers(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_wall_panel_config)
     websocket_api.async_register_command(hass, ws_get_energy_history)
     websocket_api.async_register_command(hass, ws_get_wall_usage)
+    websocket_api.async_register_command(hass, ws_get_wall_room_settings)
+    websocket_api.async_register_command(hass, ws_update_wall_room)
     websocket_api.async_register_command(hass, ws_verify_wall_pin)
     websocket_api.async_register_command(hass, ws_stop_seasonal_savings)
     websocket_api.async_register_command(hass, ws_reset_warmup)
@@ -481,6 +483,57 @@ async def ws_get_wall_usage(
         connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
         return
     connection.send_result(msg["id"], await coordinator.async_wall_usage())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "neat_thermostat/get_wall_room_settings",
+        vol.Optional("entry_id"): cv.string,
+        vol.Required("room_id"): cv.string,
+    }
+)
+@websocket_api.async_response
+async def ws_get_wall_room_settings(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """The wall panel's room cog: Room Temperature fields + simple TRV settings."""
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
+        return
+    result = coordinator.wall_room_settings(msg["room_id"])
+    if result is None:
+        connection.send_error(msg["id"], "not_found", f"Unknown room {msg['room_id']}")
+        return
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "neat_thermostat/update_wall_room",
+        vol.Optional("entry_id"): cv.string,
+        vol.Required("room_id"): cv.string,
+        vol.Optional("follow_house"): cv.boolean,
+        vol.Optional("house_offset"): vol.All(vol.Coerce(float), vol.Range(min=-5, max=5)),
+        vol.Optional("target_temp"): vol.All(vol.Coerce(float), vol.Range(min=5, max=30)),
+        vol.Optional("eco_temp"): vol.All(vol.Coerce(float), vol.Range(min=5, max=30)),
+        vol.Optional("hold_ends"): vol.In(ROOM_HOLD_ENDS),
+    }
+)
+@websocket_api.async_response
+async def ws_update_wall_room(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_loaded", "Neat Thermostat not loaded")
+        return
+    changes = {k: msg[k] for k in WALL_ROOM_FIELDS if k in msg}
+    result = await coordinator.async_update_wall_room(msg["room_id"], changes)
+    if result is None:
+        connection.send_error(msg["id"], "not_found", f"Unknown room {msg['room_id']}")
+        return
+    connection.send_result(msg["id"], result)
 
 
 @websocket_api.websocket_command(

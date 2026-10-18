@@ -75,6 +75,7 @@
     "display-power.js",
     "ha-client.js",
     "ha-embedded.js",
+    "room-settings.js",
     "screensaver.js",
     "usage.js",
     "weather.js",

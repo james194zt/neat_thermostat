@@ -9,8 +9,9 @@ from typing import Any
 
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_ON, STATE_OPEN
+from homeassistant.const import STATE_ON, STATE_OPEN, EntityCategory
 from homeassistant.core import CoreState, HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.storage import Store
@@ -21,7 +22,15 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, PRESET_AWAY, PRESET_BOOST, PRESET_ECO, PRESET_NONE
+from .const import (
+    DOMAIN,
+    PRESET_AWAY,
+    PRESET_BOOST,
+    PRESET_ECO,
+    PRESET_NONE,
+    WALL_ROOM_FIELDS,
+    WALL_TRV_SETTING_DOMAINS,
+)
 from . import intelligence
 from .intelligence import (
     LONG_PREHEAT_MINUTES,
@@ -1815,7 +1824,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             entity = (self.neat_entity_id(f"neat_{room.id}") if room.id else None) or room.trv_entity or ""
             if not entity:
                 continue
-            rooms.append({"entity": entity, "name": room.name})
+            rooms.append({"entity": entity, "name": room.name, "id": room.id})
         defaults = {
             "insideTemp": self.config.temperature_sensor or "",
             "insideHumidity": "",
@@ -1851,6 +1860,78 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "time_to_temp_minutes": self._time_to_temp
             or (self.data or {}).get("time_to_temp_minutes"),
         }
+
+    def wall_room_settings(self, room_id: str) -> dict[str, Any] | None:
+        """A room's settings for the wall panel's cog: its Room Temperature
+        fields, and the TRV's simple device settings (numbers, switches,
+        buttons the integration files under Configuration — like the room
+        dialog's TRV Configuration, minus lists and text a wall can't type)."""
+        room = next((r for r in self.config.rooms if r.id == room_id), None)
+        if room is None:
+            return None
+        settings: list[dict[str, Any]] = []
+        trv = self.hass.states.get(room.trv_entity) if room.trv_entity else None
+        ent_reg = er.async_get(self.hass)
+        trv_entry = ent_reg.async_get(room.trv_entity) if room.trv_entity else None
+        if trv_entry is not None and trv_entry.device_id:
+            device = dr.async_get(self.hass).async_get(trv_entry.device_id)
+            device_name = (device.name_by_user or device.name or "") if device else ""
+            for entry in er.async_entries_for_device(ent_reg, trv_entry.device_id):
+                domain = entry.entity_id.split(".")[0]
+                if (
+                    entry.entity_id == room.trv_entity
+                    or domain not in WALL_TRV_SETTING_DOMAINS
+                    or entry.entity_category != EntityCategory.CONFIG
+                    or entry.disabled_by is not None
+                    or entry.hidden_by is not None
+                ):
+                    continue
+                state = self.hass.states.get(entry.entity_id)
+                if state is None:
+                    continue
+                name = str(state.attributes.get("friendly_name") or entry.entity_id)
+                if device_name and name.startswith(f"{device_name} "):
+                    name = name[len(device_name) + 1 :]
+                item: dict[str, Any] = {
+                    "entity_id": entry.entity_id,
+                    "domain": domain,
+                    "name": name[:1].upper() + name[1:],
+                    "state": state.state,
+                }
+                if domain == "number":
+                    for key in ("min", "max", "step"):
+                        if state.attributes.get(key) is not None:
+                            item[key] = state.attributes[key]
+                    item["unit"] = state.attributes.get("unit_of_measurement") or ""
+                settings.append(item)
+        settings.sort(key=lambda s: (s["domain"] == "button", s["name"].lower()))
+        return {
+            "room": {
+                "id": room.id,
+                "name": room.name,
+                "follow_house": room.follow_house,
+                "house_offset": room.house_offset,
+                "target_temp": room.target_temp,
+                "eco_temp": room.eco_temp,
+                "hold_ends": room.hold_ends,
+            },
+            "trv": {
+                "entity_id": room.trv_entity,
+                "available": trv is not None and trv.state not in ("unavailable", "unknown"),
+            },
+            "settings": settings,
+        }
+
+    async def async_update_wall_room(self, room_id: str, changes: dict[str, Any]) -> dict[str, Any] | None:
+        """Change a room's Room Temperature fields from a wall panel (same rooms,
+        so nothing reloads and the heating carries on)."""
+        rooms = [r.to_dict() for r in self.config.rooms]
+        room = next((r for r in rooms if r["id"] == room_id), None)
+        if room is None:
+            return None
+        room.update({k: v for k, v in changes.items() if k in WALL_ROOM_FIELDS})
+        await self.async_save_config({"rooms": [RoomConfig.from_dict(r).to_dict() for r in rooms]})
+        return self.wall_room_settings(room_id)
 
     def _tracked_entities(self) -> tuple[str, ...]:
         entities = [

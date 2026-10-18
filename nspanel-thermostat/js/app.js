@@ -13,6 +13,7 @@ import {
 import { listDevices, slugifyDeviceId } from "./device-registry.js";
 import { readWeatherSnapshot } from "./weather.js";
 import { UsagePage } from "./usage.js";
+import { RoomSettings } from "./room-settings.js";
 
 const ui = {
   app: document.getElementById("app"),
@@ -71,6 +72,7 @@ const ui = {
   pinDisplay: document.getElementById("pinDisplay"),
   pinPad: document.getElementById("pinPad"),
   pinError: document.getElementById("pinError"),
+  roomSettingsBtn: document.getElementById("roomSettingsBtn"),
 };
 
 // Swipe right-to-left from the dial for the last 24 hours. Not from the dial's arc (that drag sets
@@ -81,10 +83,11 @@ const usage = new UsagePage({
   swipeAllowed: (ev) => {
     const target = ev.target instanceof Element ? ev.target : null;
     if (!target) return false;
-    if (target.closest("#dialHit, .room-strip--many, .overlay, .screensaver")) return false;
-    return !document.querySelector(".overlay:not(.hidden)");
+    if (target.closest("#dialHit, .room-strip--many, .overlay, .screensaver, .room-settings, .top-cog")) return false;
+    return !document.querySelector(".overlay:not(.hidden)") && !roomSettings.isOpen;
   },
 });
+const roomSettings = new RoomSettings({ getClient: () => client });
 let config = await loadConfig();
 let client = null;
 let screenSaver = null;
@@ -642,6 +645,25 @@ function hidePinOverlay() {
   pinBuffer = "";
 }
 
+/** Room settings change Neat itself: behind the PIN whenever one is set (not just with the dial lock). */
+async function ensureSettingsUnlocked(action) {
+  if (!config.pinConfigured || panelUnlocked) {
+    await action();
+    return;
+  }
+  showPinOverlay(action);
+}
+
+/** The Neat room behind the room view (the panel config says; the room entity too). */
+function activeRoomId() {
+  if (isPrimaryView()) return null;
+  return (
+    config.rooms?.find((room) => room.entity === activeEntity)?.id ||
+    getActiveState()?.attributes?.room_id ||
+    null
+  );
+}
+
 async function ensureUnlocked(action) {
   if (!lockRequired() || panelUnlocked) {
     await action();
@@ -753,10 +775,13 @@ function updateRoomNavigation() {
     ui.backToHome.setAttribute("aria-label", `Back to ${homeName}`);
   }
   ui.app.classList.toggle("room-view", inRoom);
+  // A room shown from a bare TRV (no Neat room) has no settings to open.
+  ui.roomSettingsBtn?.classList.toggle("hidden", !activeRoomId());
   renderWeather();
 }
 
 function goToPrimaryView() {
+  roomSettings.close();
   clearOptimisticTarget();
   clearOptimisticMode();
   activeEntity = config.primary.entity;
@@ -1188,6 +1213,7 @@ async function connect() {
       onShow: () => {
         panelUnlocked = false;
         usage.resetToDial();
+        roomSettings.close();
       },
     });
 
@@ -1208,13 +1234,16 @@ function checkConnectionOnWake() {
   client?.checkAlive?.();
 }
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) usage.resetToDial();
-  else checkConnectionOnWake();
+  if (document.hidden) {
+    usage.resetToDial();
+    roomSettings.close();
+  } else checkConnectionOnWake();
 });
 window.addEventListener("online", checkConnectionOnWake);
 // Fully's screenOn (display-power.js): the screen was off, so start from the dial.
 window.__neatScreenOn = () => {
   usage.resetToDial();
+  roomSettings.close();
   checkConnectionOnWake();
 };
 
@@ -1232,6 +1261,11 @@ ui.saveDeviceId?.addEventListener("click", async () => {
 ui.tempDown.addEventListener("click", () => adjustTemperature(-activeStep));
 ui.tempUp.addEventListener("click", () => adjustTemperature(activeStep));
 ui.backToHome.addEventListener("click", goToPrimaryView);
+ui.roomSettingsBtn?.addEventListener("click", () => {
+  const roomId = activeRoomId();
+  if (!roomId) return;
+  ensureSettingsUnlocked(() => roomSettings.open(roomId, activeLabel));
+});
 ui.zonePill?.addEventListener("click", () => {
   if (!isPrimaryView()) goToPrimaryView();
 });
