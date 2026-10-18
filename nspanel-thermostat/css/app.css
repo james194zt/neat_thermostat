@@ -1491,7 +1491,13 @@ button {
   overscroll-behavior: contain;
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
+  /* Scrolled by finger (or wheel): no bar, like the room strip. */
+  scrollbar-width: none;
   padding: 2vmin 0 12vmin;
+}
+
+.rs-body::-webkit-scrollbar {
+  display: none;
 }
 
 .rs-section {
