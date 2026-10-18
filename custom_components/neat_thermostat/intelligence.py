@@ -266,6 +266,15 @@ class HeatCheck:
     last_heat_at: str | None = None
     # Set while the house is flagged as not warming.
     fault_since: str | None = None
+    # What the fault was raised on: boiler minutes and warming seen, and why
+    # (room names whose TRV was offline / had closed its valve). Kept after
+    # an idle reset so the alert never reads "0 min, 0.0 °C".
+    fault_on_minutes: float = 0.0
+    fault_rise_c: float = 0.0
+    # The temperature the house was heating to; reaching it clears the fault.
+    fault_target: float | None = None
+    fault_offline: list[str] = field(default_factory=list)
+    fault_closed: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -306,6 +315,7 @@ def update_heat_check(
     heating: bool,
     current_temp: float | None,
     alert_minutes: float,
+    target: float | None = None,
     now: datetime | None = None,
 ) -> str | None:
     """Advance the not-warming check by one tick.
@@ -313,7 +323,7 @@ def update_heat_check(
     ``heating`` = the boiler is on because the house (or safety floor) wants
     heat — rooms alone don't count, the house sensor may not see them.
     Returns "fault" when the house is newly flagged, "recovered" when a
-    flagged house warms again, else None.
+    flagged house warms again or is back at ``target``, else None.
     """
     now = now or clock()
     last = _parse_ts(check.last_tick)
@@ -348,6 +358,25 @@ def update_heat_check(
         _restart_heat_check(check, current_temp if heating else None, now)
         return "recovered" if recovered else None
 
+    if check.fault_since is not None and check.fault_target is None:
+        # Fault saved before the target was kept (≤0.6.71): use today's.
+        check.fault_target = target
+    if (
+        check.fault_since is not None
+        and check.fault_target is not None
+        and current_temp >= check.fault_target
+    ):
+        # Up to the temperature it couldn't reach (the TRVs came back, or the
+        # sun did it): the alert mustn't sit there until the next run. Not a
+        # lower target later on — an Eco night isn't the heating working.
+        _restart_heat_check(check, current_temp if heating else None, now)
+        return "recovered"
+
+    if check.fault_since is not None and check.on_minutes > check.fault_on_minutes:
+        # Still not warming: the alert shows the whole run so far.
+        check.fault_on_minutes = check.on_minutes
+        check.fault_rise_c = check.total_rise()
+
     last_heat = _parse_ts(check.last_heat_at)
     if not heating and (
         last_heat is None or now - last_heat > timedelta(hours=HEAT_CHECK_STALE_HOURS)
@@ -355,25 +384,34 @@ def update_heat_check(
         # Nothing to judge for hours: start afresh next time the house calls.
         # A standing fault stays until the house is seen warming again.
         if check.on_minutes or check.run_start_temp is not None:
-            fault_since = check.fault_since
-            _restart_heat_check(check, None, now)
-            check.fault_since = fault_since
+            _restart_heat_check(check, None, now, keep_fault=True)
             check.last_heat_at = None
         return None
 
     if check.fault_since is None and alert_minutes > 0 and check.on_minutes >= alert_minutes:
         check.fault_since = now.isoformat()
+        check.fault_on_minutes = check.on_minutes
+        check.fault_rise_c = check.total_rise()
+        check.fault_target = target
         return "fault"
     return None
 
 
-def _restart_heat_check(check: HeatCheck, run_temp: float | None, now: datetime) -> None:
+def _restart_heat_check(
+    check: HeatCheck, run_temp: float | None, now: datetime, *, keep_fault: bool = False
+) -> None:
     check.on_minutes = 0.0
     check.rise_c = 0.0
     check.run_start_temp = run_temp
     check.run_max_temp = run_temp
     check.run_ended_at = None
-    check.fault_since = None
+    if not keep_fault:
+        check.fault_since = None
+        check.fault_on_minutes = 0.0
+        check.fault_rise_c = 0.0
+        check.fault_target = None
+        check.fault_offline = []
+        check.fault_closed = []
     if run_temp is not None:
         check.last_heat_at = now.isoformat()
 

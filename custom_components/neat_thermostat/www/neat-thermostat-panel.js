@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.71
+ * @version 0.6.72
  */
-const PANEL_VERSION = "0.6.71";
+const PANEL_VERSION = "0.6.72";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -1449,6 +1449,15 @@ class NeatThermostatPanel extends HTMLElement {
     this._render();
   }
 
+  /** "A", "A and B", "A, B and C" — in HA's language. */
+  _listNames(names) {
+    try {
+      return new Intl.ListFormat(LANG, { style: "long", type: "conjunction" }).format(names);
+    } catch (_err) {
+      return names.join(", ");
+    }
+  }
+
   _escape(s) {
     return String(s ?? "")
       .replaceAll("&", "&amp;")
@@ -1774,9 +1783,17 @@ class NeatThermostatPanel extends HTMLElement {
       ? `<div class="banner warn">${t("overview.banner.released", { time: this._escape(this._ehClock(live.control_released_until)) })}</div>`
       : "";
     const fault = live.heating_fault;
-    const faultWarning = fault
-      ? `<div class="banner err">${t("overview.banner.not_warming", { minutes: this._escape(fault.on_minutes), rise: this._escape(Number(fault.rise_c).toFixed(1)) })}</div>`
-      : "";
+    let faultWarning = "";
+    if (fault) {
+      const names = (list) => this._escape(this._listNames(list));
+      const offline = fault.trvs_offline || [];
+      const closed = fault.trvs_closed || [];
+      const causes = [];
+      if (offline.length) causes.push(tn("overview.banner.not_warming.offline", offline.length, { rooms: names(offline) }));
+      if (closed.length) causes.push(t("overview.banner.not_warming.closed", { rooms: names(closed) }));
+      if (!causes.length) causes.push(t("overview.banner.not_warming.boiler"));
+      faultWarning = `<div class="banner err">${t("overview.banner.not_warming", { minutes: this._escape(fault.on_minutes), rise: this._escape(Number(fault.rise_c).toFixed(1)), cause: causes.join(" ") })}</div>`;
+    }
     const preset = (live.main || {}).preset;
     const presetLabel = t(`preset.${!preset || preset === "none" ? "none" : preset}`);
 

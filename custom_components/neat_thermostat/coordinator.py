@@ -26,6 +26,7 @@ from . import intelligence
 from .intelligence import (
     LONG_PREHEAT_MINUTES,
     MAX_PREHEAT_MINUTES,
+    HeatCheck,
     IntelligenceStore,
     WarmupModel,
     accrue_leaf_minutes,
@@ -406,8 +407,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return None
         return {
             "since": check.fault_since,
-            "on_minutes": round(check.on_minutes),
-            "rise_c": round(check.total_rise(), 1),
+            "on_minutes": round(check.fault_on_minutes),
+            "rise_c": round(check.fault_rise_c, 1),
+            "trvs_offline": list(check.fault_offline),
+            "trvs_closed": list(check.fault_closed),
         }
 
     def _state_float(self, entity_id: str | None) -> float | None:
@@ -1230,6 +1233,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         check = self.intel.state.heat_check
         before = {k: v for k, v in check.to_dict().items() if k != "last_tick"}
         current = self._house_temp()
+        target, _ = self.effective_main_target()
         event = update_heat_check(
             check,
             heating=house_heating,
@@ -1237,8 +1241,12 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             alert_minutes=(
                 self.config.no_heat_alert_minutes if self.config.no_heat_alert else 0
             ),
+            target=float(target) if target is not None else None,
             now=self._now(),
         )
+        if check.fault_since is not None and house_heating:
+            # Why it isn't warming, as of this run (shown with the alert).
+            check.fault_offline, check.fault_closed = self._trv_diagnosis()
         if event is not None:
             # Alerts must survive a restart straight after they fire.
             await self.intel.async_save()
@@ -1249,21 +1257,83 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         elif event == "recovered":
             await self._async_alert_warming_again(current)
 
+    def _trv_diagnosis(self) -> tuple[list[str], list[str]]:
+        """Rooms whose TRV is offline, and — when no online TRV is open — those
+        whose TRV has shut its valve (its own sensor reads the set point)."""
+        offline: list[str] = []
+        closed: list[str] = []
+        any_open = False
+        for room in self.config.rooms:
+            if not room.enabled or not room.trv_entity:
+                continue
+            state = self.hass.states.get(room.trv_entity)
+            if state is None or state.state in ("unavailable", "unknown"):
+                offline.append(room.name)
+                continue
+            if state.state == "off":
+                closed.append(room.name)
+                continue
+            action = state.attributes.get("hvac_action")
+            if action is None:
+                try:
+                    action = (
+                        "idle"
+                        if float(state.attributes["current_temperature"])
+                        >= float(state.attributes["temperature"])
+                        else "heating"
+                    )
+                except (KeyError, TypeError, ValueError):
+                    action = "heating"  # can't tell: don't blame it
+            if action == "heating":
+                any_open = True
+            else:
+                closed.append(room.name)
+        return offline, [] if any_open else closed
+
+    @staticmethod
+    def _join_names(names: list[str]) -> str:
+        return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+    def _not_warming_cause(self, check: HeatCheck) -> str:
+        """The advice part of the alert: TRVs first, the boiler only if they look fine."""
+        parts = []
+        if check.fault_offline:
+            names = self._join_names(check.fault_offline)
+            verb = "is" if len(check.fault_offline) == 1 else "are"
+            parts.append(
+                f"The {names} TRV{'' if len(check.fault_offline) == 1 else 's'} {verb} "
+                "offline, so Neat can't open the radiator valve."
+            )
+        if check.fault_closed:
+            parts.append(
+                "The TRVs that are online have all closed their valves "
+                f"({self._join_names(check.fault_closed)}): their own sensor by the "
+                "radiator reads the set temperature, so the heat isn't reaching "
+                "the room the house sensor is in."
+            )
+        if not parts:
+            parts.append(
+                "Check the boiler is firing: power, pressure, any fault code, "
+                "and the call-for-heat relay wiring."
+            )
+        return " ".join(parts)
+
     def _alert_id(self) -> str:
         return f"{DOMAIN}_not_warming_{self.entry.entry_id}"
 
     async def _async_alert_not_warming(self, current: float | None) -> None:
         check = self.intel.state.heat_check
+        check.fault_offline, check.fault_closed = self._trv_diagnosis()
         target, _ = self.effective_main_target()
-        minutes = round(check.on_minutes)
-        rise = round(check.total_rise(), 1)
+        minutes = round(check.fault_on_minutes)
+        rise = round(check.fault_rise_c, 1)
         title = "Neat: the house isn't warming up"
         message = (
             f"The boiler has been called for {minutes} minutes but the house has "
             f"only warmed {rise:.1f}°C"
             + (f" (now {current:.1f}°C, target {target:.1f}°C)" if current is not None else "")
-            + ". Check the boiler is firing: power, pressure, any fault code, "
-            "and the call-for-heat relay wiring."
+            + ". "
+            + self._not_warming_cause(check)
         )
         _LOGGER.warning("Neat: %s — %s", title, message)
         persistent_notification.async_create(

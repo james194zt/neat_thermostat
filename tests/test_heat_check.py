@@ -101,6 +101,49 @@ def test_idle_hours_reset_the_tally_but_keep_a_fault():
     _run(check, T0 + timedelta(minutes=62), 7 * 60, lambda i: 18.0, heating=False, step=5)
     assert check.on_minutes == 0.0
     assert check.fault_since is not None  # no warming seen yet → still flagged
+    # 18 Oct: the banner then read "called for 0 min … warmed 0.0°C".
+    assert check.fault_on_minutes >= 60
+
+
+def test_fault_shows_the_whole_failed_run():
+    check = HeatCheck()
+    _run(check, T0, 200, lambda i: 17.5 + (0.1 if i > 100 else 0), step=5)
+    assert check.fault_since is not None
+    assert check.fault_on_minutes == 200
+    assert check.fault_rise_c == pytest.approx(0.0)  # one sensor step isn't warming
+
+
+def test_reaching_the_target_clears_a_standing_fault():
+    """18 Oct: preheat to 20 failed (TRVs shut); the house later reached 21 with
+    no heat call, and the alert stayed up all day."""
+    check = HeatCheck()
+
+    def run(start, minutes, temp, *, heating, target):
+        return [
+            ev
+            for i in range(0, minutes + 1, 5)
+            if (ev := update_heat_check(
+                check, heating=heating, current_temp=temp, alert_minutes=60,
+                target=target, now=start + timedelta(minutes=i),
+            ))
+        ]
+
+    assert run(T0, 65, 17.8, heating=True, target=20.0) == ["fault"]
+    # Eco evening at 16: 18 °C beats that, but the heating still never made 20.
+    assert run(T0 + timedelta(minutes=70), 7 * 60, 18.0, heating=False, target=16.0) == []
+    assert check.fault_since is not None
+    # Next day the house gets to 20 by itself.
+    assert run(T0 + timedelta(hours=9), 10, 20.0, heating=False, target=16.0) == ["recovered"]
+    assert check.fault_since is None and check.fault_on_minutes == 0.0
+
+
+def test_old_saved_fault_uses_the_current_target():
+    check = HeatCheck(fault_since=T0.isoformat(), last_tick=T0.isoformat())
+    events = [update_heat_check(
+        check, heating=False, current_temp=21.0, alert_minutes=60, target=16.0,
+        now=T0 + timedelta(minutes=1),
+    )]
+    assert events == ["recovered"]
 
 
 def test_alert_disabled_and_missing_sensor():
@@ -190,6 +233,38 @@ async def test_coordinator_alerts_and_recovers(hass, setup, phone, freezer):
     assert data["heating_fault"] is None
     assert len(phone) == 2 and "working again" in phone[1]["title"]
     assert not any("not_warming" in key for key in hass.data["persistent_notification"])
+
+
+async def test_alert_names_offline_and_closed_trvs(hass, setup, phone, freezer):
+    coord, _ = setup
+    await coord.async_save_config({"alert_notify": ["notify.mobile_app_test"]})
+    start = datetime.fromisoformat(f"{MONDAY}T16:10:00+01:00")
+
+    # The lounge TRV is offline: that's the cause, not the boiler.
+    hass.states.async_set("climate.trv_lounge", "unavailable")
+    data = await _minutes(hass, coord, freezer, start, 65, 18.0)
+    fault = data["heating_fault"]
+    assert fault["trvs_offline"] == ["Lounge"] and fault["trvs_closed"] == []
+    assert "Lounge TRV is offline" in phone[0]["message"]
+    assert "boiler is firing" not in phone[0]["message"]
+
+    # Back online but its own sensor reads the set point: valve shut.
+    hass.states.async_set(
+        "climate.trv_lounge", "heat",
+        {"temperature": 20, "current_temperature": 20.5, "hvac_action": "idle"},
+    )
+    data = await _minutes(hass, coord, freezer, start + timedelta(minutes=70), 5, 18.0)
+    assert data["heating_fault"]["trvs_offline"] == []
+    assert data["heating_fault"]["trvs_closed"] == ["Lounge"]
+
+    # An open valve means the TRVs aren't the problem.
+    hass.states.async_set(
+        "climate.trv_lounge", "heat",
+        {"temperature": 20, "current_temperature": 18.0, "hvac_action": "heating"},
+    )
+    data = await _minutes(hass, coord, freezer, start + timedelta(minutes=80), 5, 18.0)
+    assert data["heating_fault"]["trvs_closed"] == []
+    assert "boiler is firing" in coord._not_warming_cause(coord.intel.state.heat_check)  # noqa: SLF001
 
 
 async def test_rooms_alone_do_not_count(hass, setup, freezer):
