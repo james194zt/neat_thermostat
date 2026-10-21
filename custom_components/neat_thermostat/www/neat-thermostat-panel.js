@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.74
+ * @version 0.6.75
  */
-const PANEL_VERSION = "0.6.74";
+const PANEL_VERSION = "0.6.75";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -2419,6 +2419,13 @@ class NeatThermostatPanel extends HTMLElement {
             </div>
             <div class="set-row-control"><label class="switch"><input type="checkbox" id="roomCallsForHeat" ${this._roomDraft.calls_for_heat !== false ? "checked" : ""} /><span></span></label></div>
           </div>
+          <div class="set-row">
+            <div class="set-row-text">
+              <div class="set-row-name">${t("room_dlg.calibrate")}</div>
+              <div class="set-row-desc">${t("room_dlg.calibrate.desc")}</div>
+            </div>
+            <div class="set-row-control"><label class="switch"><input type="checkbox" id="roomCalibrateTrv" ${this._roomDraft.calibrate_trv ? "checked" : ""} /><span></span></label></div>
+          </div>
         </div>
         <div class="dlg-section">
           <div class="dlg-section-title">${t("room_dlg.section.trv_config")}</div>
@@ -2473,6 +2480,7 @@ class NeatThermostatPanel extends HTMLElement {
       sensor: room?.temperature_sensor || "",
       extras: [...(room?.extra_temperature_sensors || [])],
       calls_for_heat: room ? room.calls_for_heat !== false : true,
+      calibrate_trv: room?.calibrate_trv === true,
       follow_house: room ? room.follow_house !== false : true,
       house_offset: room?.house_offset ?? ROOM_TEMP_DEFAULTS.house_offset,
       hold_ends: room?.hold_ends || ROOM_TEMP_DEFAULTS.hold_ends,
@@ -4437,6 +4445,7 @@ class NeatThermostatPanel extends HTMLElement {
           extra_temperature_sensors: extras,
           enabled: existing?.enabled !== false,
           calls_for_heat: callsForHeat,
+          calibrate_trv: this.shadowRoot.getElementById("roomCalibrateTrv")?.checked === true,
           ...this._readRoomTempFields(),
           boost_temp: existing?.boost_temp,
           window_sensors: existing?.window_sensors || [],
@@ -4480,6 +4489,9 @@ class NeatThermostatPanel extends HTMLElement {
 
       this.shadowRoot.getElementById("roomCallsForHeat")?.addEventListener("change", (ev) => {
         this._roomDraft.calls_for_heat = ev.target.checked;
+      });
+      this.shadowRoot.getElementById("roomCalibrateTrv")?.addEventListener("change", (ev) => {
+        this._roomDraft.calibrate_trv = ev.target.checked;
       });
       this._bindTrvConfig();
       // Keep the draft current (the dialog can re-render) and swap offset ⇄ own temps.

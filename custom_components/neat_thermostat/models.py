@@ -59,6 +59,8 @@ class RoomConfig:
     house_offset: float = 0.0
     # How long a change made on the room itself lasts (ROOM_HOLD_ENDS).
     hold_ends: str = "house_change"
+    # Keep the TRV's own temperature offset at "room sensor − TRV" (needs a room sensor).
+    calibrate_trv: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -85,6 +87,7 @@ class RoomConfig:
                 if data.get("hold_ends") in ROOM_HOLD_ENDS
                 else "house_change"
             ),
+            calibrate_trv=bool(data.get("calibrate_trv", False)),
         )
 
 

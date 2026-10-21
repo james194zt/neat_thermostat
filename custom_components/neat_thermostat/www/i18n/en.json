@@ -359,6 +359,8 @@
   "room.pill.until_house": "Until the house changes",
   "room_dlg.calls": "Call for heat",
   "room_dlg.calls.desc": "Lets this room turn the boiler on when it's cold. Leave on for most TRVs — otherwise the valve can open with no hot water.",
+  "room_dlg.calibrate": "Calibrate TRV to Room Sensor",
+  "room_dlg.calibrate.desc": "A TRV measures beside its hot radiator, so it reads high and shuts early. Neat keeps the TRV's own temperature offset matched to the room sensor above, so the TRV's screen shows the real room temperature and it closes at the right time. Needs a room temperature sensor.",
   "room_dlg.comfort": "Comfort",
   "room_dlg.delete_confirm": "Delete room “{name}”?",
   "room_dlg.deleted": "Room deleted",

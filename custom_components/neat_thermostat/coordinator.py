@@ -10,7 +10,7 @@ from typing import Any
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_ON, STATE_OPEN, EntityCategory
-from homeassistant.core import CoreState, HomeAssistant, callback
+from homeassistant.core import CoreState, HomeAssistant, State, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_call_later
@@ -100,6 +100,14 @@ TRV_RETRY_MAX = timedelta(minutes=30)
 # The same command isn't repeated sooner than this even when it went through: a
 # TRV that clamps the setpoint (min/max limit) would otherwise get it every tick.
 TRV_REPEAT_AFTER = timedelta(minutes=10)
+# TRV calibration: a TRV reads the air at its own hot radiator (21 Oct 2026: the
+# hall TRV read 21.3 °C and shut while the room sensor beside it read 19), so its
+# own temperature offset is kept at "room sensor − TRV". Written at most this
+# often, only when it moves by at least CALIBRATE_MIN_CHANGE, and only once the
+# TRV has reported a reading taken with the last offset (or WAIT has passed).
+CALIBRATE_EVERY = timedelta(minutes=15)
+CALIBRATE_MIN_CHANGE = 0.3
+CALIBRATE_WAIT_FOR_TRV = timedelta(minutes=60)
 # A "run" longer than this (e.g. HA was down while it ended) teaches nothing.
 MAX_LEARN_RUN_HOURS = 6
 
@@ -182,6 +190,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._trv_tasks: dict[str, asyncio.Task] = {}
         self._trv_retry: dict[str, dict[str, Any]] = {}
         self._trv_last_sent: dict[str, tuple[Any, datetime]] = {}
+        # Last calibration written per TRV: {"offset", "reading", "at"} — so the next
+        # one waits for a TRV reading taken with it. Lost on restart, which is safe:
+        # the offset entity's own last_changed then spaces the writes.
+        self._trv_calibration: dict[str, dict[str, Any]] = {}
         # False while the house schedule is in setback (rooms drop to Eco).
         self._house_comfort = True
         self._dirty_intel = False
@@ -903,16 +915,11 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """A room that follows the house is off while the house is off."""
         return room.follow_house and self._main_hvac_mode != "heat"
 
+    def _room_sensor_ids(self, room: RoomConfig) -> list[str]:
+        return [e for e in [room.temperature_sensor, *(room.extra_temperature_sensors or [])] if e]
+
     def room_current_temp(self, room: RoomConfig) -> float | None:
-        readings: list[float] = []
-        if room.temperature_sensor:
-            t = self._state_float(room.temperature_sensor)
-            if t is not None:
-                readings.append(t)
-        for entity_id in room.extra_temperature_sensors or []:
-            t = self._state_float(entity_id)
-            if t is not None:
-                readings.append(t)
+        readings = [t for e in self._room_sensor_ids(room) if (t := self._state_float(e)) is not None]
         if readings:
             return sum(readings) / len(readings)
         state = self.hass.states.get(room.trv_entity)
@@ -1050,38 +1057,114 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # What the TRV reported is part of the signature: turned by hand, it's
         # put back at once; clamping the same setpoint, it waits TRV_REPEAT_AFTER.
         self._trv_send(room.trv_entity, calls, (trv.state, trv_target))
+        if not calls:
+            self._calibrate_room_trv(room, trv)
+
+    def trv_offset_entity(self, trv_entity: str) -> str | None:
+        """The TRV's own temperature offset/calibration setting (a number on its device)."""
+        ent_reg = er.async_get(self.hass)
+        trv_entry = ent_reg.async_get(trv_entity) if trv_entity else None
+        if trv_entry is None or not trv_entry.device_id:
+            return None
+        for entry in er.async_entries_for_device(ent_reg, trv_entry.device_id):
+            if entry.domain != "number" or entry.disabled_by is not None:
+                continue
+            words = " ".join(
+                str(x or "") for x in (entry.translation_key, entry.entity_id, entry.original_name)
+            ).lower()
+            if "temperature" in words and ("offset" in words or "calibration" in words):
+                return entry.entity_id
+        return None
+
+    def _calibrate_room_trv(self, room: RoomConfig, trv: State) -> None:
+        """Keep the TRV's own offset at room sensor − TRV, so it shows the room's real
+        temperature and closes when the room (not its radiator) reaches the setpoint."""
+        if not room.calibrate_trv or self.hass.state is not CoreState.running:
+            return
+        sensors = self._room_sensor_ids(room)
+        readings = [self._sensor_value(e, self.config.sensor_stale_minutes) for e in sensors]
+        if not readings or any(r is None for r in readings):
+            return  # no room sensor, or one is silent: leave the TRV as it is
+        room_temp = sum(readings) / len(readings)
+        try:
+            trv_temp = float(trv.attributes.get("current_temperature"))
+        except (TypeError, ValueError):
+            return
+        offset_id = self.trv_offset_entity(room.trv_entity)
+        offset_state = self.hass.states.get(offset_id) if offset_id else None
+        if offset_state is None:
+            return
+        try:
+            offset = float(offset_state.state)
+        except (TypeError, ValueError):
+            return
+        now = dt_util.utcnow()
+        if now - offset_state.last_changed < CALIBRATE_EVERY:
+            return
+        last = self._trv_calibration.get(room.trv_entity)
+        if (
+            last is not None
+            and abs(last["offset"] - offset) < 0.05
+            and abs(last["reading"] - trv_temp) < 0.05
+            and now - last["at"] < CALIBRATE_WAIT_FOR_TRV
+        ):
+            return  # the TRV hasn't reported a reading with the new offset yet
+        attrs = offset_state.attributes
+        lo = float(attrs.get("min", -5.0))
+        hi = float(attrs.get("max", 5.0))
+        step = float(attrs.get("step") or 0.1)
+        wanted = round(round((offset + room_temp - trv_temp) / step) * step, 2)
+        wanted = min(hi, max(lo, wanted))
+        if abs(wanted - offset) < CALIBRATE_MIN_CHANGE:
+            return
+        if self._trv_send(
+            room.trv_entity,
+            [("number.set_value", {"entity_id": offset_id, "value": wanted})],
+            (offset, trv_temp),
+        ):
+            _LOGGER.info(
+                "Neat: %s reads %.1f °C, room %.1f °C — offset %s → %s",
+                room.trv_entity, trv_temp, room_temp, offset, wanted,
+            )
+            self._trv_calibration[room.trv_entity] = {"offset": wanted, "reading": trv_temp, "at": now}
 
     def _trv_send(
         self, entity_id: str, calls: list[tuple[str, dict[str, Any]]], seen: tuple[Any, ...]
-    ) -> None:
-        """Send TRV commands in the background: one batch per TRV at a time, with back-off."""
+    ) -> bool:
+        """Send TRV commands in the background: one batch per TRV at a time, with back-off.
+
+        A service named "domain.service" (e.g. the TRV's offset number) carries its
+        own entity_id; plain names are climate services on the TRV. True if sent.
+        """
         if not calls or self.hass.is_stopping:
-            return
+            return False
         task = self._trv_tasks.get(entity_id)
         if task is not None and not task.done():
-            return  # the last command is still waiting for the TRV
+            return False  # the last command is still waiting for the TRV
         now = dt_util.utcnow()
         retry = self._trv_retry.get(entity_id)
         if retry is not None and now < retry["at"]:
-            return
+            return False
         signature = (tuple((service, tuple(sorted(data.items()))) for service, data in calls), seen)
         last = self._trv_last_sent.get(entity_id)
         if last is not None and last[0] == signature and now - last[1] < TRV_REPEAT_AFTER:
-            return
+            return False
         self._trv_last_sent[entity_id] = (signature, now)
         # A background task: HA cancels it as soon as it starts stopping, so no
         # command is left queued at the radio while ZHA shuts down.
         self._trv_tasks[entity_id] = self.hass.async_create_background_task(
             self._async_trv_commands(entity_id, calls), f"{DOMAIN}_trv_{entity_id}"
         )
+        return True
 
     async def _async_trv_commands(
         self, entity_id: str, calls: list[tuple[str, dict[str, Any]]]
     ) -> None:
         for service, data in calls:
+            domain, _, name = service.rpartition(".")
             try:
                 await self.hass.services.async_call(
-                    "climate", service, {"entity_id": entity_id, **data}, blocking=True
+                    domain or "climate", name, {"entity_id": entity_id, **data}, blocking=True
                 )
             except Exception as err:  # noqa: BLE001 — the TRV failed, not the loop
                 failures = (self._trv_retry.get(entity_id) or {}).get("failures", 0) + 1
