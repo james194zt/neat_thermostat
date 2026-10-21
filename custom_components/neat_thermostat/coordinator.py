@@ -112,6 +112,13 @@ TRV_REPEAT_AFTER = timedelta(minutes=10)
 CALIBRATE_EVERY = timedelta(minutes=15)
 CALIBRATE_EVERY_HEATING = timedelta(minutes=5)
 CALIBRATE_MIN_CHANGE = 0.3
+# Never above 0: a TRV only under-reads with its radiator cold, which harms nothing,
+# and a positive offset made it shut early at the next warm-up (21 Oct: +2.5 overnight).
+CALIBRATE_MAX_OFFSET = 0.0
+# A room sensor moving faster than this isn't measuring the room yet — e.g. a new
+# one settling (21 Oct: placed at 25.0 °C, fell 3.7 °C in 25 min). Rooms warm ~2 °C/h.
+CALIBRATE_SETTLING_C_PER_HOUR = 3.0
+CALIBRATE_SETTLING_WINDOW = timedelta(minutes=15)
 CALIBRATE_WAIT_FOR_TRV = timedelta(minutes=60)
 # A "run" longer than this (e.g. HA was down while it ended) teaches nothing.
 MAX_LEARN_RUN_HOURS = 6
@@ -199,6 +206,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # one waits for a TRV reading taken with it. Lost on restart, which is safe:
         # the offset entity's own last_changed then spaces the writes.
         self._trv_calibration: dict[str, dict[str, Any]] = {}
+        # Recent room-sensor readings (UTC, °C) for the settling check; refills
+        # within CALIBRATE_SETTLING_WINDOW after a restart.
+        self._room_sensor_samples: dict[str, list[tuple[datetime, float]]] = {}
         # False while the house schedule is in setback (rooms drop to Eco).
         self._house_comfort = True
         self._dirty_intel = False
@@ -1116,6 +1126,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not readings or any(r is None for r in readings):
             return  # no room sensor, or one is silent: leave the TRV as it is
         room_temp = sum(readings) / len(readings)
+        if not self._room_sensor_settled(room.id, room_temp):
+            return
         try:
             trv_temp = float(trv.attributes.get("current_temperature"))
         except (TypeError, ValueError):
@@ -1142,7 +1154,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         hi = float(attrs.get("max", 5.0))
         step = float(attrs.get("step") or 0.1)
         wanted = round(round((offset + room_temp - trv_temp) / step) * step, 2)
-        wanted = min(hi, max(lo, wanted))
+        wanted = min(hi, CALIBRATE_MAX_OFFSET, max(lo, wanted))
         if abs(wanted - offset) < CALIBRATE_MIN_CHANGE:
             return
         warming = room_temp < self.effective_room_target(room)
@@ -1161,6 +1173,21 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 room.trv_entity, trv_temp, room_temp, offset, wanted,
             )
             self._trv_calibration[room.trv_entity] = {"offset": wanted, "reading": trv_temp, "at": now}
+
+    def _room_sensor_settled(self, room_id: str, value: float) -> bool:
+        """Has the room reading moved slower than CALIBRATE_SETTLING_C_PER_HOUR over
+        a full CALIBRATE_SETTLING_WINDOW? (No full window yet = not settled.)"""
+        now = dt_util.utcnow()
+        samples = self._room_sensor_samples.setdefault(room_id, [])
+        samples.append((now, value))
+        cutoff = now - CALIBRATE_SETTLING_WINDOW
+        while len(samples) > 1 and samples[1][0] <= cutoff:
+            samples.pop(0)
+        first_at, first = samples[0]
+        if first_at > cutoff:
+            return False
+        hours = (now - first_at).total_seconds() / 3600
+        return abs(value - first) / hours < CALIBRATE_SETTLING_C_PER_HOUR
 
     def _trv_send(
         self, entity_id: str, calls: list[tuple[str, dict[str, Any]]], seen: tuple[Any, ...]

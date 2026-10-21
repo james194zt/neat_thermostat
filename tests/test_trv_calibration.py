@@ -110,6 +110,12 @@ async def _tick(hass, coord, freezer, every=timedelta(minutes=1)):
     await hass.async_block_till_done(wait_background_tasks=True)
 
 
+async def _run(hass, coord, freezer, minutes):
+    """A tick every minute (the room-sensor settling check needs a 15-min window)."""
+    for _ in range(minutes):
+        await _tick(hass, coord, freezer)
+
+
 async def test_finds_the_offset_setting_on_the_trv_device(hass, setup):
     make, _ = setup
     coord = await make()
@@ -119,35 +125,35 @@ async def test_finds_the_offset_setting_on_the_trv_device(hass, setup):
 async def test_hall_trv_gets_room_sensor_offset(hass, setup, freezer):
     make, trv = setup
     coord = await make()
-    await _tick(hass, coord, freezer)  # offset only just set up: waits
+    await _run(hass, coord, freezer, 14)  # no 15-min view of the room sensor yet
     assert trv["writes"] == []
-    await _tick(hass, coord, freezer, timedelta(minutes=15))
+    await _run(hass, coord, freezer, 2)
     assert trv["writes"] == [-2.3]
 
 
 async def test_off_by_default_and_needs_a_room_sensor(hass, setup, freezer):
     make, trv = setup
     for coord in (await make(calibrate=False), await make(sensor="")):
-        await _tick(hass, coord, freezer, timedelta(minutes=16))
+        await _run(hass, coord, freezer, 20)
     assert trv["writes"] == []
 
 
 async def test_waits_for_a_trv_reading_with_the_new_offset(hass, setup, freezer):
     make, trv = setup
     coord = await make()
-    await _tick(hass, coord, freezer, timedelta(minutes=16))
+    await _run(hass, coord, freezer, 16)
     assert trv["writes"] == [-2.3]
     # The TRV hasn't reported since: its 21.3 was taken with the old offset.
-    await _tick(hass, coord, freezer, timedelta(minutes=20))
+    await _run(hass, coord, freezer, 20)
     assert trv["writes"] == [-2.3]
     trv["report"]()  # now it shows 19.0 = the room
-    await _tick(hass, coord, freezer, timedelta(minutes=20))
+    await _run(hass, coord, freezer, 20)
     assert trv["writes"] == [-2.3]
     # Room warm; radiator cooled: the TRV shows 18.2 with the room at 20.0.
     hass.states.async_set(ROOM_SENSOR, "20.0")
     trv["raw"] = 20.5
     trv["report"]()
-    await _tick(hass, coord, freezer)
+    await _run(hass, coord, freezer, 16)
     assert trv["writes"] == [-2.3, -0.5]
 
 
@@ -158,24 +164,33 @@ async def test_offset_only_moves_down_while_the_room_warms_up(hass, setup, freez
     trv["raw"] = 20.5
     trv["report"]()
     coord = await make()
-    await _tick(hass, coord, freezer, timedelta(minutes=16))
+    await _run(hass, coord, freezer, 16)
     trv["report"]()
     assert trv["writes"] == [-1.5]
     trv["raw"] = 19.5  # radiator cool: TRV now shows 18.0, room 19.0, target 20
     trv["report"]()
-    await _tick(hass, coord, freezer, timedelta(minutes=30))
+    await _run(hass, coord, freezer, 30)
     assert trv["writes"] == [-1.5]  # not eased back while the room needs heat
     trv["raw"] = 21.5  # radiator hot: shows 20.0 with the room at 19.0 → down again
     trv["report"]()
-    await _tick(hass, coord, freezer, timedelta(minutes=5))
+    await _run(hass, coord, freezer, 1)
     assert trv["writes"] == [-1.5, -2.5]
 
 
 async def test_downward_corrections_come_quicker_while_warming(hass, setup, freezer):
     make, trv = setup
+    trv["raw"] = 20.5
+    trv["report"]()
     coord = await make()
-    await _tick(hass, coord, freezer, timedelta(minutes=6))
-    assert trv["writes"] == [-2.3]  # 5 min spacing, not 15
+    await _run(hass, coord, freezer, 16)
+    assert trv["writes"] == [-1.5]
+    trv["report"]()
+    trv["raw"] = 21.5  # radiator heating up: shows 20.0, room 19.0
+    trv["report"]()
+    await _run(hass, coord, freezer, 3)
+    assert trv["writes"] == [-1.5]
+    await _run(hass, coord, freezer, 3)
+    assert trv["writes"] == [-1.5, -2.5]  # 5 min after the last change, not 15
 
 
 async def test_small_changes_are_left_alone(hass, setup, freezer):
@@ -183,7 +198,7 @@ async def test_small_changes_are_left_alone(hass, setup, freezer):
     trv["raw"] = 19.2  # 0.2 above the room
     trv["report"]()
     coord = await make()
-    await _tick(hass, coord, freezer, timedelta(minutes=16))
+    await _run(hass, coord, freezer, 20)
     assert trv["writes"] == []
 
 
@@ -192,9 +207,9 @@ async def test_offset_stays_inside_the_trv_range(hass, setup, freezer):
     trv["raw"] = 23.0  # 4 °C above the room; the TRV only allows −2.5
     trv["report"]()
     coord = await make()
-    await _tick(hass, coord, freezer, timedelta(minutes=16))
+    await _run(hass, coord, freezer, 16)
     trv["report"]()
-    await _tick(hass, coord, freezer, timedelta(minutes=16))
+    await _run(hass, coord, freezer, 16)
     assert trv["writes"] == [-2.5]
 
 
@@ -202,5 +217,45 @@ async def test_silent_room_sensor_stops_calibration(hass, setup, freezer):
     make, trv = setup
     hass.states.async_set(ROOM_SENSOR, "unavailable")
     coord = await make()
-    await _tick(hass, coord, freezer, timedelta(minutes=16))
+    await _run(hass, coord, freezer, 20)
     assert trv["writes"] == []
+
+
+async def test_offset_never_goes_above_zero(hass, setup, freezer):
+    """21 Oct live: with cold radiators the living room TRVs read ~4 °C under the
+    room sensor and were set to +2.5 — then shut early at the next warm-up."""
+    make, trv = setup
+    trv["raw"] = 17.5  # radiator cold: TRV under-reads the 19.0 room
+    trv["report"]()
+    coord = await make()
+    await _run(hass, coord, freezer, 20)
+    assert trv["writes"] == []
+
+
+async def test_a_positive_offset_is_brought_back_to_zero(hass, setup, freezer):
+    make, trv = setup
+    hass.states.async_set(OFFSET, "2.5", {"min": -2.5, "max": 2.5, "step": 0.1})
+    trv["raw"] = 17.5
+    trv["report"]()  # shows 20.0
+    coord = await make()
+    await _run(hass, coord, freezer, 16)
+    assert trv["writes"] == [0.0]
+
+
+async def test_settling_room_sensor_is_ignored(hass, setup, freezer):
+    """21 Oct live: a new living room sensor came on at 25.0 °C (warm from handling)
+    and fell 3.7 °C in 25 min; Neat calibrated to it within 3 minutes."""
+    make, trv = setup
+    trv["raw"] = 17.0
+    trv["report"]()
+    hass.states.async_set(ROOM_SENSOR, "25.0")
+    coord = await make()
+    for minute in range(40):  # cooling 0.15 °C/min = 9 °C/h towards 19.0
+        hass.states.async_set(ROOM_SENSOR, f"{max(19.0, 25.0 - 0.15 * minute):.2f}")
+        await _tick(hass, coord, freezer)
+    assert trv["writes"] == []  # the sensor was never steady long enough
+    hass.states.async_set(ROOM_SENSOR, "19.0")
+    trv["raw"] = 21.3  # warm-up starts with the sensor now steady at 19.0
+    trv["report"]()
+    await _run(hass, coord, freezer, 16)
+    assert trv["writes"] == [-2.3]
