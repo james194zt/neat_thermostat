@@ -143,10 +143,39 @@ async def test_waits_for_a_trv_reading_with_the_new_offset(hass, setup, freezer)
     trv["report"]()  # now it shows 19.0 = the room
     await _tick(hass, coord, freezer, timedelta(minutes=20))
     assert trv["writes"] == [-2.3]
-    trv["raw"] = 20.5  # radiator cooling: the TRV shows 18.2 with the room at 19.0
+    # Room warm; radiator cooled: the TRV shows 18.2 with the room at 20.0.
+    hass.states.async_set(ROOM_SENSOR, "20.0")
+    trv["raw"] = 20.5
     trv["report"]()
     await _tick(hass, coord, freezer)
-    assert trv["writes"] == [-2.3, -1.5]
+    assert trv["writes"] == [-2.3, -0.5]
+
+
+async def test_offset_only_moves_down_while_the_room_warms_up(hass, setup, freezer):
+    """21 Oct live: with the radiator cool the hall TRV over-read only ~0.5 °C, so
+    easing the offset back mid warm-up would shut the valve once the radiator got hot."""
+    make, trv = setup
+    trv["raw"] = 20.5
+    trv["report"]()
+    coord = await make()
+    await _tick(hass, coord, freezer, timedelta(minutes=16))
+    trv["report"]()
+    assert trv["writes"] == [-1.5]
+    trv["raw"] = 19.5  # radiator cool: TRV now shows 18.0, room 19.0, target 20
+    trv["report"]()
+    await _tick(hass, coord, freezer, timedelta(minutes=30))
+    assert trv["writes"] == [-1.5]  # not eased back while the room needs heat
+    trv["raw"] = 21.5  # radiator hot: shows 20.0 with the room at 19.0 → down again
+    trv["report"]()
+    await _tick(hass, coord, freezer, timedelta(minutes=5))
+    assert trv["writes"] == [-1.5, -2.5]
+
+
+async def test_downward_corrections_come_quicker_while_warming(hass, setup, freezer):
+    make, trv = setup
+    coord = await make()
+    await _tick(hass, coord, freezer, timedelta(minutes=6))
+    assert trv["writes"] == [-2.3]  # 5 min spacing, not 15
 
 
 async def test_small_changes_are_left_alone(hass, setup, freezer):

@@ -105,7 +105,12 @@ TRV_REPEAT_AFTER = timedelta(minutes=10)
 # own temperature offset is kept at "room sensor − TRV". Written at most this
 # often, only when it moves by at least CALIBRATE_MIN_CHANGE, and only once the
 # TRV has reported a reading taken with the last offset (or WAIT has passed).
+# The over-read depends on how hot the radiator is (21 Oct live: ~0.5 °C cold,
+# ~3 °C hot), so while the room is below its target the offset only ever moves
+# down — easing it back then would let the valve shut again as the radiator
+# warms — and those corrections may go out every CALIBRATE_EVERY_HEATING.
 CALIBRATE_EVERY = timedelta(minutes=15)
+CALIBRATE_EVERY_HEATING = timedelta(minutes=5)
 CALIBRATE_MIN_CHANGE = 0.3
 CALIBRATE_WAIT_FOR_TRV = timedelta(minutes=60)
 # A "run" longer than this (e.g. HA was down while it ended) teaches nothing.
@@ -1099,8 +1104,6 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (TypeError, ValueError):
             return
         now = dt_util.utcnow()
-        if now - offset_state.last_changed < CALIBRATE_EVERY:
-            return
         last = self._trv_calibration.get(room.trv_entity)
         if (
             last is not None
@@ -1116,6 +1119,12 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         wanted = round(round((offset + room_temp - trv_temp) / step) * step, 2)
         wanted = min(hi, max(lo, wanted))
         if abs(wanted - offset) < CALIBRATE_MIN_CHANGE:
+            return
+        warming = room_temp < self.effective_room_target(room)
+        if warming and wanted > offset:
+            return  # would read higher and shut while the room still needs heat
+        spacing = CALIBRATE_EVERY_HEATING if warming else CALIBRATE_EVERY
+        if now - offset_state.last_changed < spacing:
             return
         if self._trv_send(
             room.trv_entity,
