@@ -158,7 +158,7 @@ function updateCentreControls(state, target = getEffectiveTarget(state)) {
 const MODE_ICONS = {
   heat: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2c.5 3.2-1.6 5-3.2 6.9C7.4 10.6 6 12.4 6 15a6 6 0 0 0 12 0c0-2.6-1.3-4.6-2.6-6.1-.3 1.6-1.1 2.7-2.3 3.2.6-3.7-.3-7.6-1.1-10.1z"/></svg>`,
   off: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M12 3v8M6.4 6.6a8 8 0 1 0 11.2 0"/></svg>`,
-  eco: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18.5 3.5c-3.5.2-6.8 1.8-9 4.4C7 10.6 5.9 13.8 6.1 17.1c3.1-.1 6-1.4 8.1-3.7 2.3-2.5 3.6-5.8 4.3-9.9z"/><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M4.5 20.5c2.5-4 5.6-7.4 9.5-10"/></svg>`,
+  eco: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M6.6 17.4C4.6 9.9 10.6 4.3 20 4z"/><path fill="currentColor" opacity=".68" d="M20 4c.3 9.4-5.4 15.4-13.4 13.4z"/><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" d="M3.6 20.4 7.4 16.6"/></svg>`,
   boost: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M13.5 2 5 13.5h6L10 22l9-12h-6.2z"/></svg>`,
   away: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 10.5 12 4l8 6.5V20h-5.5v-5h-5v5H4z"/></svg>`,
 };

@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.76
+ * @version 0.6.77
  */
-const PANEL_VERSION = "0.6.76";
+const PANEL_VERSION = "0.6.77";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -1145,7 +1145,7 @@ function dialSvg({ fill, now, color }) {
 const TILE_ICONS = {
   heat: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#FF7A1A" d="M12 1.8c.6 3.4-1.7 5.3-3.4 7.3C7.1 10.9 5.6 12.8 5.6 15.6a6.4 6.4 0 0 0 12.8 0c0-2.8-1.4-4.9-2.8-6.5-.3 1.7-1.2 2.9-2.5 3.4.7-4-.3-8.1-1.1-10.7z"/><path fill="#FFC53D" d="M12 11.2c.3 1.8-.9 2.8-1.8 3.8-.7.8-1.3 1.6-1.3 2.8a3.1 3.1 0 0 0 6.2 0c0-1.5-.8-2.6-1.6-3.4-.2.8-.6 1.3-1.2 1.6.3-1.8-.1-3.6-.3-4.8z"/></svg>`,
   gas: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#7FD3FF" d="M12 1.6c2.6 3.3 6.2 7.4 6.2 12.2a6.2 6.2 0 0 1-12.4 0c0-2.6 1.1-4.7 2.5-6.6.3 1.6 1.1 2.7 2.2 3.2-.6-3.3.4-6.3 1.5-8.8z"/><path fill="#1E6FE0" d="M12 9.4c1.4 1.9 3.1 3.9 3.1 6.3a3.1 3.1 0 0 1-6.2 0c0-1.4.6-2.5 1.4-3.5.2.8.6 1.4 1.1 1.7-.2-1.7.1-3.1.6-4.5z"/></svg>`,
-  leaf: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#43B649" d="M19.4 3c-4 .2-7.6 2-10 4.9-2.6 3-3.8 6.6-3.6 10.3 3.5-.1 6.7-1.6 9.1-4.1 2.6-2.8 4-6.5 4.5-11.1z"/><path fill="none" stroke="#1B7A2A" stroke-width="1.7" stroke-linecap="round" d="M4.2 21c2.8-4.5 6.2-8.3 10.6-11.2"/></svg>`,
+  leaf: `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#6CC24A" d="M6.6 17.4C4.6 9.9 10.6 4.3 20 4z"/><path fill="#3E9B34" d="M20 4c.3 9.4-5.4 15.4-13.4 13.4z"/><path fill="none" stroke="#2F7D2A" stroke-width="1.7" stroke-linecap="round" d="M3.6 20.4 7.4 16.6"/></svg>`,
 };
 
 /** A meter amount: kWh to 1 dp; gas volume (m³, ft³…) to 2 dp while small. */
@@ -1157,12 +1157,9 @@ function formatMeter(value, unit = "kWh") {
   return n.toFixed(1);
 }
 
+// The Leaf (same drawing on the card and wall panel): a folded leaf, one half a shade darker.
 function leafSvg() {
-  return `<svg viewBox="0 0 24 24" aria-hidden="true">
-    <path fill="currentColor" d="M17.5 3.5c-3.2.2-6.2 1.7-8.2 4.1C7 10.1 6 13 6.2 16c2.8-.1 5.5-1.3 7.4-3.4 2.1-2.3 3.3-5.3 3.9-9.1z"/>
-    <path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"
-      d="M7.2 17.2c1.6-2.4 3.8-4.2 6.3-5.4"/>
-  </svg>`;
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M6.6 17.4C4.6 9.9 10.6 4.3 20 4z"/><path fill="currentColor" opacity=".68" d="M20 4c.3 9.4-5.4 15.4-13.4 13.4z"/><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" d="M3.6 20.4 7.4 16.6"/></svg>`;
 }
 
 let _haEntityPickerLoadPromise = null;
