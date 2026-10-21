@@ -948,6 +948,19 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         current = self.room_current_temp(room)
         if current is None:
             return False
+        if self._room_sensor_ids(room) == [self.config.temperature_sensor]:
+            # The room the house sensor is in: same cut-off as the house (True
+            # Radiant included). 21 Oct 2026: the hall room called on to 20.3
+            # after the house had stopped at ~20.1, and coast took it past 20.5.
+            return house_calls_for_heat(
+                current,
+                self.effective_room_target(room),
+                was_calling=bool(st.get("needs_heat")),
+                cold_tolerance=self.config.cold_tolerance,
+                hot_tolerance=self.config.hot_tolerance,
+                true_radiant=self.config.true_radiant,
+                coast_c=self.intel.state.warmup.coast_c,
+            )
         return room_calls_for_heat(
             current,
             self.effective_room_target(room),
@@ -955,6 +968,18 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             cold_tolerance=self.config.cold_tolerance,
             hot_tolerance=self.config.hot_tolerance,
         )
+
+    def room_valve_shut(self, room: RoomConfig) -> bool:
+        """The room's TRV says its valve is shut (idle/off): the boiler can't heat it.
+
+        21 Oct 2026: the kitchen's sensor read 19.4 while its TRV read 21 and had
+        shut, so the boiler ran on for the kitchen and the heat went upstairs.
+        Unknown (no TRV, offline, no hvac_action) counts as open.
+        """
+        trv = self.hass.states.get(room.trv_entity) if room.trv_entity else None
+        if trv is None or trv.state in ("unknown", "unavailable"):
+            return False
+        return trv.attributes.get("hvac_action") in ("idle", "off")
 
     def safety_needs_heat(self) -> bool:
         if not self.config.safety_temp_enabled:
@@ -1513,8 +1538,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             tuple(bool(st.get("needs_heat")) for st in self._room_states.values()),
         ):
             self._persist_control()  # a restart mid-run must carry on to the cut-off
+        # A room only keeps the boiler on while its valve is open to take the heat.
         rooms_calling = any(
-            self._room_states.get(r.id, {}).get("needs_heat")
+            self._room_states.get(r.id, {}).get("needs_heat") and not self.room_valve_shut(r)
             for r in self.config.rooms
         )
         demand = self._safety_active or (
