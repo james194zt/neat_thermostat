@@ -190,6 +190,7 @@ async def ws_helper_config(
         vol.Optional("backup_temperature_sensor"): cv.string,
         vol.Optional("sensor_stale_minutes"): vol.All(vol.Coerce(int), vol.Range(min=15, max=720)),
         vol.Optional("fast_sensor_reporting"): cv.boolean,
+        vol.Optional("fast_reporting_sensors"): [cv.string],
         vol.Optional("energy_sensor"): cv.string,
     }
 )
@@ -238,6 +239,7 @@ async def ws_update_settings(
             "backup_temperature_sensor",
             "sensor_stale_minutes",
             "fast_sensor_reporting",
+            "fast_reporting_sensors",
             "energy_sensor",
         )
         if k in msg

@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.80
+ * @version 0.6.81
  */
-const PANEL_VERSION = "0.6.80";
+const PANEL_VERSION = "0.6.81";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -3851,8 +3851,8 @@ class NeatThermostatPanel extends HTMLElement {
         </div>
         ${this._sensorStatusBanner()}
         ${row(t("settings.stale"), t("settings.stale.desc"), stepper("sensorStale", cfg.sensor_stale_minutes ?? 60, t("unit.min"), 15, 720, 15))}
-        ${row(t("settings.fast_reporting"), `${t("settings.fast_reporting.desc")}${this._reportingStatusHtml()}`, toggle("fastReporting", cfg.fast_sensor_reporting))}
       </div>
+      ${this._renderSensorsCard(row, head)}
       ${this._renderRoomsCard()}
       <div class="ov-grid">
         <div class="card">
@@ -3946,19 +3946,56 @@ class NeatThermostatPanel extends HTMLElement {
     return "";
   }
 
-  /** Per-sensor result of "Faster sensor updates". */
-  _reportingStatusHtml() {
-    const rep = this._live().house_sensor?.reporting || {};
-    const lines = Object.entries(rep).map(([id, r]) => {
-      const name = this._escape(this._hass?.states?.[id]?.attributes?.friendly_name || id);
-      let text;
-      if (!r.supported) text = t("reporting.not_zha");
-      else if (r.ok) text = r.fast ? t("reporting.fast") : t("reporting.normal");
-      else if (r.pending) text = `${this._escape(r.error || t("reporting.waiting"))}…`;
-      else text = t("reporting.not_set", { error: this._escape(r.error || t("reporting.unknown_error")) });
-      return `<br><span class="${r.supported && !r.ok && !r.pending ? "warn-text" : ""}">${name}: ${text}</span>`;
+  /** Every temperature sensor Neat reads: what it's for, its reading, and Faster updates per sensor. */
+  _renderSensorsCard(row, head) {
+    const sensors = this._live().temperature_sensors || [];
+    const rows = sensors.map((s) => {
+      const st = this._hass?.states?.[s.entity_id];
+      const name = this._escape(st?.attributes?.friendly_name || s.entity_id);
+      const uses = (s.uses || [])
+        .map((u) => (u.startsWith("room:") ? this._escape(u.slice(5)) : t(`sensors.use.${u}`)))
+        .join(", ");
+      const value = st && !["unknown", "unavailable"].includes(st.state)
+        ? `${this._escape(st.state)}${this._escape(st.attributes?.unit_of_measurement || "°C")}`
+        : t("sensors.no_reading");
+      const mins = st?.last_changed ? Math.max(0, Math.round((Date.now() - Date.parse(st.last_changed)) / 60000)) : null;
+      const changed = mins == null ? "" : ` · ${t("sensors.changed", { ago: mins < 1 ? t("sensors.just_now") : t("time.m", { m: mins }) })}`;
+      const r = s.reporting;
+      let status = "";
+      if (!s.zigbee) status = t("reporting.not_zha");
+      else if (r && r.ok) status = r.fast ? t("reporting.fast") : t("reporting.normal");
+      else if (r && r.pending) status = `${this._escape(r.error || t("reporting.waiting"))}…`;
+      else if (r) status = `<span class="warn-text">${t("reporting.not_set", { error: this._escape(r.error || t("reporting.unknown_error")) })}</span>`;
+      else status = s.fast ? t("reporting.waiting") : t("sensors.normal");
+      const control = `<label class="switch" title="${this._escape(t("sensors.fast"))}"><input type="checkbox" data-sensor-fast="${this._escape(s.entity_id)}" ${s.fast ? "checked" : ""} ${s.zigbee ? "" : "disabled"} /><span></span></label>`;
+      return row(name, `${uses} · ${value}${changed}<br>${t("sensors.fast")}: ${status}`, control);
     });
-    return lines.join("");
+    return `
+      <div class="card">
+        ${head(ICONS.thermo, "", t("sensors.title"), t("sensors.sub"))}
+        ${rows.length ? rows.join("") : `<p class="muted">${t("sensors.empty")}</p>`}
+      </div>`;
+  }
+
+  /** Faster updates per sensor: saved at once, like the TRV settings. */
+  _bindSensorsCard() {
+    this.shadowRoot.querySelectorAll("[data-sensor-fast]").forEach((box) => {
+      box.addEventListener("change", async () => {
+        const id = box.dataset.sensorFast;
+        const list = new Set(this._cfg().fast_reporting_sensors || []);
+        if (box.checked) list.add(id);
+        else list.delete(id);
+        const name = this._hass?.states?.[id]?.attributes?.friendly_name || id;
+        try {
+          await this._ws("neat_thermostat/update_settings", { fast_reporting_sensors: [...list] });
+          await this._loadState();
+          this._showToast(t(box.checked ? "sensors.fast_on" : "sensors.fast_off", { name }));
+        } catch (e) {
+          box.checked = !box.checked;
+          this._showToast(t("common.save_failed", { error: e?.message || e }), "err");
+        }
+      });
+    });
   }
 
   /** Release the boiler relay for a hand test; Neat takes it back by itself. */
@@ -4352,6 +4389,7 @@ class NeatThermostatPanel extends HTMLElement {
     }
 
     const saveSettings = this.shadowRoot.getElementById("saveSettings");
+    this._bindSensorsCard();
     if (saveSettings) {
       saveSettings.addEventListener("click", async () => {
         const devices = this._readSettingsPickerValues();
@@ -4367,7 +4405,6 @@ class NeatThermostatPanel extends HTMLElement {
             backup_temperature_sensor: devices.backup_temperature_sensor || "",
             energy_sensor: devices.energy_sensor || "",
             sensor_stale_minutes: Math.min(720, Math.max(15, Math.round(Number(this.shadowRoot.getElementById("sensorStale").value) || 60))),
-            fast_sensor_reporting: this.shadowRoot.getElementById("fastReporting").checked,
             window_sensors: devices.window_sensors || [],
             window_open_delay_minutes: Math.min(30, Math.max(0, Math.round(Number(this.shadowRoot.getElementById("windowDelay")?.value ?? 3)))),
             presence_entities: devices.presence_entities || [],

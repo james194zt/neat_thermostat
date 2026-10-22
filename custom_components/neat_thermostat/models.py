@@ -233,8 +233,11 @@ class NeatConfig:
     backup_temperature_sensor: str = ""
     # A sensor that hasn't reported for this long is treated as dead.
     sensor_stale_minutes: int = DEFAULT_SENSOR_STALE_MINUTES
-    # Ask Zigbee (ZHA) house sensors to report every 0.1 °C / 5 min.
+    # Pre-0.6.81 house-sensors-only switch; kept so old saves migrate.
     fast_sensor_reporting: bool = False
+    # Zigbee (ZHA) temperature sensors asked to report every 0.1 °C / 5 min
+    # (Settings → Temperature Sensors, per sensor).
+    fast_reporting_sensors: list[str] = field(default_factory=list)
     # Optional kWh meter for the heating (boiler or gas supply), for the usage page.
     energy_sensor: str = ""
 
@@ -280,6 +283,7 @@ class NeatConfig:
             "backup_temperature_sensor": self.backup_temperature_sensor,
             "sensor_stale_minutes": self.sensor_stale_minutes,
             "fast_sensor_reporting": self.fast_sensor_reporting,
+            "fast_reporting_sensors": self.fast_reporting_sensors,
             "energy_sensor": self.energy_sensor,
         }
 
@@ -292,6 +296,15 @@ class NeatConfig:
         person = str(data.get("person_entity") or "")
         if person and person not in presence:
             presence = [person, *presence]
+        if "fast_reporting_sensors" in data:
+            fast_sensors = [str(e) for e in (data.get("fast_reporting_sensors") or []) if e]
+        elif data.get("fast_sensor_reporting"):
+            # The old switch meant "the house sensor and its backup".
+            fast_sensors = [
+                str(e) for e in (data.get("temperature_sensor"), data.get("backup_temperature_sensor")) if e
+            ]
+        else:
+            fast_sensors = []
         pin = str(data.get("wall_pin") or DEFAULT_WALL_PIN).strip()
         if pin and (not pin.isdigit() or len(pin) != 4):
             pin = DEFAULT_WALL_PIN
@@ -356,5 +369,6 @@ class NeatConfig:
                 720, max(15, int(data.get("sensor_stale_minutes", DEFAULT_SENSOR_STALE_MINUTES)))
             ),
             fast_sensor_reporting=bool(data.get("fast_sensor_reporting", False)),
+            fast_reporting_sensors=fast_sensors,
             energy_sensor=str(data.get("energy_sensor") or ""),
         )

@@ -432,6 +432,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "time_to_temp_minutes": self._time_to_temp,
             "heating_fault": self._heating_fault_info(),
             "house_sensor": self._sensor_info(),
+            "temperature_sensors": self.temperature_sensors_info(),
             "control_released_until": (
                 self._released_until.isoformat() if self._released_until else None
             ),
@@ -593,11 +594,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         if not self._zigbee_settled():
             return
-        targets: dict[str, bool] = {}
-        if self.config.fast_sensor_reporting:
-            for entity_id in (self.config.temperature_sensor, self.config.backup_temperature_sensor):
-                if entity_id:
-                    targets[entity_id] = True
+        targets: dict[str, bool] = {e: True for e in self.config.fast_reporting_sensors if e}
         for entity_id in self.intel.state.fast_reporting:
             targets.setdefault(entity_id, False)  # put it back to ZHA's default
         now = dt_util.utcnow()
@@ -677,6 +674,31 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "backup": self.config.backup_temperature_sensor,
             "reporting": self._reporting_status,
         }
+
+    def temperature_sensors_info(self) -> list[dict[str, Any]]:
+        """Every temperature sensor Neat reads, what for, and its faster-updates state
+        (Settings → Temperature Sensors)."""
+        uses: dict[str, list[str]] = {}
+        for entity_id, use in (
+            (self.config.temperature_sensor, "house"),
+            (self.config.backup_temperature_sensor, "backup"),
+        ):
+            if entity_id:
+                uses.setdefault(entity_id, []).append(use)
+        for room in self.config.rooms:
+            for entity_id in self._room_sensor_ids(room):
+                uses.setdefault(entity_id, []).append(f"room:{room.name}")
+        fast = set(self.config.fast_reporting_sensors)
+        return [
+            {
+                "entity_id": entity_id,
+                "uses": used_for,
+                "zigbee": zigbee_reporting.zha_ieee(self.hass, entity_id) is not None,
+                "fast": entity_id in fast,
+                "reporting": self._reporting_status.get(entity_id),
+            }
+            for entity_id, used_for in uses.items()
+        ]
 
     def _is_on(self, entity_id: str) -> bool:
         state = self.hass.states.get(entity_id)
