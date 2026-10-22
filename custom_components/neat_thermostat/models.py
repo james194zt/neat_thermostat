@@ -238,6 +238,9 @@ class NeatConfig:
     # Zigbee (ZHA) temperature sensors asked to report every 0.1 °C / 5 min
     # (Settings → Temperature Sensors, per sensor).
     fast_reporting_sensors: list[str] = field(default_factory=list)
+    # Sensors Neat only watches (e.g. upstairs rooms without TRVs): listed with
+    # their floor, not used for heating decisions (yet).
+    watch_temperature_sensors: list[str] = field(default_factory=list)
     # Optional kWh meter for the heating (boiler or gas supply), for the usage page.
     energy_sensor: str = ""
 
@@ -284,6 +287,7 @@ class NeatConfig:
             "sensor_stale_minutes": self.sensor_stale_minutes,
             "fast_sensor_reporting": self.fast_sensor_reporting,
             "fast_reporting_sensors": self.fast_reporting_sensors,
+            "watch_temperature_sensors": self.watch_temperature_sensors,
             "energy_sensor": self.energy_sensor,
         }
 
@@ -370,5 +374,6 @@ class NeatConfig:
             ),
             fast_sensor_reporting=bool(data.get("fast_sensor_reporting", False)),
             fast_reporting_sensors=fast_sensors,
+            watch_temperature_sensors=[str(e) for e in (data.get("watch_temperature_sensors") or []) if e],
             energy_sensor=str(data.get("energy_sensor") or ""),
         )

@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.81
+ * @version 0.6.82
  */
-const PANEL_VERSION = "0.6.81";
+const PANEL_VERSION = "0.6.82";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -268,6 +268,10 @@ const STYLES = `
 .set-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
 .set-field { min-width: 0; }
 .set-field-label { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.set-group-title { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--secondary-text-color); padding: 14px 0 2px; }
+.card-head + .set-group-title { padding-top: 0; }
+.set-group-title + .set-row { border-top: 0; }
+.sensor-ctl { display: inline-flex; align-items: center; gap: 6px; }
 .set-field .set-row-desc { margin-top: 6px; }
 .set-row {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
@@ -2296,6 +2300,7 @@ class NeatThermostatPanel extends HTMLElement {
         const trv = this._entityState(r.trv_entity);
         const trvBad = !trv || trv.state === "unavailable" || trv.state === "unknown";
         const sensors = [r.temperature_sensor, ...(r.extra_temperature_sensors || [])].filter(Boolean).length;
+        const floor = (this._live().room_floors || {})[r.id]?.name;
         return `
           <div class="room-card${editing === r.id ? " selected" : ""}${live.needs_heat ? " heat" : ""}" data-room-id="${this._escape(r.id)}" role="button" tabindex="0" title="${this._escape(t("rooms.card.tip"))}">
             <div class="room-card-top">
@@ -2308,6 +2313,7 @@ class NeatThermostatPanel extends HTMLElement {
             </div>
             <div class="room-card-meta">
               <span class="set-state ${trvBad ? "bad" : "good"}" title="${this._escape(r.trv_entity)}">${trvBad ? t("rooms.card.trv_state", { state: this._escape(trv ? trv.state : t("entities.missing")) }) : t("rooms.card.trv_online")}</span>
+              ${floor ? `<span class="room-card-sensors">${this._escape(floor)}</span>` : ""}
               <span class="room-card-sensors">${sensors ? tn("rooms.card.sensors", sensors) : t("rooms.card.trv_temperature")}</span>
               <span class="room-card-sensors">${r.follow_house !== false
                 ? (Number(r.house_offset)
@@ -3719,6 +3725,23 @@ class NeatThermostatPanel extends HTMLElement {
     single("energy_sensor", { domains: ["sensor"], filter: energySensorFilter });
     list("presence_entities", { domains: ["person", "device_tracker"], placeholder: t("settings.presence.add") });
     list("window_sensors", { domains: ["binary_sensor"], placeholder: t("settings.windows.add") });
+
+    // Watch-only sensors: picked → saved at once (the card lists them from live state).
+    const watchHost = this.shadowRoot.querySelector('[data-settings-picker="watch_add"]');
+    if (watchHost) {
+      const picker = watchHost.querySelector("ha-entity-picker")
+        || makePicker(watchHost, { domains: ["sensor"], filter: temperatureSensorFilter, placeholder: t("sensors.watch_add") });
+      picker.hass = this._hass;
+      picker.value = undefined;
+      picker.addEventListener("value-changed", (ev) => {
+        const id = ev.detail?.value;
+        if (!id) return;
+        setTimeout(() => (picker.value = undefined), 0);
+        const list = this._cfg().watch_temperature_sensors || [];
+        if (list.includes(id)) return;
+        void this._saveWatchSensors([...list, id], "sensors.watch_added", id);
+      });
+    }
   }
 
   _readSettingsPickerValues() {
@@ -3967,18 +3990,60 @@ class NeatThermostatPanel extends HTMLElement {
       else if (r && r.pending) status = `${this._escape(r.error || t("reporting.waiting"))}…`;
       else if (r) status = `<span class="warn-text">${t("reporting.not_set", { error: this._escape(r.error || t("reporting.unknown_error")) })}</span>`;
       else status = s.fast ? t("reporting.waiting") : t("sensors.normal");
-      const control = `<label class="switch" title="${this._escape(t("sensors.fast"))}"><input type="checkbox" data-sensor-fast="${this._escape(s.entity_id)}" ${s.fast ? "checked" : ""} ${s.zigbee ? "" : "disabled"} /><span></span></label>`;
-      return row(name, `${uses} · ${value}${changed}<br>${t("sensors.fast")}: ${status}`, control);
+      const watchOnly = (s.uses || []).length === 1 && s.uses[0] === "watch";
+      const remove = watchOnly
+        ? `<button type="button" class="set-remove" data-watch-remove="${this._escape(s.entity_id)}" aria-label="${this._escape(t("common.remove_name", { name: st?.attributes?.friendly_name || s.entity_id }))}" title="${this._escape(t("common.remove"))}">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </button>`
+        : "";
+      const control = `<span class="sensor-ctl"><label class="switch" title="${this._escape(t("sensors.fast"))}"><input type="checkbox" data-sensor-fast="${this._escape(s.entity_id)}" ${s.fast ? "checked" : ""} ${s.zigbee ? "" : "disabled"} /><span></span></label>${remove}</span>`;
+      const floor = s.floor?.name || t("sensors.no_floor");
+      // Area + floor on every row, so a sensor in the wrong place stands out.
+      const where = s.floor
+        ? this._escape(`${s.floor.area}, ${s.floor.name}`)
+        : `<span class="warn-text">${t("sensors.no_floor")}</span>`;
+      return { floor, html: row(name, `${where} · ${uses}<br>${value}${changed}<br>${t("sensors.fast")}: ${status}`, control) };
     });
+    // Grouped by HA floor (lowest first, as the backend sorts them).
+    const groups = [];
+    for (const r of rows) {
+      if (!groups.length || groups[groups.length - 1].floor !== r.floor) groups.push({ floor: r.floor, rows: [] });
+      groups[groups.length - 1].rows.push(r.html);
+    }
+    const body = groups.map((g) => `<div class="set-group-title">${this._escape(g.floor)}</div>${g.rows.join("")}`).join("");
     return `
       <div class="card">
         ${head(ICONS.thermo, "", t("sensors.title"), t("sensors.sub"))}
-        ${rows.length ? rows.join("") : `<p class="muted">${t("sensors.empty")}</p>`}
+        ${rows.length ? body : `<p class="muted">${t("sensors.empty")}</p>`}
+        <div class="set-field">
+          <div class="set-field-label">${t("sensors.watch_add")}</div>
+          <div class="entity-picker-host set-add" data-settings-picker="watch_add"></div>
+          <div class="set-row-desc">${t("sensors.watch_add.desc")}</div>
+        </div>
       </div>`;
+  }
+
+  /** Add/remove a watch-only sensor (saved at once). */
+  async _saveWatchSensors(list, toastKey, id) {
+    const name = this._hass?.states?.[id]?.attributes?.friendly_name || id;
+    try {
+      await this._ws("neat_thermostat/update_settings", { watch_temperature_sensors: list });
+      await this._loadState();
+      this._showToast(t(toastKey, { name }));
+    } catch (e) {
+      this._showToast(t("common.save_failed", { error: e?.message || e }), "err");
+    }
   }
 
   /** Faster updates per sensor: saved at once, like the TRV settings. */
   _bindSensorsCard() {
+    this.shadowRoot.querySelectorAll("[data-watch-remove]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.watchRemove;
+        const list = (this._cfg().watch_temperature_sensors || []).filter((e) => e !== id);
+        void this._saveWatchSensors(list, "sensors.watch_removed", id);
+      });
+    });
     this.shadowRoot.querySelectorAll("[data-sensor-fast]").forEach((box) => {
       box.addEventListener("change", async () => {
         const id = box.dataset.sensorFast;

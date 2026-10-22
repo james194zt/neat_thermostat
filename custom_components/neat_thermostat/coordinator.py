@@ -12,8 +12,10 @@ from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_ON, STATE_OPEN, EntityCategory
 from homeassistant.core import CoreState, HomeAssistant, State, callback
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import floor_registry as fr
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.event import (
@@ -433,6 +435,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "heating_fault": self._heating_fault_info(),
             "house_sensor": self._sensor_info(),
             "temperature_sensors": self.temperature_sensors_info(),
+            "room_floors": self.room_floors(),
             "control_released_until": (
                 self._released_until.isoformat() if self._released_until else None
             ),
@@ -688,17 +691,45 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for room in self.config.rooms:
             for entity_id in self._room_sensor_ids(room):
                 uses.setdefault(entity_id, []).append(f"room:{room.name}")
+        for entity_id in self.config.watch_temperature_sensors:
+            uses.setdefault(entity_id, []).append("watch")
         fast = set(self.config.fast_reporting_sensors)
-        return [
+        sensors = [
             {
                 "entity_id": entity_id,
                 "uses": used_for,
+                "floor": self.entity_floor(entity_id),
                 "zigbee": zigbee_reporting.zha_ieee(self.hass, entity_id) is not None,
                 "fast": entity_id in fast,
                 "reporting": self._reporting_status.get(entity_id),
             }
             for entity_id, used_for in uses.items()
         ]
+        # Lowest floor first; sensors without a floor last.
+        sensors.sort(key=lambda s: (s["floor"] is None, (s["floor"] or {}).get("level") or 0))
+        return sensors
+
+    def entity_floor(self, entity_id: str) -> dict[str, Any] | None:
+        """The HA floor an entity is on, through its own area or its device's
+        (Settings → Areas & zones). None when no area/floor is set."""
+        entry = er.async_get(self.hass).async_get(entity_id) if entity_id else None
+        if entry is None:
+            return None
+        area_id = entry.area_id
+        if not area_id and entry.device_id:
+            device = dr.async_get(self.hass).async_get(entry.device_id)
+            area_id = device.area_id if device else None
+        area = ar.async_get(self.hass).async_get_area(area_id) if area_id else None
+        if area is None or not area.floor_id:
+            return None
+        floor = fr.async_get(self.hass).async_get_floor(area.floor_id)
+        if floor is None:
+            return None
+        return {"id": floor.floor_id, "name": floor.name, "level": floor.level, "area": area.name}
+
+    def room_floors(self) -> dict[str, dict[str, Any] | None]:
+        """Each room's floor, from its TRV."""
+        return {room.id: self.entity_floor(room.trv_entity) for room in self.config.rooms}
 
     def _is_on(self, entity_id: str) -> bool:
         state = self.hass.states.get(entity_id)

@@ -65,3 +65,48 @@ async def test_sensor_list_shows_every_sensor_and_its_uses(hass):
     finally:
         await coord.async_unload()
         await coord.async_shutdown()
+
+
+async def test_floors_from_ha_areas_and_watched_sensors(hass):
+    from homeassistant.helpers import area_registry as ar
+    from homeassistant.helpers import device_registry as dr
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.helpers import floor_registry as fr
+
+    ground = fr.async_get(hass).async_create("Ground Floor", level=0)
+    first = fr.async_get(hass).async_create("First Floor", level=1)
+    hall = ar.async_get(hass).async_create("Hallway", floor_id=ground.floor_id)
+    bath = ar.async_get(hass).async_create("Bathroom", floor_id=first.floor_id)
+    zha = MockConfigEntry(domain="zha")
+    zha.add_to_hass(hass)
+    trv_dev = dr.async_get(hass).async_get_or_create(config_entry_id=zha.entry_id, identifiers={("zha", "trv")})
+    dr.async_get(hass).async_update_device(trv_dev.id, area_id=hall.id)  # TRV: area via its device
+    reg = er.async_get(hass)
+    reg.async_get_or_create("climate", "zha", "trv", suggested_object_id="hall_trv", device_id=trv_dev.id)
+    sensor = reg.async_get_or_create("sensor", "zha", "bath-t", suggested_object_id="bath")
+    reg.async_update_entity(sensor.entity_id, area_id=bath.id)  # sensor: its own area
+
+    entry = MockConfigEntry(
+        domain="neat_thermostat",
+        data={"heater": "switch.boiler", "temperature_sensor": "sensor.hall"},
+        options={
+            "watch_temperature_sensors": ["sensor.bath"],
+            "rooms": [{"id": "hall", "name": "Hallway", "trv_entity": "climate.hall_trv"}],
+        },
+    )
+    entry.add_to_hass(hass)
+    coord = NeatThermostatCoordinator(hass, entry)
+    await coord.async_initialize_intelligence()
+    try:
+        assert coord.room_floors()["hall"]["name"] == "Ground Floor"
+        info = coord.temperature_sensors_info()
+        # First Floor sorts before "no floor": sensor.hall has no area.
+        assert [s["entity_id"] for s in info] == ["sensor.bath", "sensor.hall"]
+        assert info[0]["uses"] == ["watch"]
+        assert info[0]["floor"] == {"id": first.floor_id, "name": "First Floor", "level": 1, "area": "Bathroom"}
+        assert info[1]["floor"] is None
+        # Watched sensors never drive the heating.
+        assert coord.room_current_temp(coord.config.rooms[0]) is None
+    finally:
+        await coord.async_unload()
+        await coord.async_shutdown()
