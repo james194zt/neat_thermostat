@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.83
+ * @version 0.6.84
  */
-const PANEL_VERSION = "0.6.83";
+const PANEL_VERSION = "0.6.84";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -1366,8 +1366,11 @@ class NeatThermostatPanel extends HTMLElement {
 
   async _softRefreshLive() {
     if (!this._hass || !this._state || this._refreshingLive) return;
-    // Never rebuild form pages while the user may be editing.
-    if (this._formViews().has(this._view)) return;
+    // Never rebuild form pages while the user may be editing — except the sensor tiles on Settings.
+    if (this._formViews().has(this._view)) {
+      if (this._view === "settings") await this._refreshSettingsLive();
+      return;
+    }
     // Re-rendering mid-drag would drop the tile out from under the pointer.
     if (this._dragging) return;
     this._refreshingLive = true;
@@ -1379,6 +1382,22 @@ class NeatThermostatPanel extends HTMLElement {
       this._state = next;
       if (this._view === "energy") await this._loadEnergy();
       if ((this._view === "overview" || this._view === "energy") && !this._dragging) this._render();
+    } catch {
+      // Ignore background refresh errors
+    } finally {
+      this._refreshingLive = false;
+    }
+  }
+
+  async _refreshSettingsLive() {
+    if (this._refreshingLive) return;
+    this._refreshingLive = true;
+    try {
+      const next = await this._ws("neat_thermostat/get_state");
+      if (this._view !== "settings" || !this._state) return;
+      // Only the live part: the form keeps editing its own draft of the config.
+      this._state = { ...this._state, live: next.live };
+      this._refreshSensorTiles();
     } catch {
       // Ignore background refresh errors
     } finally {
@@ -3977,6 +3996,20 @@ class NeatThermostatPanel extends HTMLElement {
 
   /** Every temperature sensor Neat reads, as tiles like the room cards: one row per HA floor. */
   _renderSensorsCard(row, head) {
+    return `
+      <div class="card" id="sensorsCard">
+        ${head(ICONS.thermo, "", t("sensors.title"), t("sensors.sub"))}
+        <div data-sensor-tiles>${this._renderSensorTiles()}</div>
+        <div class="set-field sensor-watch-add">
+          <div class="set-field-label">${t("sensors.watch_add")}</div>
+          <div class="entity-picker-host set-add" data-settings-picker="watch_add"></div>
+          <div class="set-row-desc">${t("sensors.watch_add.desc")}</div>
+        </div>
+      </div>`;
+  }
+
+  /** The sensor tiles alone (refreshed in place on the Settings page). */
+  _renderSensorTiles() {
     const sensors = this._live().temperature_sensors || [];
     const tiles = sensors.map((s) => {
       const st = this._hass?.states?.[s.entity_id];
@@ -4039,16 +4072,18 @@ class NeatThermostatPanel extends HTMLElement {
     const body = groups
       .map((g) => `<div class="set-group-title${g.noFloor ? " warn-text" : ""}">${this._escape(g.floor)}</div><div class="room-grid">${g.tiles.join("")}</div>`)
       .join("");
-    return `
-      <div class="card" id="sensorsCard">
-        ${head(ICONS.thermo, "", t("sensors.title"), t("sensors.sub"))}
-        ${tiles.length ? body : `<p class="muted">${t("sensors.empty")}</p>`}
-        <div class="set-field sensor-watch-add">
-          <div class="set-field-label">${t("sensors.watch_add")}</div>
-          <div class="entity-picker-host set-add" data-settings-picker="watch_add"></div>
-          <div class="set-row-desc">${t("sensors.watch_add.desc")}</div>
-        </div>
-      </div>`;
+    return tiles.length ? body : `<p class="muted">${t("sensors.empty")}</p>`;
+  }
+
+  /** Settings is a form page and never re-renders in the background; the sensor tiles show
+   * things that change outside Neat (HA areas/floors, readings), so they refresh on their own. */
+  _refreshSensorTiles() {
+    const box = this.shadowRoot?.querySelector("[data-sensor-tiles]");
+    if (!box || box.contains(this.shadowRoot.activeElement)) return;
+    const html = this._renderSensorTiles();
+    if (box.innerHTML === html) return;
+    box.innerHTML = html;
+    this._bindSensorsCard(box);
   }
 
   /** Add/remove a watch-only sensor (saved at once). */
@@ -4064,15 +4099,15 @@ class NeatThermostatPanel extends HTMLElement {
   }
 
   /** Faster updates per sensor: saved at once, like the TRV settings. */
-  _bindSensorsCard() {
-    this.shadowRoot.querySelectorAll("[data-watch-remove]").forEach((btn) => {
+  _bindSensorsCard(root = this.shadowRoot) {
+    root.querySelectorAll("[data-watch-remove]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const id = btn.dataset.watchRemove;
         const list = (this._cfg().watch_temperature_sensors || []).filter((e) => e !== id);
         void this._saveWatchSensors(list, "sensors.watch_removed", id);
       });
     });
-    this.shadowRoot.querySelectorAll("[data-sensor-fast]").forEach((box) => {
+    root.querySelectorAll("[data-sensor-fast]").forEach((box) => {
       box.addEventListener("change", async () => {
         const id = box.dataset.sensorFast;
         const list = new Set(this._cfg().fast_reporting_sensors || []);
