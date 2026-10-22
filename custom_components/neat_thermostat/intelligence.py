@@ -701,11 +701,16 @@ def preheat_status(
     max_minutes: int = MAX_PREHEAT_MINUTES,
     offsets: dict[str, float] | None = None,
     now: datetime | None = None,
+    started_block: str | None = None,
 ) -> dict[str, Any] | None:
     """Return preheat status dict when approaching an upcoming block.
 
     ``offsets`` are Seasonal Savings reductions by block key; the block's
     temperature is aimed for with its reduction applied.
+
+    ``started_block``: the block whose preheat has already begun. It keeps
+    going until the block starts — re-estimating from the warmer house made it
+    "too early" again (22 Oct 2026: five boiler starts in one morning).
     """
     if not true_radiant or not schedule_enabled or away_eco_active:
         return None
@@ -724,13 +729,19 @@ def preheat_status(
         cycles=cycles,
         max_minutes=max_minutes,
     )
-    if needed <= 0:
+    # Same block key next week mustn't count: only within the longest preheat.
+    started = (
+        started_block is not None
+        and key == started_block
+        and now >= start_dt - timedelta(minutes=max_minutes)
+    )
+    if needed <= 0 and not started:
         return None
     preheat_start = start_dt - timedelta(minutes=needed)
     if now >= start_dt:
         return None
     return {
-        "preheating": now >= preheat_start,
+        "preheating": started or now >= preheat_start,
         "temperature": target,
         "block_key": key,
         "block_start": start_dt.strftime("%H:%M"),

@@ -50,22 +50,30 @@ async def setup(hass, monkeypatch, freezer):
     )
 
     # The TRV's raw reading (beside the radiator); what it reports includes its offset.
-    trv = {"raw": 21.3, "writes": []}
+    trv = {"raw": 21.3, "writes": [], "setpoints": [], "setpoint": 20.0}
 
     def report():
         offset = float(hass.states.get(OFFSET).state)
-        hass.states.async_set(TRV, "heat", {"temperature": 20.0, "current_temperature": round(trv["raw"] + offset, 1)})
+        hass.states.async_set(TRV, "heat", {
+            "temperature": trv["setpoint"], "target_temp_step": 0.5,
+            "current_temperature": round(trv["raw"] + offset, 1),
+        })
 
     async def set_value(call):
         trv["writes"].append(call.data["value"])
         hass.states.async_set(OFFSET, str(call.data["value"]), {"min": -2.5, "max": 2.5, "step": 0.1})
 
+    async def set_temperature(call):
+        trv["setpoint"] = call.data["temperature"]
+        trv["setpoints"].append(call.data["temperature"])
+        report()
+
     async def noop(call):
         return
 
     hass.services.async_register("number", "set_value", set_value)
-    for service in ("set_temperature", "set_hvac_mode"):
-        hass.services.async_register("climate", service, noop)
+    hass.services.async_register("climate", "set_temperature", set_temperature)
+    hass.services.async_register("climate", "set_hvac_mode", noop)
     for service in ("turn_on", "turn_off"):
         hass.services.async_register("switch", service, noop)
     hass.states.async_set("switch.boiler", "on")
@@ -240,6 +248,56 @@ async def test_a_positive_offset_is_brought_back_to_zero(hass, setup, freezer):
     coord = await make()
     await _run(hass, coord, freezer, 16)
     assert trv["writes"] == [0.0]
+
+
+async def test_setpoint_topped_up_beyond_the_offset_limit(hass, setup, freezer):
+    """22 Oct live: living room TRVs read 20.0 at −2.5 with the room at 17.8, and shut."""
+    make, trv = setup
+    hass.states.async_set(OFFSET, "-2.5", {"min": -2.5, "max": 2.5, "step": 0.1})
+    hass.states.async_set(ROOM_SENSOR, "18.0")
+    trv["raw"] = 23.5  # shows 21.0: 3.0 above the room even at −2.5
+    trv["report"]()
+    coord = await make()
+    await _run(hass, coord, freezer, 16)
+    assert trv["setpoint"] == 23.0
+    assert trv["writes"] == []  # the offset is already as low as it goes
+    trv["raw"] = 22.5  # over-read shrinks: the top-up doesn't (no churn mid warm-up)
+    trv["report"]()
+    await _run(hass, coord, freezer, 3)
+    assert trv["setpoint"] == 23.0
+    hass.states.async_set(ROOM_SENSOR, "20.0")  # room there: back to the real setpoint
+    await _run(hass, coord, freezer, 1)
+    assert trv["setpoint"] == 20.0
+
+
+async def test_top_up_is_capped(hass, setup, freezer):
+    make, trv = setup
+    hass.states.async_set(OFFSET, "-2.5", {"min": -2.5, "max": 2.5, "step": 0.1})
+    hass.states.async_set(ROOM_SENSOR, "17.0")
+    trv["raw"] = 25.0  # 5.5 above the room at −2.5
+    trv["report"]()
+    coord = await make()
+    await _run(hass, coord, freezer, 16)
+    assert trv["setpoint"] == 23.0  # +3 at most
+
+
+async def test_no_top_up_while_the_offset_can_still_correct(hass, setup, freezer):
+    make, trv = setup
+    coord = await make()
+    await _run(hass, coord, freezer, 30)
+    assert trv["writes"] == [-2.3]
+    assert all(s <= 20.0 for s in trv["setpoints"])
+
+
+async def test_no_top_up_without_calibration(hass, setup, freezer):
+    make, trv = setup
+    hass.states.async_set(OFFSET, "-2.5", {"min": -2.5, "max": 2.5, "step": 0.1})
+    hass.states.async_set(ROOM_SENSOR, "18.0")
+    trv["raw"] = 23.5
+    trv["report"]()
+    coord = await make(calibrate=False)
+    await _run(hass, coord, freezer, 20)
+    assert all(s <= 20.0 for s in trv["setpoints"])
 
 
 async def test_settling_room_sensor_is_ignored(hass, setup, freezer):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -119,6 +120,11 @@ CALIBRATE_MAX_OFFSET = 0.0
 # one settling (21 Oct: placed at 25.0 °C, fell 3.7 °C in 25 min). Rooms warm ~2 °C/h.
 CALIBRATE_SETTLING_C_PER_HOUR = 3.0
 CALIBRATE_SETTLING_WINDOW = timedelta(minutes=15)
+# A TRV can over-read by more than its offset can correct (22 Oct: living room
+# TRVs read 20.0 at −2.5 with the room at 17.8, and shut). Then the setpoint is
+# raised by what's left, at most this much, only while the room sensor is below
+# target; it only grows during a warm-up and drops back once the room is there.
+TRV_TOPUP_MAX = 3.0
 CALIBRATE_WAIT_FOR_TRV = timedelta(minutes=60)
 # A "run" longer than this (e.g. HA was down while it ended) teaches nothing.
 MAX_LEARN_RUN_HOURS = 6
@@ -172,6 +178,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.intel = IntelligenceStore(hass, entry.entry_id)
         self._away_eco_active = False
         self._preheat: dict[str, Any] | None = None
+        # The schedule block whose preheat has begun (persisted): it runs on until
+        # the block starts instead of being re-estimated off as the house warms.
+        self._preheat_started: str | None = None
         self._heat_cycle_start: datetime | None = None
         self._heat_cycle_start_temp: float | None = None
         self._heat_cycle_house_called = False
@@ -209,6 +218,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Recent room-sensor readings (UTC, °C) for the settling check; refills
         # within CALIBRATE_SETTLING_WINDOW after a restart.
         self._room_sensor_samples: dict[str, list[tuple[datetime, float]]] = {}
+        # Setpoint top-up per room in this warm-up (see TRV_TOPUP_MAX). Rebuilt
+        # from live readings after a restart.
+        self._trv_topups: dict[str, float] = {}
         # False while the house schedule is in setback (rooms drop to Eco).
         self._house_comfort = True
         self._dirty_intel = False
@@ -242,6 +254,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._released_until = dt_util.parse_datetime(str(saved.get("released_until") or ""))
         # Mid-run after a restart: keep heating to the cut-off, not the cut-in.
         self._house_calling = bool(saved.get("house_calling"))
+        self._preheat_started = str(saved.get("preheat_started") or "") or None
         relay = saved.get("relay")
         if isinstance(relay, dict) and dt_util.parse_datetime(str(relay.get("since") or "")):
             self._relay_seen = {"on": bool(relay.get("on")), "since": relay["since"]}
@@ -263,6 +276,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.intel.state.control = {
             "released_until": self._released_until.isoformat() if self._released_until else None,
             "house_calling": self._house_calling,
+            "preheat_started": self._preheat_started,
             "relay": self._relay_seen,
             "main": {
                 "hvac_mode": self._main_hvac_mode,
@@ -757,6 +771,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return hold, False
             if active:
                 self._house_comfort = True
+                if self._preheat_started is not None:
+                    self._preheat_started = None  # its block is running
+                    self._persist_control()
                 key = active_block_key(self.config.schedule, now)
                 return round(temp + seasonal_offset(seasonal, key), 1), True
 
@@ -774,9 +791,14 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ),
                 offsets=seasonal.offsets if seasonal.started_at else None,
                 now=now,
+                started_block=self._preheat_started,
             )
             self._preheat = status
             preheating = bool(status and status.get("preheating"))
+            started = status.get("block_key") if preheating else None
+            if started != self._preheat_started:
+                self._preheat_started = started
+                self._persist_control()
             during_this_preheat = bool(
                 preheating
                 and self._manual_hold
@@ -1090,6 +1112,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if trv.state != "off":
                 calls.append(("set_hvac_mode", {"hvac_mode": "off"}))
         else:
+            target = target + self._trv_topup(room, trv, target)
             if trv_target is None or abs(trv_target - target) >= 0.05:
                 calls.append(("set_temperature", {"temperature": target}))
             if trv.state != "heat":
@@ -1173,6 +1196,41 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 room.trv_entity, trv_temp, room_temp, offset, wanted,
             )
             self._trv_calibration[room.trv_entity] = {"offset": wanted, "reading": trv_temp, "at": now}
+
+    def _trv_topup(self, room: RoomConfig, trv: State, target: float) -> float:
+        """Extra setpoint for a calibrated TRV still reading above the room at its
+        offset limit, so its valve stays open until the room sensor reaches target."""
+        extra = self._trv_topups.get(room.id, 0.0)
+        readings = [self._sensor_value(e, self.config.sensor_stale_minutes) for e in self._room_sensor_ids(room)]
+        if not room.calibrate_trv or not readings or any(r is None for r in readings):
+            self._trv_topups.pop(room.id, None)
+            return 0.0
+        room_temp = sum(readings) / len(readings)
+        if room_temp >= target:
+            self._trv_topups.pop(room.id, None)  # the room is there: the TRV may shut
+            return 0.0
+        offset_id = self.trv_offset_entity(room.trv_entity)
+        offset_state = self.hass.states.get(offset_id) if offset_id else None
+        try:
+            offset = float(offset_state.state)
+            lo = float(offset_state.attributes.get("min", -5.0))
+            trv_temp = float(trv.attributes.get("current_temperature"))
+        except (AttributeError, TypeError, ValueError):
+            return extra
+        if offset <= lo + 0.05 and self._room_sensor_settled(room.id, room_temp):
+            step = float(trv.attributes.get("target_temp_step") or 0.5)
+            residual = trv_temp - room_temp
+            if residual > 0:
+                wanted = min(TRV_TOPUP_MAX, math.ceil(residual / step - 1e-9) * step)
+                if wanted > extra:
+                    _LOGGER.info(
+                        "Neat: %s reads %.1f °C at its %.1f offset limit, room %.1f °C — setpoint +%.1f",
+                        room.trv_entity, trv_temp, lo, room_temp, wanted,
+                    )
+                    extra = wanted
+        if extra > 0:
+            self._trv_topups[room.id] = extra
+        return extra
 
     def _room_sensor_settled(self, room_id: str, value: float) -> bool:
         """Has the room reading moved slower than CALIBRATE_SETTLING_C_PER_HOUR over
