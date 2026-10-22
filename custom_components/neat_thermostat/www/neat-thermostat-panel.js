@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.82
+ * @version 0.6.83
  */
-const PANEL_VERSION = "0.6.82";
+const PANEL_VERSION = "0.6.83";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -271,7 +271,13 @@ const STYLES = `
 .set-group-title { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--secondary-text-color); padding: 14px 0 2px; }
 .card-head + .set-group-title { padding-top: 0; }
 .set-group-title + .set-row { border-top: 0; }
-.sensor-ctl { display: inline-flex; align-items: center; gap: 6px; }
+#sensorsCard .room-card { cursor: default; background: color-mix(in srgb, var(--primary-text-color) 4%, transparent); box-shadow: none; gap: 8px; }
+#sensorsCard .room-card:hover { border-color: var(--divider-color, transparent); }
+#sensorsCard .room-grid + .set-group-title { padding-top: 18px; }
+.sensor-card-entity { font-size: 12px; color: var(--secondary-text-color); margin-top: -6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sensor-card-badges { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.sensor-card .room-card-top .set-remove { margin: -6px -8px -6px 0; }
+.sensor-watch-add { margin-top: 18px; }
 .set-field .set-row-desc { margin-top: 6px; }
 .set-row {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
@@ -3969,53 +3975,75 @@ class NeatThermostatPanel extends HTMLElement {
     return "";
   }
 
-  /** Every temperature sensor Neat reads: what it's for, its reading, and Faster updates per sensor. */
+  /** Every temperature sensor Neat reads, as tiles like the room cards: one row per HA floor. */
   _renderSensorsCard(row, head) {
     const sensors = this._live().temperature_sensors || [];
-    const rows = sensors.map((s) => {
+    const tiles = sensors.map((s) => {
       const st = this._hass?.states?.[s.entity_id];
-      const name = this._escape(st?.attributes?.friendly_name || s.entity_id);
-      const uses = (s.uses || [])
-        .map((u) => (u.startsWith("room:") ? this._escape(u.slice(5)) : t(`sensors.use.${u}`)))
-        .join(", ");
-      const value = st && !["unknown", "unavailable"].includes(st.state)
-        ? `${this._escape(st.state)}${this._escape(st.attributes?.unit_of_measurement || "°C")}`
-        : t("sensors.no_reading");
+      const friendly = st?.attributes?.friendly_name || s.entity_id;
+      const title = this._escape(s.floor?.area || friendly);
+      const sub = s.floor?.area ? `<span class="sensor-card-entity" title="${this._escape(s.entity_id)}">${this._escape(friendly)}</span>` : "";
+      const uses = s.uses || [];
+      const badges = uses
+        .filter((u) => !u.startsWith("room:"))
+        .map((u) => `<span class="set-state ${u === "watch" ? "" : "good"}">${t(`sensors.use.${u}`)}</span>`)
+        .join("");
+      const rooms = uses.filter((u) => u.startsWith("room:")).map((u) => this._escape(u.slice(5)));
+      const ok = st && !["unknown", "unavailable"].includes(st.state) && Number.isFinite(Number(st.state));
+      const now = ok ? `${this._escape(formatTemp(Math.round(Number(st.state) * 10) / 10))}°` : "—";
       const mins = st?.last_changed ? Math.max(0, Math.round((Date.now() - Date.parse(st.last_changed)) / 60000)) : null;
-      const changed = mins == null ? "" : ` · ${t("sensors.changed", { ago: mins < 1 ? t("sensors.just_now") : t("time.m", { m: mins }) })}`;
+      const changed = mins == null ? "" : t("sensors.changed", { ago: mins < 1 ? t("sensors.just_now") : t("time.m", { m: mins }) });
       const r = s.reporting;
-      let status = "";
+      let status;
       if (!s.zigbee) status = t("reporting.not_zha");
       else if (r && r.ok) status = r.fast ? t("reporting.fast") : t("reporting.normal");
       else if (r && r.pending) status = `${this._escape(r.error || t("reporting.waiting"))}…`;
       else if (r) status = `<span class="warn-text">${t("reporting.not_set", { error: this._escape(r.error || t("reporting.unknown_error")) })}</span>`;
       else status = s.fast ? t("reporting.waiting") : t("sensors.normal");
-      const watchOnly = (s.uses || []).length === 1 && s.uses[0] === "watch";
+      const watchOnly = uses.length === 1 && uses[0] === "watch";
       const remove = watchOnly
-        ? `<button type="button" class="set-remove" data-watch-remove="${this._escape(s.entity_id)}" aria-label="${this._escape(t("common.remove_name", { name: st?.attributes?.friendly_name || s.entity_id }))}" title="${this._escape(t("common.remove"))}">
+        ? `<button type="button" class="set-remove" data-watch-remove="${this._escape(s.entity_id)}" aria-label="${this._escape(t("common.remove_name", { name: friendly }))}" title="${this._escape(t("sensors.watch_stop"))}">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
           </button>`
         : "";
-      const control = `<span class="sensor-ctl"><label class="switch" title="${this._escape(t("sensors.fast"))}"><input type="checkbox" data-sensor-fast="${this._escape(s.entity_id)}" ${s.fast ? "checked" : ""} ${s.zigbee ? "" : "disabled"} /><span></span></label>${remove}</span>`;
-      const floor = s.floor?.name || t("sensors.no_floor");
-      // Area + floor on every row, so a sensor in the wrong place stands out.
-      const where = s.floor
-        ? this._escape(`${s.floor.area}, ${s.floor.name}`)
-        : `<span class="warn-text">${t("sensors.no_floor")}</span>`;
-      return { floor, html: row(name, `${where} · ${uses}<br>${value}${changed}<br>${t("sensors.fast")}: ${status}`, control) };
+      const html = `
+        <div class="room-card sensor-card">
+          <div class="room-card-top">
+            <span class="room-card-name">${title}</span>
+            ${remove}
+          </div>
+          ${sub}
+          <div class="room-card-temps">
+            <span class="room-card-now${ok ? "" : " unknown"}">${now}</span>
+            <span class="room-card-target">${this._escape(changed)}</span>
+          </div>
+          <div class="room-card-meta">
+            <span class="sensor-card-badges">${badges}</span>
+            ${rooms.length ? `<span class="room-card-sensors">${tn("sensors.rooms", rooms.length, { rooms: rooms.join(", ") })}</span>` : ""}
+          </div>
+          ${s.floor ? "" : `<div class="room-card-sensors warn-text">${t("sensors.no_floor.desc")}</div>`}
+          <div class="room-card-calls">
+            <span>${t("sensors.fast")}</span>
+            <label class="switch" title="${this._escape(t("sensors.fast"))}"><input type="checkbox" data-sensor-fast="${this._escape(s.entity_id)}" ${s.fast ? "checked" : ""} ${s.zigbee ? "" : "disabled"} /><span></span></label>
+          </div>
+          <div class="room-card-sensors">${status}</div>
+        </div>`;
+      return { floor: s.floor?.name || t("sensors.no_floor"), noFloor: !s.floor, html };
     });
-    // Grouped by HA floor (lowest first, as the backend sorts them).
+    // One row of tiles per HA floor (lowest first, as the backend sorts them).
     const groups = [];
-    for (const r of rows) {
-      if (!groups.length || groups[groups.length - 1].floor !== r.floor) groups.push({ floor: r.floor, rows: [] });
-      groups[groups.length - 1].rows.push(r.html);
+    for (const tile of tiles) {
+      if (!groups.length || groups[groups.length - 1].floor !== tile.floor) groups.push({ ...tile, tiles: [] });
+      groups[groups.length - 1].tiles.push(tile.html);
     }
-    const body = groups.map((g) => `<div class="set-group-title">${this._escape(g.floor)}</div>${g.rows.join("")}`).join("");
+    const body = groups
+      .map((g) => `<div class="set-group-title${g.noFloor ? " warn-text" : ""}">${this._escape(g.floor)}</div><div class="room-grid">${g.tiles.join("")}</div>`)
+      .join("");
     return `
-      <div class="card">
+      <div class="card" id="sensorsCard">
         ${head(ICONS.thermo, "", t("sensors.title"), t("sensors.sub"))}
-        ${rows.length ? body : `<p class="muted">${t("sensors.empty")}</p>`}
-        <div class="set-field">
+        ${tiles.length ? body : `<p class="muted">${t("sensors.empty")}</p>`}
+        <div class="set-field sensor-watch-add">
           <div class="set-field-label">${t("sensors.watch_add")}</div>
           <div class="entity-picker-host set-add" data-settings-picker="watch_add"></div>
           <div class="set-row-desc">${t("sensors.watch_add.desc")}</div>
