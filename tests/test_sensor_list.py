@@ -141,6 +141,49 @@ async def test_sleepy_sensor_gets_the_request_when_it_reports(hass, monkeypatch)
         await coord.async_shutdown()
 
 
+async def test_neat_follows_entity_id_renames(hass):
+    """23 Oct live: renaming the bedroom 1 sensor in HA left Neat on an id that no longer existed."""
+    from homeassistant.helpers import entity_registry as er
+
+    reg = er.async_get(hass)
+    reg.async_get_or_create("sensor", "zha", "bed", suggested_object_id="ensuite_bed1_temperature")
+    reg.async_get_or_create("sensor", "zha", "hall", suggested_object_id="hall")
+    reg.async_get_or_create("climate", "zha", "trv", suggested_object_id="old_trv")
+    calls = []
+    hass.services.async_register("switch", "turn_off", lambda call: calls.append(call))
+    entry = MockConfigEntry(
+        domain="neat_thermostat",
+        data={"heater": "switch.boiler", "temperature_sensor": "sensor.hall"},
+        options={
+            "watch_temperature_sensors": ["sensor.ensuite_bed1_temperature"],
+            "fast_reporting_sensors": ["sensor.hall", "sensor.ensuite_bed1_temperature"],
+            "rooms": [{"id": "bed1", "name": "Bedroom 1", "trv_entity": "climate.old_trv",
+                       "temperature_sensor": "sensor.ensuite_bed1_temperature"}],
+        },
+    )
+    entry.add_to_hass(hass)
+    coord = NeatThermostatCoordinator(hass, entry)
+    await coord.async_initialize_intelligence()
+    await coord.async_setup_listeners()
+    try:
+        reg.async_update_entity("sensor.ensuite_bed1_temperature", new_entity_id="sensor.bedroom_1_temperature")
+        reg.async_update_entity("sensor.hall", new_entity_id="sensor.hall_temperature")
+        reg.async_update_entity("climate.old_trv", new_entity_id="climate.bedroom_1_trv")
+        await hass.async_block_till_done()
+        cfg = coord.config
+        assert cfg.watch_temperature_sensors == ["sensor.bedroom_1_temperature"]
+        assert cfg.fast_reporting_sensors == ["sensor.hall_temperature", "sensor.bedroom_1_temperature"]
+        assert cfg.temperature_sensor == "sensor.hall_temperature"
+        assert entry.data["temperature_sensor"] == "sensor.hall_temperature"  # saved, survives restart
+        assert cfg.rooms[0].trv_entity == "climate.bedroom_1_trv"
+        assert cfg.rooms[0].temperature_sensor == "sensor.bedroom_1_temperature"
+        assert "sensor.bedroom_1_temperature" in coord._tracked_entities()  # noqa: SLF001
+        assert calls == []  # nothing switched off
+    finally:
+        await coord.async_unload()
+        await coord.async_shutdown()
+
+
 async def test_floors_from_ha_areas_and_watched_sensors(hass):
     from homeassistant.helpers import area_registry as ar
     from homeassistant.helpers import device_registry as dr

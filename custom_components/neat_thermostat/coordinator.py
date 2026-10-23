@@ -341,6 +341,37 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.async_request_refresh()
         return self.config
 
+    @callback
+    def _async_follow_rename(self, old: str, new: str) -> bool:
+        """An entity Neat uses got a new entity id in HA: use the new one everywhere
+        (house/backup sensors, relay, rooms' TRVs and sensors, windows, watch and
+        Faster-updates lists, wall panels). True if anything changed.
+
+        23 Oct 2026: renaming the bedroom 1 sensor left Neat watching an id that
+        no longer existed.
+        """
+
+        def swap(value: Any) -> Any:
+            if isinstance(value, str):
+                return new if value == old else value
+            if isinstance(value, list):
+                return [swap(v) for v in value]
+            if isinstance(value, dict):
+                return {k: swap(v) for k, v in value.items()}
+            return value
+
+        data, options = swap(dict(self.entry.data)), swap(dict(self.entry.options))
+        if data == dict(self.entry.data) and options == dict(self.entry.options):
+            return False
+        _LOGGER.info("Neat: %s was renamed to %s — following it", old, new)
+        # Straight to the entry (not async_save_config): a renamed relay is the same
+        # relay, so it mustn't be switched off as if it had been replaced.
+        self.hass.config_entries.async_update_entry(self.entry, data=data, options=options)
+        self.update_config({**data, **options})
+        if self._state_unsub is not None:
+            self._subscribe_state_changes()
+        return True
+
     def verify_wall_pin(self, pin: str) -> bool:
         expected = str(self.config.wall_pin or "").strip()
         if not expected:
@@ -2444,6 +2475,14 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._unsubs.append(
             async_track_time_interval(self.hass, _tick, UPDATE_INTERVAL)
         )
+
+        @callback
+        def _on_registry(event: Any) -> None:
+            old = event.data.get("old_entity_id")
+            if event.data.get("action") == "update" and old and self._async_follow_rename(old, event.data["entity_id"]):
+                self.hass.async_create_task(self.async_request_refresh())
+
+        self._unsubs.append(self.hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, _on_registry))
 
     async def async_unload(self) -> None:
         if self._reporting_task is not None and not self._reporting_task.done():
