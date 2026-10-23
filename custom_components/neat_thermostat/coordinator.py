@@ -1237,7 +1237,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         to_limit = wanted <= lo + 0.01 and offset > lo + 0.05
         if abs(wanted - offset) < CALIBRATE_MIN_CHANGE - 1e-6 and not to_limit:
             return
-        warming = room_temp < self.effective_room_target(room)
+        warming = self._room_warming(room, room_temp, self.effective_room_target(room))
         if warming and wanted > offset:
             return  # would read higher and shut while the room still needs heat
         spacing = CALIBRATE_EVERY_HEATING if warming else CALIBRATE_EVERY
@@ -1263,7 +1263,7 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._trv_topups.pop(room.id, None)
             return 0.0
         room_temp = sum(readings) / len(readings)
-        if room_temp >= target:
+        if not self._room_warming(room, room_temp, target):
             self._trv_topups.pop(room.id, None)  # the room is there: the TRV may shut
             return 0.0
         offset_id = self.trv_offset_entity(room.trv_entity)
@@ -1288,6 +1288,18 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if extra > 0:
             self._trv_topups[room.id] = extra
         return extra
+
+    def _room_warming(self, room: RoomConfig, room_temp: float, target: float) -> bool:
+        """Is this room still being heated towards its target?
+
+        The room the house sensor is in follows the house call: the house heats on
+        to its own cut-off (target + hot tolerance − coast). 23 Oct: the hall's
+        top-up ended at 20.0, its TRV shut, and the house kept the boiler on for
+        a hall that couldn't warm the last 0.1 °C — the heat went upstairs.
+        """
+        if self._room_sensor_ids(room) == [self.config.temperature_sensor]:
+            return self._house_calling or room_temp < target
+        return room_temp < target
 
     def _room_sensor_settled(self, room_id: str, value: float) -> bool:
         """Has the room reading moved slower than CALIBRATE_SETTLING_C_PER_HOUR over

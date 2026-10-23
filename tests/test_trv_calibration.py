@@ -328,6 +328,26 @@ async def test_a_quick_warm_up_still_calibrates(hass, setup, freezer):
     assert trv["writes"] == [-2.3]
 
 
+async def test_house_sensor_room_keeps_its_top_up_while_the_house_calls(hass, setup, freezer):
+    """23 Oct live: the hall (house sensor) top-up ended at 20.0 and the TRV shut, but the
+    house calls on to target + 0.3 − coast, so the boiler ran for a hall that couldn't warm."""
+    make, trv = setup
+    hass.states.async_set(OFFSET, "-2.5", {"min": -2.5, "max": 2.5, "step": 0.1})
+    trv["raw"] = 23.5  # shows 21.0
+    trv["report"]()
+    coord = await make(sensor="sensor.house")  # the hall: its room sensor IS the house sensor
+    await _run(hass, coord, freezer, 16)
+    assert trv["setpoint"] == 22.0
+    hass.states.async_set("sensor.house", "20.0")  # at target, short of the house cut-off
+    await _run(hass, coord, freezer, 3)
+    assert coord._house_calling  # noqa: SLF001
+    assert trv["setpoint"] == 22.0  # stays open while the house still wants heat
+    hass.states.async_set("sensor.house", "20.4")  # past the cut-off: house stops
+    await _run(hass, coord, freezer, 2)
+    assert not coord._house_calling  # noqa: SLF001
+    assert trv["setpoint"] == 20.0
+
+
 async def test_settling_room_sensor_is_ignored(hass, setup, freezer):
     """21 Oct live: a new living room sensor came on at 25.0 °C (warm from handling)
     and fell 3.7 °C in 25 min; Neat calibrated to it within 3 minutes."""
