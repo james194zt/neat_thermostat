@@ -141,6 +141,48 @@ async def test_sleepy_sensor_gets_the_request_when_it_reports(hass, monkeypatch)
         await coord.async_shutdown()
 
 
+async def test_rejoined_sensor_gets_faster_updates_again(hass, monkeypatch):
+    """23 Oct live: a ZHA Reconfigure (unavailable → back) reset the bedroom 1 sensor to
+    ZHA's 0.5 °C reporting seconds after Neat had set Faster updates, and Neat kept
+    showing it as set."""
+    from custom_components.neat_thermostat import zigbee_reporting
+
+    sent: list[str] = []
+
+    async def configure(_hass, entity_id, *, fast):
+        sent.append(entity_id)
+
+    monkeypatch.setattr(zigbee_reporting, "zha_ieee", lambda _hass, _e: "00:11:22:33:44:55:66:77")
+    monkeypatch.setattr(zigbee_reporting, "async_configure", configure)
+    hass.states.async_set("sensor.bed1", "23.9")
+    entry = MockConfigEntry(
+        domain="neat_thermostat",
+        data={"heater": "switch.boiler", "temperature_sensor": "sensor.hall"},
+        options={"fast_reporting_sensors": ["sensor.bed1"], "watch_temperature_sensors": ["sensor.bed1"]},
+    )
+    entry.add_to_hass(hass)
+    coord = NeatThermostatCoordinator(hass, entry)
+    await coord.async_initialize_intelligence()
+    monkeypatch.setattr(coord, "_zigbee_settled", lambda: True)
+    monkeypatch.setattr(coord, "async_request_refresh", lambda: hass.async_add_executor_job(lambda: None))
+    try:
+        coord._subscribe_state_changes()  # noqa: SLF001
+        await coord._async_apply_reporting({"sensor.bed1": True})  # noqa: SLF001
+        assert coord._reporting_status["sensor.bed1"]["ok"] is True  # noqa: SLF001
+        hass.states.async_set("sensor.bed1", "unavailable")  # ZHA Reconfigure
+        hass.states.async_set("sensor.bed1", "23.8")  # back — ZHA still configuring it
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert coord._reporting_status["sensor.bed1"]["ok"] is False  # noqa: SLF001
+        assert sent == ["sensor.bed1"]  # not sent mid-reconfigure
+        hass.states.async_set("sensor.bed1", "23.4")  # its next reading
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert sent == ["sensor.bed1", "sensor.bed1"]
+        assert coord._reporting_status["sensor.bed1"]["ok"] is True  # noqa: SLF001
+    finally:
+        await coord.async_unload()
+        await coord.async_shutdown()
+
+
 async def test_neat_follows_entity_id_renames(hass):
     """23 Oct live: renaming the bedroom 1 sensor in HA left Neat on an id that no longer existed."""
     from homeassistant.helpers import entity_registry as er

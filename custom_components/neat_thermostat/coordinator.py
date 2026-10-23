@@ -2260,6 +2260,17 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return tuple(sorted({e for e in entities if e}))
 
     @callback
+    def _reporting_unconfirmed(self, entity_id: str) -> None:
+        """The sensor may have lost Faster updates: show it as not confirmed and send again."""
+        status = self._reporting_status.get(entity_id)
+        if status is None or not status.get("ok") or entity_id not in self.config.fast_reporting_sensors:
+            return
+        self._reporting_status[entity_id] = {
+            **status, "ok": False, "applied": False, "pending": False,
+            "error": "the sensor rejoined (re-paired or reconfigured) — sending Faster updates again",
+        }
+
+    @callback
     def _retry_reporting_while_awake(self, entity_id: str) -> None:
         """A sleepy Zigbee sensor only listens just after it sends a reading. If its
         Faster updates request hasn't got through, send it now — to it alone.
@@ -2299,7 +2310,15 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ):
                 self._relay_since(self._is_on(self.config.heater), new.last_changed)
             if new is not None and new.state not in ("unknown", "unavailable"):
-                self._retry_reporting_while_awake(event.data.get("entity_id"))
+                old = event.data.get("old_state")
+                entity_id = event.data.get("entity_id")
+                if old is not None and old.state == "unavailable":
+                    # Back from unavailable = ZHA reconfigure/re-pair, which puts reporting back to
+                    # ZHA's defaults (23 Oct: it overwrote Faster updates set seconds earlier).
+                    # ZHA is still configuring it right now: send at its NEXT reading instead.
+                    self._reporting_unconfirmed(entity_id)
+                else:
+                    self._retry_reporting_while_awake(entity_id)
             self.hass.async_create_task(self.async_request_refresh())
 
         self._watched = entities
