@@ -2224,7 +2224,31 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 entities.append(room.temperature_sensor)
             entities.extend(room.extra_temperature_sensors or [])
             entities.extend(room.window_sensors)
+        # Faster-updates sensors too (watched ones aren't otherwise tracked): see _on_state.
+        entities.extend(self.config.fast_reporting_sensors)
         return tuple(sorted({e for e in entities if e}))
+
+    @callback
+    def _retry_reporting_while_awake(self, entity_id: str) -> None:
+        """A sleepy Zigbee sensor only listens just after it sends a reading. If its
+        Faster updates request hasn't got through, send it now — to it alone.
+
+        23 Oct 2026: the bathroom and ensuite SNZB-02Ms (reading every ~15 min)
+        missed every half-hourly retry, which landed while they slept.
+        """
+        status = self._reporting_status.get(entity_id)
+        if status is None or not status.get("supported") or status.get("ok"):
+            return
+        if entity_id not in self.config.fast_reporting_sensors:
+            return
+        task = self._reporting_task
+        if task is not None and not task.done():
+            return  # busy with another sensor; this one's next reading tries again
+        if not self._zigbee_settled():
+            return
+        self._reporting_task = self.hass.async_create_background_task(
+            self._async_apply_reporting({entity_id: True}), f"{DOMAIN}_sensor_reporting_awake"
+        )
 
     @callback
     def _subscribe_state_changes(self) -> None:
@@ -2243,6 +2267,8 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 and new.state not in ("unknown", "unavailable")
             ):
                 self._relay_since(self._is_on(self.config.heater), new.last_changed)
+            if new is not None and new.state not in ("unknown", "unavailable"):
+                self._retry_reporting_while_awake(event.data.get("entity_id"))
             self.hass.async_create_task(self.async_request_refresh())
 
         self._watched = entities

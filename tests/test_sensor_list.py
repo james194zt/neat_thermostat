@@ -97,6 +97,50 @@ async def test_missed_recheck_of_an_applied_sensor_is_not_an_error(hass, monkeyp
         await coord.async_shutdown()
 
 
+async def test_sleepy_sensor_gets_the_request_when_it_reports(hass, monkeypatch):
+    """23 Oct live: bathroom/ensuite SNZB-02Ms missed every half-hourly retry (asleep).
+    A sensor is awake just after it sends a reading: retry then, to that sensor alone."""
+    from custom_components.neat_thermostat import zigbee_reporting
+
+    awake = {"sensor.bath": False}
+    sent: list[str] = []
+
+    async def configure(_hass, entity_id, *, fast):
+        sent.append(entity_id)
+        if not awake.get(entity_id, True):
+            raise zigbee_reporting.ReportingError("the sensor didn't answer (it may be asleep) — will retry")
+
+    monkeypatch.setattr(zigbee_reporting, "zha_ieee", lambda _hass, _e: "00:11:22:33:44:55:66:77")
+    monkeypatch.setattr(zigbee_reporting, "async_configure", configure)
+    hass.states.async_set("sensor.bath", "19.6")
+    entry = MockConfigEntry(
+        domain="neat_thermostat",
+        data={"heater": "switch.boiler", "temperature_sensor": "sensor.hall"},
+        options={"fast_reporting_sensors": ["sensor.bath"], "watch_temperature_sensors": ["sensor.bath"]},
+    )
+    entry.add_to_hass(hass)
+    coord = NeatThermostatCoordinator(hass, entry)
+    await coord.async_initialize_intelligence()
+    monkeypatch.setattr(coord, "_zigbee_settled", lambda: True)
+    monkeypatch.setattr(coord, "async_request_refresh", lambda: hass.async_add_executor_job(lambda: None))
+    try:
+        assert "sensor.bath" in coord._tracked_entities()  # noqa: SLF001 — watched-only, still tracked
+        coord._subscribe_state_changes()  # noqa: SLF001
+        await coord._async_apply_reporting({"sensor.bath": True})  # noqa: SLF001 — the half-hourly try: asleep
+        assert coord._reporting_status["sensor.bath"]["ok"] is False  # noqa: SLF001
+        awake["sensor.bath"] = True
+        hass.states.async_set("sensor.bath", "19.7")  # it just reported: awake
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert sent == ["sensor.bath", "sensor.bath"]
+        assert coord._reporting_status["sensor.bath"]["ok"] is True  # noqa: SLF001
+        hass.states.async_set("sensor.bath", "19.8")  # already set: no more requests
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert sent == ["sensor.bath", "sensor.bath"]
+    finally:
+        await coord.async_unload()
+        await coord.async_shutdown()
+
+
 async def test_floors_from_ha_areas_and_watched_sensors(hass):
     from homeassistant.helpers import area_registry as ar
     from homeassistant.helpers import device_registry as dr
