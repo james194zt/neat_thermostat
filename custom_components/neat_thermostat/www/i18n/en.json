@@ -342,6 +342,7 @@
   "relay.take_control": "Take control now",
   "relay.taken_toast": "Neat has the relay again",
   "reporting.fast": "reporting every 0.1°C / 5 min",
+  "reporting.queued": "not sent yet — Neat sends it when Zigbee has settled and the sensor next reports",
   "reporting.fast_recheck": "reporting every 0.1°C / 5 min (set earlier — the sensor was asleep for today's re-check, Neat tries again)",
   "reporting.normal": "back to ZHA's normal reporting",
   "reporting.not_set": "not set yet: {error}",

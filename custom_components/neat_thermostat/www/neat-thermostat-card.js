@@ -3,7 +3,7 @@
  * Loaded automatically by the integration; pick "Neat Thermostat" in the card list.
  * Everything comes from the Neat climate entities, so it updates live with no polling.
  */
-const NEAT_CARD_VERSION = "0.6.88";
+const NEAT_CARD_VERSION = "0.6.89";
 
 const NC_STYLES = `
 :host { display: block; }

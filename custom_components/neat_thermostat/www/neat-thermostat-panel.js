@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.88
+ * @version 0.6.89
  */
-const PANEL_VERSION = "0.6.88";
+const PANEL_VERSION = "0.6.89";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -4034,7 +4034,7 @@ class NeatThermostatPanel extends HTMLElement {
       else if (r && r.applied && r.fast) status = t("reporting.fast_recheck");
       else if (r && r.pending) status = `${this._escape(r.error || t("reporting.waiting"))}…`;
       else if (r) status = `<span class="warn-text">${t("reporting.not_set", { error: this._escape(r.error || t("reporting.unknown_error")) })}</span>`;
-      else status = s.fast ? t("reporting.waiting") : t("sensors.normal");
+      else status = s.fast ? t("reporting.queued") : t("sensors.normal");
       const watchOnly = uses.length === 1 && uses[0] === "watch";
       const remove = watchOnly
         ? `<button type="button" class="set-remove" data-watch-remove="${this._escape(s.entity_id)}" aria-label="${this._escape(t("common.remove_name", { name: friendly }))}" title="${this._escape(t("sensors.watch_stop"))}">
