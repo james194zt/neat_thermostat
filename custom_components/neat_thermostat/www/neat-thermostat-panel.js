@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.90
+ * @version 0.6.91
  */
-const PANEL_VERSION = "0.6.90";
+const PANEL_VERSION = "0.6.91";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -2084,6 +2084,14 @@ class NeatThermostatPanel extends HTMLElement {
     this._ehResize.observe(card);
   }
 
+  /** "14:05" today, else "Wed 14:05". */
+  _sinceText(ts) {
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return "";
+    if (d.toDateString() === new Date().toDateString()) return this._ehClock(ts);
+    return d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  }
+
   _ehClock(ts) {
     const d = new Date(ts);
     return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -4013,6 +4021,15 @@ class NeatThermostatPanel extends HTMLElement {
     // Lowest floor first, no floor last (stable: keeps Neat's order within a floor).
     const rank = (s) => (s.floor ? Number(s.floor.level ?? 0) : Infinity);
     const sensors = [...(this._live().temperature_sensors || [])].sort((a, b) => rank(a) - rank(b));
+    // A reading stuck for hours while others move (23 Oct: a freshly paired sensor sat on its
+    // first value until ZHA's Reconfigure; it looked fine otherwise).
+    const changedAt = (id) => Date.parse(this._hass?.states?.[id]?.last_changed || "") || 0;
+    const STUCK_MS = 3 * 3600 * 1000;
+    const stuck = (id) => {
+      const at = changedAt(id);
+      return at > 0 && Date.now() - at > STUCK_MS
+        && sensors.some((o) => o.entity_id !== id && Date.now() - changedAt(o.entity_id) < 3600 * 1000);
+    };
     const tiles = sensors.map((s) => {
       const st = this._hass?.states?.[s.entity_id];
       const friendly = st?.attributes?.friendly_name || s.entity_id;
@@ -4027,7 +4044,12 @@ class NeatThermostatPanel extends HTMLElement {
       const ok = st && !["unknown", "unavailable"].includes(st.state) && Number.isFinite(Number(st.state));
       const now = ok ? `${this._escape(formatTemp(Math.round(Number(st.state) * 10) / 10))}°` : "—";
       const mins = st?.last_changed ? Math.max(0, Math.round((Date.now() - Date.parse(st.last_changed)) / 60000)) : null;
-      const changed = mins == null ? "" : t("sensors.changed", { ago: mins < 1 ? t("sensors.just_now") : t("time.m", { m: mins }) });
+      const ago = mins == null ? ""
+        : mins < 1 ? t("sensors.just_now")
+        : mins < 60 ? t("time.m", { m: mins })
+        : mins % 60 && mins < 600 ? t("time.hm", { h: Math.floor(mins / 60), m: mins % 60 })
+        : t("time.h", { h: Math.round(mins / 60) });
+      const changed = mins == null ? "" : t("sensors.changed", { ago });
       const r = s.reporting;
       let status;
       if (r && r.ok) status = r.fast ? t("reporting.fast") : t("reporting.normal");
@@ -4057,6 +4079,7 @@ class NeatThermostatPanel extends HTMLElement {
             ${rooms.length ? `<span class="room-card-sensors">${tn("sensors.rooms", rooms.length, { rooms: rooms.join(", ") })}</span>` : ""}
           </div>
           ${s.floor ? "" : `<div class="room-card-sensors warn-text">${t("sensors.no_floor.desc")}</div>`}
+          ${ok && stuck(s.entity_id) ? `<div class="room-card-sensors warn-text">${t("sensors.stuck", { time: this._escape(this._sinceText(st.last_changed)) })}</div>` : ""}
           ${s.zigbee ? `
           <div class="room-card-calls">
             <span>${t("sensors.fast")}</span>

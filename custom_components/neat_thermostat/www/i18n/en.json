@@ -489,6 +489,7 @@
   "sensors.rooms.one": "Room: {rooms}",
   "sensors.rooms.other": "Rooms: {rooms}",
   "sensors.normal": "normal reporting (0.5°C or 15 min)",
+  "sensors.stuck": "Reading hasn't changed since {time} while other sensors have — if the room has changed, try Reconfigure on this device in ZHA.",
   "sensors.sub": "Every sensor Neat reads. Faster updates asks a Zigbee (ZHA) sensor to report every 0.1°C or 5 min instead of 0.5°C or 15 min — Neat reacts sooner and overshoots less, for a little more battery.",
   "sensors.title": "Temperature Sensors",
   "sensors.use.backup": "Backup house sensor",
