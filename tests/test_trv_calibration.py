@@ -157,12 +157,12 @@ async def test_waits_for_a_trv_reading_with_the_new_offset(hass, setup, freezer)
     trv["report"]()  # now it shows 19.0 = the room
     await _run(hass, coord, freezer, 20)
     assert trv["writes"] == [-2.3]
-    # Room warm; radiator cooled: the TRV shows 18.2 with the room at 20.0.
-    hass.states.async_set(ROOM_SENSOR, "20.0")
+    # Room past its cut-out (20 + 0.3); radiator cooled: the TRV shows 18.2 with the room at 20.4.
+    hass.states.async_set(ROOM_SENSOR, "20.4")
     trv["raw"] = 20.5
     trv["report"]()
     await _run(hass, coord, freezer, 16)
-    assert trv["writes"] == [-2.3, -0.5]
+    assert trv["writes"] == [-2.3, -0.1]
 
 
 async def test_offset_only_moves_down_while_the_room_warms_up(hass, setup, freezer):
@@ -265,9 +265,35 @@ async def test_setpoint_topped_up_beyond_the_offset_limit(hass, setup, freezer):
     trv["report"]()
     await _run(hass, coord, freezer, 3)
     assert trv["setpoint"] == 23.0
-    hass.states.async_set(ROOM_SENSOR, "20.0")  # room there: back to the real setpoint
+    hass.states.async_set(ROOM_SENSOR, "20.4")  # past the room's cut-out: back to the real setpoint
     await _run(hass, coord, freezer, 1)
     assert trv["setpoint"] == 20.0
+
+
+async def test_top_up_follows_the_rooms_own_call(hass, setup, freezer):
+    """23 Oct live: the living room called on at 20.1 (cut-out 20.3) but its top-up had ended
+    at 20.0 — tiles said "Heating", valves shut; the TRVs then reopened at 19.9, no hysteresis."""
+    make, trv = setup
+    hass.states.async_set(OFFSET, "-2.5", {"min": -2.5, "max": 2.5, "step": 0.1})
+    hass.states.async_set(ROOM_SENSOR, "19.0")
+    trv["raw"] = 23.5  # shows 21.0
+    trv["report"]()
+    coord = await make()
+    await _run(hass, coord, freezer, 16)
+    assert trv["setpoint"] == 22.0  # TRV 21.0 vs room 19.0 → +2.0
+    hass.states.async_set(ROOM_SENSOR, "20.1")  # at target, still inside the room's call
+    await _run(hass, coord, freezer, 2)
+    assert coord._room_states["hall"]["needs_heat"]  # noqa: SLF001
+    assert trv["setpoint"] > 20.0  # valve kept open while the room calls
+    hass.states.async_set(ROOM_SENSOR, "20.4")  # cut-out
+    await _run(hass, coord, freezer, 2)
+    assert trv["setpoint"] == 20.0
+    hass.states.async_set(ROOM_SENSOR, "19.9")  # cooling, but above the cut-in (19.7)
+    await _run(hass, coord, freezer, 2)
+    assert trv["setpoint"] == 20.0  # no top-up yet: no reopening at 19.9
+    hass.states.async_set(ROOM_SENSOR, "19.6")  # cut-in
+    await _run(hass, coord, freezer, 16)
+    assert trv["setpoint"] > 20.0
 
 
 async def test_top_up_is_capped(hass, setup, freezer):

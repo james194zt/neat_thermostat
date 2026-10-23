@@ -1333,6 +1333,12 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         if self._room_sensor_ids(room) == [self.config.temperature_sensor]:
             return self._house_calling or room_temp < target
+        if room.calls_for_heat:
+            # The room's own call (cut-in target − cold, cut-out target + hot). 23 Oct: the
+            # living room still called at 20.1 while its top-up had ended at 20.0, so the
+            # tiles said "Heating" with both valves shut, and the TRVs reopened (and the
+            # boiler fired) at 19.9 with no hysteresis.
+            return bool(self._room_states.get(room.id, {}).get("needs_heat"))
         return room_temp < target
 
     def _room_sensor_settled(self, room_id: str, value: float) -> bool:
