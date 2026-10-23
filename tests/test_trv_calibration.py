@@ -300,6 +300,34 @@ async def test_no_top_up_without_calibration(hass, setup, freezer):
     assert all(s <= 20.0 for s in trv["setpoints"])
 
 
+async def test_last_step_onto_the_limit_is_taken(hass, setup, freezer):
+    """23 Oct live: kitchen + living-room front TRVs sat at −2.2 wanting −2.5; the 0.3 step
+    came out as 0.29999… < 0.3, so the limit (and the top-up after it) was never reached."""
+    make, trv = setup
+    hass.states.async_set(OFFSET, "-2.2", {"min": -2.5, "max": 2.5, "step": 0.1})
+    trv["raw"] = 23.2  # shows 21.0 with the room at 19.0
+    trv["report"]()
+    coord = await make()
+    await _run(hass, coord, freezer, 16)
+    assert trv["writes"] == [-2.5]
+    trv["report"]()
+    await _run(hass, coord, freezer, 2)
+    assert trv["setpoint"] == 22.0  # then the top-up covers the rest (20.7 vs 19.0 → +2.0)
+
+
+async def test_a_quick_warm_up_still_calibrates(hass, setup, freezer):
+    """23 Oct live: the living room sensor (Faster updates on) rose 3.6 °C/h in the warm-up."""
+    make, trv = setup
+    coord = await make()
+    for minute in range(20):  # 4.2 °C/h, the TRV 2.3 above the room throughout
+        room = 18.0 + 0.07 * minute
+        hass.states.async_set(ROOM_SENSOR, f"{room:.2f}")
+        trv["raw"] = room + 2.3
+        trv["report"]()
+        await _tick(hass, coord, freezer)
+    assert trv["writes"] == [-2.3]
+
+
 async def test_settling_room_sensor_is_ignored(hass, setup, freezer):
     """21 Oct live: a new living room sensor came on at 25.0 °C (warm from handling)
     and fell 3.7 °C in 25 min; Neat calibrated to it within 3 minutes."""

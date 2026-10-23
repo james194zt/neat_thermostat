@@ -119,8 +119,9 @@ CALIBRATE_MIN_CHANGE = 0.3
 # and a positive offset made it shut early at the next warm-up (21 Oct: +2.5 overnight).
 CALIBRATE_MAX_OFFSET = 0.0
 # A room sensor moving faster than this isn't measuring the room yet — e.g. a new
-# one settling (21 Oct: placed at 25.0 °C, fell 3.7 °C in 25 min). Rooms warm ~2 °C/h.
-CALIBRATE_SETTLING_C_PER_HOUR = 3.0
+# one settling (21 Oct: placed at 25.0 °C, fell 3.7 °C in 25 min ≈ 9 °C/h). A real
+# warm-up reached 3.6 °C/h (23 Oct, living room with Faster updates on).
+CALIBRATE_SETTLING_C_PER_HOUR = 6.0
 CALIBRATE_SETTLING_WINDOW = timedelta(minutes=15)
 # A TRV can over-read by more than its offset can correct (22 Oct: living room
 # TRVs read 20.0 at −2.5 with the room at 17.8, and shut). Then the setpoint is
@@ -1231,7 +1232,10 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         step = float(attrs.get("step") or 0.1)
         wanted = round(round((offset + room_temp - trv_temp) / step) * step, 2)
         wanted = min(hi, CALIBRATE_MAX_OFFSET, max(lo, wanted))
-        if abs(wanted - offset) < CALIBRATE_MIN_CHANGE:
+        # The last step onto the TRV's limit is always taken: the setpoint top-up only
+        # starts there (23 Oct: two TRVs sat at −2.2, wanting −2.5 — a 0.29999… step).
+        to_limit = wanted <= lo + 0.01 and offset > lo + 0.05
+        if abs(wanted - offset) < CALIBRATE_MIN_CHANGE - 1e-6 and not to_limit:
             return
         warming = room_temp < self.effective_room_target(room)
         if warming and wanted > offset:
