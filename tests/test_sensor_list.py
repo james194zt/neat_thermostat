@@ -67,6 +67,36 @@ async def test_sensor_list_shows_every_sensor_and_its_uses(hass):
         await coord.async_shutdown()
 
 
+async def test_missed_recheck_of_an_applied_sensor_is_not_an_error(hass, monkeypatch):
+    """23 Oct live: the living room SNZB-02P had Faster updates (0.1 °C every ~5 min), but
+    slept through the post-restart re-check and the card showed it as not set."""
+    from custom_components.neat_thermostat import zigbee_reporting
+
+    async def asleep(_hass, _entity_id, *, fast):
+        raise zigbee_reporting.ReportingError("the sensor didn't answer (it may be asleep) — will retry")
+
+    monkeypatch.setattr(zigbee_reporting, "zha_ieee", lambda _hass, _e: "00:11:22:33:44:55:66:77")
+    monkeypatch.setattr(zigbee_reporting, "async_configure", asleep)
+    entry = MockConfigEntry(
+        domain="neat_thermostat",
+        data={"heater": "switch.boiler", "temperature_sensor": "sensor.hall"},
+        options={"fast_reporting_sensors": ["sensor.hall", "sensor.lounge"]},
+    )
+    entry.add_to_hass(hass)
+    coord = NeatThermostatCoordinator(hass, entry)
+    await coord.async_initialize_intelligence()
+    try:
+        coord.intel.state.fast_reporting = ["sensor.lounge"]  # set on the sensor before the restart
+        await coord._async_apply_reporting({"sensor.hall": True, "sensor.lounge": True})  # noqa: SLF001
+        status = coord._reporting_status  # noqa: SLF001
+        assert status["sensor.lounge"]["ok"] is False and status["sensor.lounge"]["applied"] is True
+        assert status["sensor.hall"]["applied"] is False  # never got through: a real "not set"
+        assert coord.intel.state.fast_reporting == ["sensor.lounge"]  # a miss doesn't forget it
+    finally:
+        await coord.async_unload()
+        await coord.async_shutdown()
+
+
 async def test_floors_from_ha_areas_and_watched_sensors(hass):
     from homeassistant.helpers import area_registry as ar
     from homeassistant.helpers import device_registry as dr

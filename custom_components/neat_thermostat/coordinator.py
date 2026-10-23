@@ -649,6 +649,9 @@ class NeatThermostatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._reporting_status[entity_id] = {
                     "supported": True, "fast": fast, "ok": False, "error": str(err),
                     "pending": err.not_ready, "at": now.isoformat(),
+                    # Set on the sensor earlier (kept across restarts): only this
+                    # re-check missed it, e.g. a sleepy sensor (23 Oct, SNZB-02P).
+                    "applied": entity_id in applied,
                 }
                 self._reporting_next_try[entity_id] = now + (
                     REPORTING_RETRY_SOON if err.not_ready else REPORTING_RETRY

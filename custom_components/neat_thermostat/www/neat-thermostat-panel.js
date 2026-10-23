@@ -1,9 +1,9 @@
 /**
  * Neat Thermostat — HA sidebar panel.
  * Fox Plant–style shell + dial overview / schedule.
- * @version 0.6.86
+ * @version 0.6.87
  */
-const PANEL_VERSION = "0.6.86";
+const PANEL_VERSION = "0.6.87";
 
 /* —— Labels ——
    Every word the panel shows comes from a language file (www/i18n/<lang>.json, keys like
@@ -4010,7 +4010,9 @@ class NeatThermostatPanel extends HTMLElement {
 
   /** The sensor tiles alone (refreshed in place on the Settings page). */
   _renderSensorTiles() {
-    const sensors = this._live().temperature_sensors || [];
+    // Lowest floor first, no floor last (stable: keeps Neat's order within a floor).
+    const rank = (s) => (s.floor ? Number(s.floor.level ?? 0) : Infinity);
+    const sensors = [...(this._live().temperature_sensors || [])].sort((a, b) => rank(a) - rank(b));
     const tiles = sensors.map((s) => {
       const st = this._hass?.states?.[s.entity_id];
       const friendly = st?.attributes?.friendly_name || s.entity_id;
@@ -4028,8 +4030,8 @@ class NeatThermostatPanel extends HTMLElement {
       const changed = mins == null ? "" : t("sensors.changed", { ago: mins < 1 ? t("sensors.just_now") : t("time.m", { m: mins }) });
       const r = s.reporting;
       let status;
-      if (!s.zigbee) status = t("reporting.not_zha");
-      else if (r && r.ok) status = r.fast ? t("reporting.fast") : t("reporting.normal");
+      if (r && r.ok) status = r.fast ? t("reporting.fast") : t("reporting.normal");
+      else if (r && r.applied && r.fast) status = t("reporting.fast_recheck");
       else if (r && r.pending) status = `${this._escape(r.error || t("reporting.waiting"))}…`;
       else if (r) status = `<span class="warn-text">${t("reporting.not_set", { error: this._escape(r.error || t("reporting.unknown_error")) })}</span>`;
       else status = s.fast ? t("reporting.waiting") : t("sensors.normal");
@@ -4055,11 +4057,12 @@ class NeatThermostatPanel extends HTMLElement {
             ${rooms.length ? `<span class="room-card-sensors">${tn("sensors.rooms", rooms.length, { rooms: rooms.join(", ") })}</span>` : ""}
           </div>
           ${s.floor ? "" : `<div class="room-card-sensors warn-text">${t("sensors.no_floor.desc")}</div>`}
+          ${s.zigbee ? `
           <div class="room-card-calls">
             <span>${t("sensors.fast")}</span>
-            <label class="switch" title="${this._escape(t("sensors.fast"))}"><input type="checkbox" data-sensor-fast="${this._escape(s.entity_id)}" ${s.fast ? "checked" : ""} ${s.zigbee ? "" : "disabled"} /><span></span></label>
+            <label class="switch" title="${this._escape(t("sensors.fast"))}"><input type="checkbox" data-sensor-fast="${this._escape(s.entity_id)}" ${s.fast ? "checked" : ""} /><span></span></label>
           </div>
-          <div class="room-card-sensors">${status}</div>
+          <div class="room-card-sensors">${status}</div>` : ""}
         </div>`;
       return { floor: s.floor?.name || t("sensors.no_floor"), noFloor: !s.floor, html };
     });
