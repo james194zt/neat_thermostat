@@ -127,7 +127,9 @@ CALIBRATE_SETTLING_WINDOW = timedelta(minutes=15)
 # TRVs read 20.0 at −2.5 with the room at 17.8, and shut). Then the setpoint is
 # raised by what's left, at most this much, only while the room sensor is below
 # target; it only grows during a warm-up and drops back once the room is there.
-TRV_TOPUP_MAX = 3.0
+# 24 Oct: +3 ran out — hot radiators made the hall (23 Oct) and living-room front
+# (24 Oct) TRVs read ~5.7–6 °C over the room even at −2.5.
+TRV_TOPUP_MAX = 6.0
 CALIBRATE_WAIT_FOR_TRV = timedelta(minutes=60)
 # A "run" longer than this (e.g. HA was down while it ended) teaches nothing.
 MAX_LEARN_RUN_HOURS = 6

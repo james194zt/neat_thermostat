@@ -300,11 +300,24 @@ async def test_top_up_is_capped(hass, setup, freezer):
     make, trv = setup
     hass.states.async_set(OFFSET, "-2.5", {"min": -2.5, "max": 2.5, "step": 0.1})
     hass.states.async_set(ROOM_SENSOR, "17.0")
+    trv["raw"] = 27.5  # 8.0 above the room at −2.5
+    trv["report"]()
+    coord = await make()
+    await _run(hass, coord, freezer, 16)
+    assert trv["setpoint"] == 26.0  # +6 at most
+
+
+async def test_top_up_covers_a_hot_radiator(hass, setup, freezer):
+    """24 Oct live: the living-room front TRV read ~6 °C over the room at −2.5 and shut
+    at 19.6 because the top-up stopped at +3."""
+    make, trv = setup
+    hass.states.async_set(OFFSET, "-2.5", {"min": -2.5, "max": 2.5, "step": 0.1})
+    hass.states.async_set(ROOM_SENSOR, "17.0")
     trv["raw"] = 25.0  # 5.5 above the room at −2.5
     trv["report"]()
     coord = await make()
     await _run(hass, coord, freezer, 16)
-    assert trv["setpoint"] == 23.0  # +3 at most
+    assert trv["setpoint"] == 25.5  # the whole 5.5 (was capped at 23.0)
 
 
 async def test_no_top_up_while_the_offset_can_still_correct(hass, setup, freezer):
